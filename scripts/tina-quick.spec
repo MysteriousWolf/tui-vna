@@ -26,7 +26,7 @@ except ImportError:
     pass
 
 a = Analysis(
-    [os.path.join(PROJECT_ROOT, 'src', 'tina', 'main.py')],
+    [os.path.join(PROJECT_ROOT, 'run_tina.py')],
     pathex=[os.path.join(PROJECT_ROOT, 'src')],
     binaries=[],
     datas=datas,
