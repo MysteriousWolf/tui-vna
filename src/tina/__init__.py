@@ -2,13 +2,15 @@
 
 __version__ = "1.0.0"
 
-from .config import AppSettings, SettingsManager
-from .touchstone import TouchstoneExporter
-from .vna import VNA, VNAConfig
+from .config.settings import AppSettings, SettingsManager
+from .drivers import HPE5071B as VNA
+from .drivers import VNABase, VNAConfig
+from .utils import TouchstoneExporter
 from .worker import LogMessage, MeasurementWorker, MessageType
 
 __all__ = [
     "VNA",
+    "VNABase",
     "VNAConfig",
     "TouchstoneExporter",
     "MeasurementWorker",

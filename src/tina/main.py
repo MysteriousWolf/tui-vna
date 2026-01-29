@@ -45,9 +45,10 @@ from textual.widgets import (
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
 
-from .config import AppSettings, SettingsManager
-from .touchstone import TouchstoneExporter
-from .vna import VNA, VNAConfig
+from .config.settings import AppSettings, SettingsManager
+from .drivers import HPE5071B as VNA
+from .drivers import VNAConfig
+from .utils import TouchstoneExporter
 
 # GUI-only imports - done at module level to ensure proper terminal detection
 try:

@@ -22,7 +22,7 @@ except ImportError:
     pass
 
 a = Analysis(
-    ['../src/tina/quick_measure.py'],
+    ['../src/tina/main.py'],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -42,15 +42,20 @@ a = Analysis(
         'queue',
         'threading',
         'asyncio',
-        'tina.config',
-        'tina.touchstone',
-        'tina.vna',
+        'tina.config.constants',
+        'tina.config.settings',
+        'tina.drivers',
+        'tina.drivers.base',
+        'tina.drivers.hp_e5071b',
+        'tina.drivers.scpi_commands',
+        'tina.utils',
+        'tina.utils.touchstone',
         'tina.worker',
         'tina.main',
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['runtime_hook_quick.py'],
     excludes=[
         'tkinter.test',
         'test',

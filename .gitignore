@@ -26,9 +26,6 @@ venv/
 ENV/
 env/
 
-# UV
-uv.lock
-
 # IDE
 .vscode/
 .idea/
@@ -36,39 +33,18 @@ uv.lock
 *.swo
 *~
 
-# Measurement data and output files
+# OS
+.DS_Store
+Thumbs.db
+
+# Measurement data
 measurement/
 
-# Build outputs (PyInstaller)
-build/
-dist/
-*.spec.bak
+# Temporary plot files
+/tmp/
 
-# Temporary files
-*.tmp
-*.temp
-*.bak
-*.backup
-main.py.backup
-
-# Log files
-*.log
-
-# Configuration files (user-specific)
-settings.json
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-desktop.ini
-
-# Claude files
-.claude/
-
-# Resources folder (contains VNA icons)
-# Note: keeping res/ tracked for icon distribution
+# Build artifacts
+*.spec
+*.toc
+*.pkg
+*.exe

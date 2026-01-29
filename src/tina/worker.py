@@ -15,7 +15,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from .vna import VNA, VNAConfig
+from .config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
+from .drivers import VNABase, VNAConfig, detect_vna_driver
 
 
 class MessageType(Enum):
@@ -85,7 +86,7 @@ class LogMessage:
 class LoggingVNAWrapper:
     """Wrapper around VNA that automatically logs all SCPI commands."""
 
-    def __init__(self, vna: VNA, log_callback: Callable[[str, str], None]):
+    def __init__(self, vna: VNABase, log_callback: Callable[[str, str], None]):
         """
         Initialize wrapper.
 
@@ -108,7 +109,7 @@ class LoggingVNAWrapper:
 
         # Compress long responses for logging
         response_stripped = response.strip()
-        if len(response_stripped) > 200:
+        if len(response_stripped) > SCPI_RESPONSE_TRUNCATE_LENGTH:
             # Count data points (comma-separated values)
             data_count = response_stripped.count(",") + 1
             first_vals = ",".join(response_stripped.split(",")[:3])
@@ -155,7 +156,7 @@ class MeasurementWorker:
         self._response_queue: queue.Queue = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._running = False
-        self._vna: Optional[VNA] = None
+        self._vna: Optional[VNABase] = None
         self._vna_wrapper: Optional[LoggingVNAWrapper] = None
         self._config: Optional[VNAConfig] = None
 
@@ -271,27 +272,55 @@ class MeasurementWorker:
                 )
 
     def _handle_connect(self, config: VNAConfig):
-        """Handle connection command."""
+        """Handle connection command with automatic driver detection."""
         try:
             self._config = config
-            self._vna = VNA(config)
+
+            # First, try connecting with a generic driver to get IDN
+            # We'll use HPE5071B as the default for now, but this could be
+            # made more generic with a basic SCPI connection class
+            from .drivers import HPE5071B
+
+            temp_vna = HPE5071B(config)
 
             # Progress callback
             def on_progress(msg, pct):
                 self._send_progress(msg, pct)
 
-            # Connect (blocking operation)
-            self._vna.connect(progress_callback=on_progress)
+            # Connect to get IDN
+            self._send_progress("Connecting...", 10)
+            temp_vna.connect(progress_callback=on_progress)
+            idn_string = temp_vna.idn
+
+            # Detect the correct driver
+            self._send_progress("Detecting VNA type...", 90)
+            driver_class = detect_vna_driver(idn_string)
+
+            if driver_class is None:
+                # No specific driver found, use the temp connection
+                self._log(f"No specific driver found for: {idn_string}", "info")
+                self._log("Using default driver", "info")
+                self._vna = temp_vna
+            elif isinstance(temp_vna, driver_class):
+                # Already using the right driver
+                self._vna = temp_vna
+            else:
+                # Need to switch to a different driver
+                temp_vna.disconnect()
+                self._log(f"Detected: {driver_class.driver_name}", "info")
+                self._vna = driver_class(config)
+                self._vna.connect(progress_callback=on_progress)
 
             # Create logging wrapper for automatic TX/RX logging
             self._vna_wrapper = LoggingVNAWrapper(self._vna, self._log)
 
-            # Log the IDN query that was done during connect
+            # Log the IDN
             self._log("*IDN?", "tx")
             self._log(self._vna.idn, "rx")
 
-            # Send success response
-            self._send_response(MessageType.CONNECTED, data=self._vna.idn)
+            # Send success response with driver info
+            driver_info = f"{self._vna.idn} [{self._vna.driver_name}]"
+            self._send_response(MessageType.CONNECTED, data=driver_info)
 
         except Exception as e:
             self._send_response(MessageType.ERROR, error=f"Connection failed: {str(e)}")

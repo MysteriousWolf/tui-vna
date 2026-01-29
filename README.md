@@ -1,16 +1,13 @@
-# tina - Terminal UI Network Analyzer
+# tina - Terminal user Interface Network Analyzer
 
-Modern terminal-based control interface for Vector Network Analyzers.
-
-**tina** (Terminal UI Network Analyzer) is a TUI application for controlling VNAs with a clean interface and powerful CLI automation.
+Terminal-based VNA control with **dynamic driver discovery**.
 
 ## Features
 
-- 🎯 Clean TUI with real-time plotting and automatic S2P/PNG export
-- 🖥️ CLI mode for automation: `hp-e5071b --now` for quick measurements
-- ⚡ Fast SCPI over TCP/IP with multithreaded architecture
-- 📊 Full S-parameter support (S11/S21/S12/S22) with outlier filtering
-- 🔧 Configurable frequency, sweep points, averaging, and detailed logging
+- 🔌 Plugin architecture - add VNA support by dropping a driver file
+- 🎯 Clean TUI with real-time plotting and S2P export
+- ⚡ Automatic driver detection from `*IDN?` response
+- 🖥️ CLI mode: `tina --now` for quick measurements
 
 ## Installation
 
@@ -18,72 +15,96 @@ Modern terminal-based control interface for Vector Network Analyzers.
 uv tool install .
 tina                # GUI mode
 tina --now          # CLI quick measurement
-
-# Or build standalone executables (Windows users)
-cd scripts && ./build.sh  # Creates dist/tina.exe
 ```
+
+## Project Structure
+
+```
+src/tina/
+├── config/          # Configuration & constants
+├── drivers/         # VNA drivers (auto-discovered!)
+├── utils/           # Utilities (colors, terminal, paths, touchstone)
+├── gui/             # GUI resources (CSS in styles.tcss)
+├── main.py          # Main application
+└── worker.py        # Threading with auto-detection
+```
+
+## Adding a New VNA Driver
+
+Create `src/tina/drivers/your_vna.py`:
+
+```python
+from .base import VNABase, VNAConfig
+
+class YourVNA(VNABase):
+    driver_name = "Your VNA Model"
+
+    @staticmethod
+    def idn_matcher(idn_string: str) -> bool:
+        return "your_model" in idn_string.lower()
+
+    # Implement required methods...
+```
+
+**Done!** Auto-discovered on startup. See `src/tina/drivers/README.md`.
 
 ## Quick Start
 
-**GUI Mode:** Connect → Configure → Measure → View Results  
-**CLI Mode:** `tina --now` (uses last settings)
+**GUI:** Connect → Configure → Measure → View Results
 
-**Tabs:** Measurement (setup) | Log (SCPI commands) | Results (plots)
+**CLI:**
+
+```bash
+tina --now                              # Quick measure
+tina --host 192.168.1.100 --points 201 # Custom params
+```
 
 ## Configuration
 
-**Connection:** VNA IP + VISA port (default: `inst0`)  
-**Measurement:** Frequency range, sweep points, averaging (with override checkboxes)  
-**Output:** Folder (`measurement/`), filename prefix, S-parameter selection
+- **Connection:** VNA IP + VISA port (default: `inst0`)
+- **Measurement:** Frequency range, sweep points, averaging
+- **Output:** Folder (`measurement/`), S-parameter selection
 
-## Output Files
-
-**Location:** `measurement/` folder (configurable)  
-**Formats:** `.s2p` (Touchstone) + `.png` plots (CLI mode)  
-**Example:** `measurement_20260127_143052.s2p`
-
-CLI mode also generates magnitude/phase PNG plots at 1080p resolution.
-
-## Plotting & CLI
-
-**Plots:** 1% outlier filtering, selectable parameters, color-coded traces  
-**Log Filtering:** TX/RX SCPI commands, progress, errors, debug info
-
-**CLI Examples:**
-
-```bash
-tina --now                                    # Quick measure
-tina --host 192.168.1.100 --points 201       # Custom params
-tina -n --all-sparams --plot-all              # All S-params + plots
-```
-
-**Key Options:** `--host`, `--start-freq`, `--stop-freq`, `--points`, `--averaging`, `--output-folder`, `--all-sparams`, `--plot-all`
-
-## Log Filtering
+All constants in `src/tina/config/constants.py`.
 
 ## Architecture
 
-**Two-thread design:** UI thread (responsive) + worker thread (VNA operations)  
-**Components:** `main.py` (GUI/CLI), `vna.py` (SCPI), `worker.py` (threading), `touchstone.py` (S2P export)
+- **Plugin System:** Drivers auto-discovered from `drivers/` folder
+- **Auto-detection:** Connects, reads `*IDN?`, switches to matching driver
+- **Modular:** Config, drivers, utils clearly separated
+- **SCPI library:** Reusable commands in `drivers/scpi_commands.py`
+
+Supported VNAs:
+
+- HP/Agilent/Keysight E5071 series
 
 ## Python API
 
 ```python
-from tina import VNA, VNAConfig, TouchstoneExporter
+from tina.drivers import VNAConfig, HPE5071B
+from tina.utils import TouchstoneExporter
 
 config = VNAConfig(host="192.168.1.100", start_freq_hz=10e6, stop_freq_hz=1500e6)
-with VNA(config) as vna:
+with HPE5071B(config) as vna:
     freqs, sparams = vna.perform_measurement()
     TouchstoneExporter().export(freqs, sparams, "measurement")
 ```
 
-## Development & Troubleshooting
+## Development
 
-**Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, Matplotlib  
-**Install:** `uv tool install .`
+**Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, Matplotlib
 
-**Common Issues:** Check VNA IP, ensure network connectivity, verify VNA not in manual mode, sweep points 2-1601
+**Structure:**
+
+- `config/` - Constants and settings
+- `drivers/` - VNA drivers with auto-discovery
+- `utils/` - Colors, terminal, paths, touchstone
+- `gui/` - TUI resources (CSS in `.tcss`)
 
 ## License
 
-MIT License
+MIT
+
+---
+
+<sub>This project is developed with the assistance of LLMs.</sub>
