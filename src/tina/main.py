@@ -49,6 +49,14 @@ from .config.settings import AppSettings, SettingsManager
 from .drivers import HPE5071B as VNA
 from .drivers import VNAConfig
 from .utils import TouchstoneExporter
+from .worker import (
+    LogMessage,
+    MeasurementResult,
+    MeasurementWorker,
+    MessageType,
+    ParamsResult,
+    ProgressUpdate,
+)
 
 # GUI-only imports - done at module level to ensure proper terminal detection
 try:
@@ -1170,21 +1178,6 @@ class VNAApp(App):
 
     def __init__(self):
         super().__init__()
-        from .worker import (
-            LogMessage,
-            MeasurementResult,
-            MeasurementWorker,
-            MessageType,
-            ParamsResult,
-            ProgressUpdate,
-        )
-
-        # Make worker classes available to instance methods
-        self.LogMessage = LogMessage
-        self.MeasurementResult = MeasurementResult
-        self.MessageType = MessageType
-        self.ParamsResult = ParamsResult
-        self.ProgressUpdate = ProgressUpdate
 
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load()
@@ -1686,15 +1679,15 @@ class VNAApp(App):
 
     def _handle_worker_message(self, msg):
         """Handle message from worker thread."""
-        if msg.type == self.MessageType.LOG:
-            log_msg: self.LogMessage = msg.data
+        if msg.type == MessageType.LOG:
+            log_msg: LogMessage = msg.data
             self.log_message(log_msg.message, log_msg.level)
 
-        elif msg.type == self.MessageType.PROGRESS:
-            update: self.ProgressUpdate = msg.data
+        elif msg.type == MessageType.PROGRESS:
+            update: ProgressUpdate = msg.data
             self.set_progress(update.message, update.progress_pct)
 
-        elif msg.type == self.MessageType.CONNECTED:
+        elif msg.type == MessageType.CONNECTED:
             idn = msg.data
             self.sub_title = idn
             self.connected = True
@@ -1703,7 +1696,7 @@ class VNAApp(App):
             self.enable_buttons_for_state()
             self.reset_progress()
 
-        elif msg.type == self.MessageType.DISCONNECTED:
+        elif msg.type == MessageType.DISCONNECTED:
             self.connected = False
             self.sub_title = ""
             self.log_message("Disconnected from VNA", "success")
@@ -1711,15 +1704,15 @@ class VNAApp(App):
             self.enable_buttons_for_state()
             self.reset_progress()
 
-        elif msg.type == self.MessageType.PARAMS_READ:
-            result: self.ParamsResult = msg.data
+        elif msg.type == MessageType.PARAMS_READ:
+            result: ParamsResult = msg.data
             self._update_params_ui(result)
             self.log_message("Parameters retrieved successfully", "success")
             self.enable_buttons_for_state()
             self.reset_progress()
 
-        elif msg.type == self.MessageType.MEASUREMENT_COMPLETE:
-            result: self.MeasurementResult = msg.data
+        elif msg.type == MessageType.MEASUREMENT_COMPLETE:
+            result: MeasurementResult = msg.data
             self.log_message(
                 f"Received measurement complete with {len(result.frequencies)} points",
                 "debug",
@@ -1727,7 +1720,7 @@ class VNAApp(App):
             # Schedule the async handler
             asyncio.create_task(self._handle_measurement_complete(result))
 
-        elif msg.type == self.MessageType.ERROR:
+        elif msg.type == MessageType.ERROR:
             self.log_message(msg.error, "error")
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
                 self.connected = False
@@ -1892,7 +1885,7 @@ class VNAApp(App):
             # Disconnect
             self.set_progress("Disconnecting...", 50)
             self.log_message("Disconnecting from VNA...", "progress")
-            self.worker.send_command(self.MessageType.DISCONNECT)
+            self.worker.send_command(MessageType.DISCONNECT)
         else:
             # Connect
             try:
@@ -1920,7 +1913,7 @@ class VNAApp(App):
                 self.log_message(f"Connecting to {self.config.host}...", "progress")
                 self.sub_title = "Connecting..."
 
-                self.worker.send_command(self.MessageType.CONNECT, self.config)
+                self.worker.send_command(MessageType.CONNECT, self.config)
 
             except Exception as e:
                 self.log_message(f"Connection setup failed: {str(e)}", "error")
@@ -1932,7 +1925,7 @@ class VNAApp(App):
         """Read current settings from VNA and populate inputs."""
         self.disable_all_buttons()
         self.log_message("Reading VNA parameters...", "progress")
-        self.worker.send_command(self.MessageType.READ_PARAMS)
+        self.worker.send_command(MessageType.READ_PARAMS)
 
     def _update_params_ui(self, result):
         """Update UI with parameters read from VNA."""
@@ -2004,9 +1997,9 @@ class VNAApp(App):
         self.log_message("Starting measurement...", "progress")
 
         # Send measurement command to worker
-        self.worker.send_command(self.MessageType.MEASURE, self.config)
+        self.worker.send_command(MessageType.MEASURE, self.config)
 
-    async def _handle_measurement_complete(self, result: self.MeasurementResult):
+    async def _handle_measurement_complete(self, result: MeasurementResult):
         """Handle completed measurement from worker thread."""
         try:
             self.log_message("Processing measurement result...", "debug")
