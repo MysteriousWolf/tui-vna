@@ -90,6 +90,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../res/icon.ico',
+    icon='../res/icon_quick.ico',
     distpath='dist',
 )
