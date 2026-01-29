@@ -55,7 +55,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=['../scripts/runtime_hook_quick.py'],
+    runtime_hooks=['../src/tina/utils/runtime_hook_quick.py'],
     excludes=[
         'tkinter.test',
         'test',
