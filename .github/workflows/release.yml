@@ -3,55 +3,14 @@ name: Build and Release
 on:
   push:
     tags:
-      - "v*.*.*" # Triggers on tags like v1.0.0, v1.2.3, etc.
+      - "v*.*.*"
+
+permissions:
+  contents: write
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-    steps:
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          # Get previous tag
-          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
-
-          if [ -z "$PREV_TAG" ]; then
-            echo "changelog=Initial release" >> $GITHUB_OUTPUT
-          else
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
-          body: ${{ steps.changelog.outputs.changelog }}
-          draft: false
-          prerelease: false
-
   build:
     name: Build on ${{ matrix.os }}
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -75,6 +34,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -107,22 +68,80 @@ jobs:
         if: runner.os == 'Windows'
         run: uv run pyinstaller --clean scripts/tina-quick.spec
 
-      - name: Upload main executable
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload binaries to artifacts
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./dist/${{ matrix.binary_name }}
-          asset_name: ${{ matrix.artifact_name }}
-          asset_content_type: application/octet-stream
+          name: ${{ matrix.os }}-binaries
+          path: |
+            dist/${{ matrix.binary_name }}
+            dist/${{ matrix.quick_binary_name }}
 
-      - name: Upload quick executable
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./dist/${{ matrix.quick_binary_name }}
-          asset_name: ${{ matrix.quick_artifact_name }}
-          asset_content_type: application/octet-stream
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+
+          # Linux
+          if [ -f artifacts/ubuntu-latest-binaries/tina ]; then
+            mv artifacts/ubuntu-latest-binaries/tina release-assets/tina-linux-x86_64
+            chmod +x release-assets/tina-linux-x86_64
+          fi
+          if [ -f artifacts/ubuntu-latest-binaries/tina-quick ]; then
+            mv artifacts/ubuntu-latest-binaries/tina-quick release-assets/tina-quick-linux-x86_64
+            chmod +x release-assets/tina-quick-linux-x86_64
+          fi
+
+          # Windows
+          if [ -f artifacts/windows-latest-binaries/tina.exe ]; then
+            mv artifacts/windows-latest-binaries/tina.exe release-assets/tina-windows-x86_64.exe
+          fi
+          if [ -f artifacts/windows-latest-binaries/tina-quick.exe ]; then
+            mv artifacts/windows-latest-binaries/tina-quick.exe release-assets/tina-quick-windows-x86_64.exe
+          fi
+
+          # macOS
+          if [ -f artifacts/macos-latest-binaries/tina ]; then
+            mv artifacts/macos-latest-binaries/tina release-assets/tina-macos-x86_64
+            chmod +x release-assets/tina-macos-x86_64
+          fi
+          if [ -f artifacts/macos-latest-binaries/tina-quick ]; then
+            mv artifacts/macos-latest-binaries/tina-quick release-assets/tina-quick-macos-x86_64
+            chmod +x release-assets/tina-quick-macos-x86_64
+          fi
+
+          ls -lah release-assets/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          else
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: release-assets/*
+          fail_on_unmatched_files: true
