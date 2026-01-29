@@ -1,6 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 from PyInstaller.utils.hooks import copy_metadata
+
+# Get absolute paths
+SPEC_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SPEC_DIR)
 
 # Copy metadata for packages that need it
 datas = []
@@ -22,7 +27,7 @@ except ImportError:
     pass
 
 a = Analysis(
-    ['../src/tina/main.py'],
+    [os.path.join(PROJECT_ROOT, 'src', 'tina', 'main.py')],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -92,6 +97,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../res/icon.ico',
+    icon=os.path.join(PROJECT_ROOT, 'res', 'icon.ico'),
     distpath='dist',
 )
