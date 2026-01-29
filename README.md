@@ -11,8 +11,36 @@ Terminal-based VNA control with **dynamic driver discovery**.
 
 ## Installation
 
+### Option 1: Download Pre-built Binaries (Recommended)
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/MysteriousWolf/tui-vna/releases):
+
+- **Windows**: `tina-windows-x86_64.exe`
+- **Linux**: `tina-linux-x86_64`
+- **macOS**: `tina-macos-x86_64`
+
+No installation required - just download and run!
+
+### Option 2: Install via uv (from GitHub)
+
 ```bash
+# Install directly from GitHub repository
+uv tool install git+https://github.com/MysteriousWolf/tui-vna
+
+# Run the application
+tina                # GUI mode
+tina --now          # CLI quick measurement
+```
+
+### Option 3: Install from Local Clone
+
+```bash
+# Clone and install
+git clone https://github.com/MysteriousWolf/tui-vna
+cd tui-vna
 uv tool install .
+
+# Run the application
 tina                # GUI mode
 tina --now          # CLI quick measurement
 ```
