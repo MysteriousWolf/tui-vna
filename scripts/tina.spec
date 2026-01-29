@@ -1,0 +1,89 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+from PyInstaller.utils.hooks import copy_metadata
+
+# Copy metadata for packages that need it
+datas = []
+try:
+    datas += copy_metadata('textual')
+except ImportError:
+    pass
+try:
+    datas += copy_metadata('pyvisa-py')
+except ImportError:
+    pass
+try:
+    datas += copy_metadata('textual-plotext')
+except ImportError:
+    pass
+try:
+    datas += copy_metadata('textual-image')
+except ImportError:
+    pass
+
+a = Analysis(
+    ['../src/tina/main.py'],
+    pathex=[],
+    binaries=[],
+    datas=datas,
+    hiddenimports=[
+        'pyvisa-py',
+        'textual',
+        'textual.app',
+        'textual.widgets',
+        'textual_plotext',
+        'textual_image',
+        'textual_image.widget',
+        'matplotlib',
+        'matplotlib.pyplot',
+        'numpy',
+        'skrf',
+        'platformdirs',
+        'queue',
+        'threading',
+        'asyncio',
+        'tina.config',
+        'tina.touchstone',
+        'tina.vna',
+        'tina.worker',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        'tkinter.test',
+        'test',
+        'tests',
+        'unittest',
+        'pydoc',
+        'doctest',
+        'xmlrpc',
+    ],
+    noarchive=False,
+    optimize=0,
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='tina',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='../res/icon.ico',
+    distpath='dist',
+)
