@@ -3,9 +3,8 @@
 import os
 from PyInstaller.utils.hooks import copy_metadata
 
-# Get absolute paths
-SPEC_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SPEC_DIR)
+# Get absolute paths - SPECPATH is the directory containing the spec file
+PROJECT_ROOT = os.path.dirname(SPECPATH)
 
 # Copy metadata for packages that need it
 datas = []
