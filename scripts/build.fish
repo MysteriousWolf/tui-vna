@@ -24,7 +24,7 @@ cd $project_root
 rm -rf build dist
 echo
 
-echo "Building main GUI executable (tina)..."
+echo "Building main TUI executable (tina)..."
 cd $project_root
 uv run pyinstaller --clean scripts/tina.spec
 if test $status -ne 0
@@ -46,7 +46,7 @@ echo "Build completed successfully!"
 echo
 
 echo "Executables created:"
-echo "  dist/tina        - Main GUI application"
+echo "  dist/tina        - Main TUI application"
 echo "  dist/tina-quick  - Quick measure (double-click to measure)"
 echo
 

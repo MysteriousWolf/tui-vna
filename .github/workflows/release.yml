@@ -1,0 +1,128 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*" # Triggers on tags like v1.0.0, v1.2.3, etc.
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          else
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ steps.get_version.outputs.version }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+
+  build:
+    name: Build on ${{ matrix.os }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary_name: tina
+            quick_binary_name: tina-quick
+            artifact_name: tina-linux-x86_64
+            quick_artifact_name: tina-quick-linux-x86_64
+          - os: windows-latest
+            binary_name: tina.exe
+            quick_binary_name: tina-quick.exe
+            artifact_name: tina-windows-x86_64.exe
+            quick_artifact_name: tina-quick-windows-x86_64.exe
+          - os: macos-latest
+            binary_name: tina
+            quick_binary_name: tina-quick
+            artifact_name: tina-macos-x86_64
+            quick_artifact_name: tina-quick-macos-x86_64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          uv add --group dev pyinstaller
+
+      - name: Build main executable (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: uv run pyinstaller --clean scripts/tina.spec
+
+      - name: Build quick executable (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: uv run pyinstaller --clean scripts/tina-quick.spec
+
+      - name: Build main executable (Windows)
+        if: runner.os == 'Windows'
+        run: uv run pyinstaller --clean scripts/tina.spec
+
+      - name: Build quick executable (Windows)
+        if: runner.os == 'Windows'
+        run: uv run pyinstaller --clean scripts/tina-quick.spec
+
+      - name: Upload main executable
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./dist/${{ matrix.binary_name }}
+          asset_name: ${{ matrix.artifact_name }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload quick executable
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./dist/${{ matrix.quick_binary_name }}
+          asset_name: ${{ matrix.quick_artifact_name }}
+          asset_content_type: application/octet-stream

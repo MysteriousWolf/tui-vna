@@ -15,7 +15,7 @@ rm -rf build dist
 popd
 echo
 
-echo "Building main GUI executable (tina)..."
+echo "Building main TUI executable (tina)..."
 pushd ..
 uv run pyinstaller --clean scripts/tina.spec
 if [ $? -ne 0 ]; then
@@ -40,7 +40,7 @@ echo
 echo "Build completed successfully!"
 echo
 echo "Executables created:"
-echo "  dist/tina        - Main GUI application"
+echo "  dist/tina        - Main TUI application"
 echo "  dist/tina-quick  - Quick measure (double-click to measure)"
 echo
 echo "You can distribute these executables to users."

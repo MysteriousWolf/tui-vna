@@ -15,7 +15,7 @@ if exist dist rmdir /s /q dist
 popd
 echo.
 
-echo Building main GUI executable (tina.exe)...
+echo Building main TUI executable (tina.exe)...
 pushd ..
 uv run pyinstaller --clean scripts\tina.spec
 if errorlevel 1 (
@@ -42,7 +42,7 @@ echo.
 echo Build completed successfully!
 echo.
 echo Executables created:
-echo   dist\tina.exe        - Main GUI application
+echo   dist\tina.exe        - Main TUI application
 echo   dist\tina-quick.exe  - Quick measure (double-click to measure)
 echo.
 echo You can distribute these .exe files to Windows users.
