@@ -64,7 +64,6 @@ a = Analysis(
         'tkinter.test',
         'test',
         'tests',
-        'unittest',
         'pydoc',
         'doctest',
         'xmlrpc',
