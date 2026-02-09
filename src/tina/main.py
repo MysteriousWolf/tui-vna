@@ -2734,7 +2734,15 @@ class VNAApp(App):
                 freq_mhz = filtered_freqs / 1e6
                 plot_colors = _get_plot_colors(self.get_css_variables())
 
-                # Plot each parameter (data already collected in all_y_data above)
+                # Calculate Y limits first (before plotting)
+                if all_y_data:
+                    y_min = user_y_min if user_y_min is not None else auto_y_min
+                    y_max = user_y_max if user_y_max is not None else auto_y_max
+                else:
+                    y_min = None
+                    y_max = None
+
+                # Plot each parameter, filtering out traces with no visible data
                 for param in plot_params:
                     # Select data based on plot type (use filtered data)
                     if plot_type == "magnitude":
@@ -2744,6 +2752,19 @@ class VNAApp(App):
                     else:  # phase_raw
                         param_data = filtered_sparams[param][1]
 
+                    # Skip empty traces (can happen if all data filtered out)
+                    if len(param_data) == 0:
+                        continue
+
+                    # If Y limits are set, check if trace has any visible data
+                    # This prevents plotext from crashing when rendering legend
+                    # for traces that are completely outside the plot range
+                    if y_min is not None and y_max is not None:
+                        # Check if any data points fall within Y range
+                        if not np.any((param_data >= y_min) & (param_data <= y_max)):
+                            # Skip this trace - it's completely outside Y range
+                            continue
+
                     plt_term.plot(
                         freq_mhz.tolist(),
                         param_data.tolist(),
@@ -2752,10 +2773,8 @@ class VNAApp(App):
                         color=plot_colors["traces_rgb"].get(param, (255, 255, 255)),
                     )
 
-                # Apply Y-axis limits (use user limits if provided, otherwise auto)
-                if all_y_data:
-                    y_min = user_y_min if user_y_min is not None else auto_y_min
-                    y_max = user_y_max if user_y_max is not None else auto_y_max
+                # Apply Y-axis limits after plotting
+                if y_min is not None and y_max is not None:
                     plt_term.ylim(y_min, y_max)
 
                 # Labels and formatting
