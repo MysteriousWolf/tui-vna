@@ -5,8 +5,6 @@ Provides complete VNA implementations that can be used as drop-in replacements
 for real drivers in tests.
 """
 
-from typing import Dict, Optional, Tuple
-
 import numpy as np
 
 from src.tina.drivers.base import VNABase, VNAConfig
@@ -27,9 +25,9 @@ class MockVNA(VNABase):
         """Match any IDN string containing 'MOCK'."""
         return "mock" in idn_string.lower()
 
-    def __init__(self, config: Optional[VNAConfig] = None):
+    def __init__(self, config: VNAConfig | None = None):
         super().__init__(config)
-        self.inst: Optional[MockVisaResource] = None
+        self.inst: MockVisaResource | None = None
         self._connection_attempts = 0
 
     def connect(self, progress_callback=None) -> bool:
@@ -117,7 +115,7 @@ class MockVNA(VNABase):
         freqs = self.inst.query_ascii_values(":SENS:FREQ:DATA?")
         return np.array(freqs)
 
-    def get_sparam_data(self, param_num: int) -> Tuple[np.ndarray, np.ndarray]:
+    def get_sparam_data(self, param_num: int) -> tuple[np.ndarray, np.ndarray]:
         """Get S-parameter data."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -138,14 +136,14 @@ class MockVNA(VNABase):
 
         return mag_db, phase_deg
 
-    def get_all_sparameters(self) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    def get_all_sparameters(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """Get all S-parameters."""
         sparams = {}
         for idx, name in enumerate(["S11", "S21", "S12", "S22"], start=1):
             sparams[name] = self.get_sparam_data(idx)
         return sparams
 
-    def get_current_parameters(self) -> Dict[str, any]:
+    def get_current_parameters(self) -> dict[str, any]:
         """Get current VNA settings."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -158,7 +156,7 @@ class MockVNA(VNABase):
             "averaging_count": int(self.inst.query(":SENS:AVER:COUN?")),
         }
 
-    def save_trigger_state(self) -> Tuple[str, bool]:
+    def save_trigger_state(self) -> tuple[str, bool]:
         """Save trigger state."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -167,7 +165,7 @@ class MockVNA(VNABase):
         continuous = self.inst.query(":INIT:CONT?") == "1"
         return (trigger, continuous)
 
-    def restore_trigger_state(self, state: Tuple[str, bool]) -> None:
+    def restore_trigger_state(self, state: tuple[str, bool]) -> None:
         """Restore trigger state."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -195,7 +193,7 @@ class MockE5071B(MockVNA):
             pattern in idn_lower for pattern in ["e5071", "e5071a", "e5071b", "e5071c"]
         )
 
-    def __init__(self, config: Optional[VNAConfig] = None):
+    def __init__(self, config: VNAConfig | None = None):
         super().__init__(config)
 
     def connect(self, progress_callback=None) -> bool:
@@ -280,7 +278,7 @@ class MockE5071B(MockVNA):
         freqs = self.inst.query_ascii_values(":SENS1:FREQ:DATA?")
         return np.array(freqs)
 
-    def get_sparam_data(self, param_num: int) -> Tuple[np.ndarray, np.ndarray]:
+    def get_sparam_data(self, param_num: int) -> tuple[np.ndarray, np.ndarray]:
         """Get S-parameter data with HP-specific commands."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -302,7 +300,7 @@ class MockE5071B(MockVNA):
 
         return mag_db, phase_deg
 
-    def get_current_parameters(self) -> Dict[str, any]:
+    def get_current_parameters(self) -> dict[str, any]:
         """Get current settings with HP-specific commands."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -315,7 +313,7 @@ class MockE5071B(MockVNA):
             "averaging_count": int(self.inst.query(":SENS1:AVER:COUN?")),
         }
 
-    def save_trigger_state(self) -> Tuple[str, bool]:
+    def save_trigger_state(self) -> tuple[str, bool]:
         """Save trigger state with HP-specific commands."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -324,7 +322,7 @@ class MockE5071B(MockVNA):
         continuous = self.inst.query(":INIT1:CONT?") == "1"
         return (trigger, continuous)
 
-    def restore_trigger_state(self, state: Tuple[str, bool]) -> None:
+    def restore_trigger_state(self, state: tuple[str, bool]) -> None:
         """Restore trigger state with HP-specific commands."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")

@@ -13,23 +13,18 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
-from typing import Dict, Optional, Tuple
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
-from skrf.plotting import smith
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.reactive import reactive
-from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
-    DataTable,
     Footer,
     Header,
     Input,
@@ -506,7 +501,6 @@ def _create_matplotlib_plot(
         colors = _get_plot_colors()
     fg_color = colors["fg"]
     grid_color = colors["grid"]
-    bg_color = "none" if transparent else colors["bg"]
 
     # Calculate figure size in inches from pixel dimensions
     if pixel_width and pixel_height:
@@ -639,7 +633,6 @@ def _create_smith_chart(
         colors = _get_plot_colors()
     fg_color = colors["fg"]
     grid_color = colors["grid"]
-    bg_color = "none" if transparent else colors["bg"]
 
     # Calculate figure size in inches from pixel dimensions
     # Smith charts MUST be square to display correctly
@@ -1393,9 +1386,12 @@ class VNAApp(App):
                                     ("Terminal", "terminal"),
                                     ("Image", "image"),
                                 ],
-                                value=self.settings.plot_backend
-                                if self.settings.plot_backend in ["terminal", "image"]
-                                else "terminal",
+                                value=(
+                                    self.settings.plot_backend
+                                    if self.settings.plot_backend
+                                    in ["terminal", "image"]
+                                    else "terminal"
+                                ),
                                 id="select_plot_backend",
                             )
                             yield Label("Type:")
@@ -1405,10 +1401,12 @@ class VNAApp(App):
                                     ("Phase", "phase"),
                                     ("Phase Raw", "phase_raw"),
                                 ],
-                                value=self.settings.plot_type
-                                if self.settings.plot_type
-                                in ["magnitude", "phase", "phase_raw"]
-                                else "magnitude",
+                                value=(
+                                    self.settings.plot_type
+                                    if self.settings.plot_type
+                                    in ["magnitude", "phase", "phase_raw"]
+                                    else "magnitude"
+                                ),
                                 id="select_plot_type",
                             )
                             yield Label("Show:")
@@ -1822,7 +1820,7 @@ class VNAApp(App):
             if checkbox_id:
                 return self.query_one(checkbox_id, Checkbox).value
             return True  # Show by default if unknown level
-        except:
+        except Exception:
             # During initialization, show everything
             return True
 
@@ -2130,9 +2128,9 @@ class VNAApp(App):
                     ("Touchstone Files", "*.s2p"),
                     ("All Files", "*.*"),
                 ],
-                initialdir=self.settings.output_folder
-                if self.settings.output_folder
-                else ".",
+                initialdir=(
+                    self.settings.output_folder if self.settings.output_folder else "."
+                ),
             )
             root.destroy()
 
@@ -2196,9 +2194,9 @@ class VNAApp(App):
                 title="Export Plot as PNG",
                 defaultextension=".png",
                 filetypes=[("PNG Image", "*.png"), ("All Files", "*.*")],
-                initialdir=self.settings.output_folder
-                if self.settings.output_folder
-                else ".",
+                initialdir=(
+                    self.settings.output_folder if self.settings.output_folder else "."
+                ),
                 initialfile=default_name,
             )
             root.destroy()
@@ -2267,9 +2265,9 @@ class VNAApp(App):
                 title="Export Plot as SVG",
                 defaultextension=".svg",
                 filetypes=[("SVG Vector Image", "*.svg"), ("All Files", "*.*")],
-                initialdir=self.settings.output_folder
-                if self.settings.output_folder
-                else ".",
+                initialdir=(
+                    self.settings.output_folder if self.settings.output_folder else "."
+                ),
                 initialfile=default_name,
             )
             root.destroy()
@@ -2382,7 +2380,7 @@ class VNAApp(App):
                             "string:",
                         ]
                     )
-                except:
+                except Exception:
                     # Fall back to just opening the folder
                     for fm in ["xdg-open", "nautilus", "dolphin", "thunar", "nemo"]:
                         try:
@@ -2538,12 +2536,12 @@ class VNAApp(App):
         # Update input placeholders with original values and unit
         freq_min_orig = freqs[0] / multiplier
         freq_max_orig = freqs[-1] / multiplier
-        self.query_one(
-            "#input_plot_freq_min", Input
-        ).placeholder = f"Min: {freq_min_orig:.2f} {freq_unit}"
-        self.query_one(
-            "#input_plot_freq_max", Input
-        ).placeholder = f"Max: {freq_max_orig:.2f} {freq_unit}"
+        self.query_one("#input_plot_freq_min", Input).placeholder = (
+            f"Min: {freq_min_orig:.2f} {freq_unit}"
+        )
+        self.query_one("#input_plot_freq_max", Input).placeholder = (
+            f"Max: {freq_max_orig:.2f} {freq_unit}"
+        )
 
         # Apply frequency filtering based on user input
         freq_min_str = self.query_one("#input_plot_freq_min", Input).value.strip()
@@ -2702,12 +2700,12 @@ class VNAApp(App):
                     )
             else:
                 # Smith chart or no data - set generic placeholders
-                self.query_one(
-                    "#input_plot_y_min", Input
-                ).placeholder = "Min (N/A for Smith)"
-                self.query_one(
-                    "#input_plot_y_max", Input
-                ).placeholder = "Max (N/A for Smith)"
+                self.query_one("#input_plot_y_min", Input).placeholder = (
+                    "Min (N/A for Smith)"
+                )
+                self.query_one("#input_plot_y_max", Input).placeholder = (
+                    "Max (N/A for Smith)"
+                )
 
             # Check if smith chart is selected
             if plot_type == "smith" and plot_backend == "terminal":
@@ -2856,7 +2854,7 @@ class VNAApp(App):
                     )
                     await results_container.mount(
                         Static(
-                            f"[red]Failed to generate plot image[/red]",
+                            "[red]Failed to generate plot image[/red]",
                             markup=True,
                         )
                     )
@@ -2967,7 +2965,7 @@ class VNAApp(App):
                             "debug",
                         )
                         await results_container.mount(img_widget)
-                        self.log_message(f"Image widget mounted successfully", "debug")
+                        self.log_message("Image widget mounted successfully", "debug")
                     except Exception as e:
                         self.log_message(f"Failed to display image: {e}", "error")
                         # Fallback: show file location
@@ -2982,7 +2980,7 @@ class VNAApp(App):
         else:
             await results_container.mount(
                 Static(
-                    f"\n[bold yellow]No parameters selected for plotting[/bold yellow]",
+                    "\n[bold yellow]No parameters selected for plotting[/bold yellow]",
                     markup=True,
                 )
             )
@@ -3242,7 +3240,7 @@ def create_vna_config(settings: AppSettings) -> VNAConfig:
 
 def export_plots_cli(
     frequencies: np.ndarray,
-    s_parameters: Dict[str, Tuple[np.ndarray, np.ndarray]],
+    s_parameters: dict[str, tuple[np.ndarray, np.ndarray]],
     settings: AppSettings,
     output_path: str,
     base_filename: str,

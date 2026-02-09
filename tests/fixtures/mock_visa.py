@@ -5,8 +5,7 @@ Provides realistic SCPI instrument simulation for comprehensive testing.
 """
 
 import time
-from typing import Any, Dict, List
-from unittest.mock import MagicMock
+from typing import Any
 
 import numpy as np
 import pyvisa
@@ -57,9 +56,9 @@ class MockVisaResource:
         self._data_format = "ASC"
 
         # Command/query tracking
-        self.command_history: List[str] = []
-        self.query_history: List[str] = []
-        self.call_count: Dict[str, int] = {}
+        self.command_history: list[str] = []
+        self.query_history: list[str] = []
+        self.call_count: dict[str, int] = {}
 
     def _track_call(self, command: str) -> None:
         """Track command calls for verification."""
@@ -222,7 +221,7 @@ class MockVisaResource:
         else:
             return "0"
 
-    def query_ascii_values(self, command: str) -> List[float]:
+    def query_ascii_values(self, command: str) -> list[float]:
         """
         Simulate querying ASCII values (arrays).
 
@@ -318,7 +317,7 @@ class MockResourceManager:
             backend: VISA backend string (ignored in mock)
         """
         self.backend = backend
-        self._resources: Dict[str, MockVisaResource] = {}
+        self._resources: dict[str, MockVisaResource] = {}
 
     def open_resource(self, resource_name: str, **kwargs: Any) -> MockVisaResource:
         """
@@ -340,7 +339,7 @@ class MockResourceManager:
 
         return self._resources[resource_name]
 
-    def list_resources(self) -> List[str]:
+    def list_resources(self) -> list[str]:
         """List available mock resources."""
         return list(self._resources.keys())
 

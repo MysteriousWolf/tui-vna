@@ -9,7 +9,6 @@ import pytest
 import pyvisa
 
 from src.tina.drivers.base import VNAConfig, detect_vna_driver, discover_drivers
-from src.tina.drivers.hp_e5071b import HPE5071B
 from src.tina.utils.touchstone import TouchstoneExporter
 from tests.fixtures.mock_visa import MockVisaResource as DummyVisaResource
 from tests.fixtures.mock_vna import MockVNA as DummyVNA

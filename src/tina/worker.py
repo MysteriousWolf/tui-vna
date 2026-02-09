@@ -11,7 +11,7 @@ import threading
 import traceback
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -45,7 +45,7 @@ class Message:
 
     type: MessageType
     data: Any = None
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -61,7 +61,7 @@ class MeasurementResult:
     """Measurement result data."""
 
     frequencies: np.ndarray
-    sparams: Dict[str, Tuple[np.ndarray, np.ndarray]]
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]]
 
 
 @dataclass
@@ -113,11 +113,11 @@ class MeasurementWorker:
         """Initialize worker thread."""
         self._command_queue: queue.Queue = queue.Queue()
         self._response_queue: queue.Queue = queue.Queue()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._running = False
-        self._vna: Optional[VNABase] = None
-        self._vna_wrapper: Optional[LoggingVNAWrapper] = None
-        self._config: Optional[VNAConfig] = None
+        self._vna: VNABase | None = None
+        self._vna_wrapper: LoggingVNAWrapper | None = None
+        self._config: VNAConfig | None = None
 
     def start(self):
         """Start the worker thread."""
@@ -172,7 +172,7 @@ class MeasurementWorker:
         return self._response_queue.get(timeout=timeout)
 
     def _send_response(
-        self, msg_type: MessageType, data: Any = None, error: Optional[str] = None
+        self, msg_type: MessageType, data: Any = None, error: str | None = None
     ):
         """Send response to UI thread."""
         self._response_queue.put(Message(type=msg_type, data=data, error=error))

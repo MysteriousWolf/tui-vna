@@ -14,11 +14,9 @@ import pytest
 from src.tina.drivers.base import VNAConfig
 from src.tina.worker import (
     LogMessage,
-    MeasurementResult,
     MeasurementWorker,
     MessageType,
     ParamsResult,
-    ProgressUpdate,
 )
 
 
@@ -300,15 +298,13 @@ class TestWorkerProgressUpdates:
 
         worker.send_command(MessageType.CONNECT, vna_config)
 
-        # Collect messages - should see progress updates
-        progress_received = False
-
+        # Collect messages until we receive CONNECTED
         for _ in range(10):
             try:
                 msg = worker.get_response(timeout=0.5)
 
                 if msg.type == MessageType.PROGRESS:
-                    progress_received = True
+                    pass  # Progress updates are optional and timing-dependent
                 elif msg.type == MessageType.CONNECTED:
                     break
 
