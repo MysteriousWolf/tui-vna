@@ -81,6 +81,14 @@ extend-exclude = '''
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -91,12 +99,6 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by black)
-]
-exclude = [
-    ".git",
-    ".venv",
-    "build",
-    "dist",
 ]
 
 [tool.coverage.run]
