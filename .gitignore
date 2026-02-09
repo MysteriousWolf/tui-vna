@@ -48,3 +48,11 @@ measurement/
 *.toc
 *.pkg
 *.exe
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+.hypothesis/
