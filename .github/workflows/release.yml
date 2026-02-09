@@ -9,7 +9,12 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Run tests before release
+    uses: ./.github/workflows/test.yml
+
   build:
+    needs: test
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
