@@ -4,8 +4,6 @@ Sample measurement data generators for testing.
 Provides realistic S-parameter data that mimics real VNA measurements.
 """
 
-from typing import Dict, Tuple
-
 import numpy as np
 
 
@@ -40,7 +38,7 @@ def generate_realistic_s11(
     resonance_freq: float = None,
     q_factor: float = 50.0,
     return_loss_db: float = -15.0,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Generate realistic S11 (reflection) data with resonance features.
 
@@ -93,7 +91,7 @@ def generate_realistic_s21(
     insertion_loss_db: float = -0.5,
     rolloff_db_per_decade: float = -20.0,
     cutoff_freq: float = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Generate realistic S21 (forward transmission) data.
 
@@ -114,17 +112,14 @@ def generate_realistic_s21(
     if cutoff_freq is None:
         cutoff_freq = frequencies[-1] * 0.7
 
-    # Normalize frequency
-    t = frequencies / frequencies[-1]
-
     # Low-pass filter response
     s = 1j * 2 * np.pi * frequencies
     s0 = 1j * 2 * np.pi * cutoff_freq
-    H = 1 / (1 + s / s0)
+    h = 1 / (1 + s / s0)
 
     # Convert to dB and phase
-    magnitude_db = 20 * np.log10(np.abs(H)) + insertion_loss_db
-    phase_deg = np.angle(H, deg=True)
+    magnitude_db = 20 * np.log10(np.abs(h)) + insertion_loss_db
+    phase_deg = np.angle(h, deg=True)
 
     # Add realistic noise
     magnitude_db += np.random.normal(0, 0.05, len(frequencies))
@@ -136,7 +131,7 @@ def generate_realistic_s21(
 def generate_realistic_s12(
     frequencies: np.ndarray,
     **kwargs,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Generate realistic S12 (reverse transmission) data.
 
@@ -163,7 +158,7 @@ def generate_realistic_s12(
 def generate_realistic_s22(
     frequencies: np.ndarray,
     **kwargs,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Generate realistic S22 (output reflection) data.
 
@@ -194,7 +189,7 @@ def generate_realistic_s22(
 def generate_sample_sparameters(
     frequencies: np.ndarray,
     **kwargs,
-) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """
     Generate complete 2-port S-parameter dataset.
 
@@ -214,7 +209,7 @@ def generate_sample_sparameters(
     }
 
 
-def generate_matched_load() -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+def generate_matched_load() -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """
     Generate S-parameters for a perfectly matched 50Ω load.
 
@@ -237,7 +232,7 @@ def generate_matched_load() -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
     }
 
 
-def generate_open_circuit() -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+def generate_open_circuit() -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """
     Generate S-parameters for an open circuit termination.
 
@@ -259,7 +254,7 @@ def generate_open_circuit() -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
     }
 
 
-def generate_short_circuit() -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+def generate_short_circuit() -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """
     Generate S-parameters for a short circuit termination.
 

@@ -6,7 +6,6 @@ Implements VNABase interface for HP/Agilent E5071B series VNAs.
 
 import socket
 import time
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pyvisa
@@ -15,7 +14,6 @@ from ..config.constants import (
     COMMAND_TIMEOUT_MS,
     LOG_EPSILON,
     OPERATION_TIMEOUT_SEC,
-    PARAM_SETUP_TIMEOUT_SEC,
     SCPI_RAW_PORT,
     SOCKET_TIMEOUT_SEC,
     SWEEP_TIMEOUT_SEC,
@@ -77,7 +75,7 @@ class HPE5071B(VNABase):
             ]
         )
 
-    def __init__(self, config: Optional[VNAConfig] = None):
+    def __init__(self, config: VNAConfig | None = None):
         """
         Initialize HP E5071B VNA controller.
 
@@ -85,7 +83,7 @@ class HPE5071B(VNABase):
             config: VNA configuration (uses defaults if None)
         """
         super().__init__(config)
-        self.inst: Optional[pyvisa.resources.Resource] = None
+        self.inst: pyvisa.resources.Resource | None = None
 
     def _check_host_reachable(
         self, host: str, timeout: float = SOCKET_TIMEOUT_SEC
@@ -109,7 +107,7 @@ class HPE5071B(VNABase):
                     result = sock.connect_ex((host, port))
                     if result == 0:
                         return True
-            except (socket.error, OSError):
+            except OSError:
                 continue
         return False
 
@@ -199,12 +197,12 @@ class HPE5071B(VNABase):
         self._ensure_connected()
         return self.inst.query(command)
 
-    def _query_ascii_values(self, command: str) -> List[float]:
+    def _query_ascii_values(self, command: str) -> list[float]:
         """Query ASCII values."""
         self._ensure_connected()
         return self.inst.query_ascii_values(command)
 
-    def get_current_parameters(self) -> Dict[str, any]:
+    def get_current_parameters(self) -> dict[str, any]:
         """
         Query current VNA settings.
 
@@ -345,7 +343,7 @@ class HPE5071B(VNABase):
         self._send_command(cmd_set_trigger_source(source))
         time.sleep(0.1)
 
-    def save_trigger_state(self) -> Tuple[str, bool]:
+    def save_trigger_state(self) -> tuple[str, bool]:
         """
         Save current trigger configuration.
 
@@ -357,7 +355,7 @@ class HPE5071B(VNABase):
         continuous = continuous_resp in ("1", "ON")
         return (trigger, continuous)
 
-    def restore_trigger_state(self, state: Tuple[str, bool]) -> None:
+    def restore_trigger_state(self, state: tuple[str, bool]) -> None:
         """
         Restore trigger configuration.
 
@@ -410,7 +408,7 @@ class HPE5071B(VNABase):
         freqs = self._query_ascii_values(CMD_GET_FREQ_DATA)
         return np.array(freqs, dtype=float)
 
-    def get_sparam_data(self, param_num: int) -> Tuple[np.ndarray, np.ndarray]:
+    def get_sparam_data(self, param_num: int) -> tuple[np.ndarray, np.ndarray]:
         """
         Get S-parameter data for a specific parameter.
 
@@ -441,7 +439,7 @@ class HPE5071B(VNABase):
 
         return mag_db, phase_deg
 
-    def get_all_sparameters(self) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    def get_all_sparameters(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """
         Get all S-parameter data.
 

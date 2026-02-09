@@ -1,7 +1,6 @@
 """Tests for settings persistence and management."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -104,7 +103,7 @@ class TestSettingsManager:
 
         assert settings_manager.config_file.exists()
 
-        with open(settings_manager.config_file, "r") as f:
+        with open(settings_manager.config_file) as f:
             data = json.load(f)
 
         assert data["last_host"] == "192.168.1.100"

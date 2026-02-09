@@ -5,8 +5,7 @@ Tests HP-specific functionality including connection, configuration,
 measurement sequences, and SCPI command generation.
 """
 
-import socket
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest

@@ -4,7 +4,7 @@ Logging wrapper for VNA drivers.
 Automatically logs all SCPI commands sent to the VNA for debugging and monitoring.
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
 from ..drivers.base import VNABase

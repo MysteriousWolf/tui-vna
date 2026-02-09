@@ -6,7 +6,6 @@ Tests S-parameter file I/O including format validation and data integrity.
 
 import os
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -62,7 +61,7 @@ class TestTouchstoneExporter:
             assert output_path.endswith(".s2p")
 
             # Verify file has content
-            with open(output_path, "r") as f:
+            with open(output_path) as f:
                 content = f.read()
                 assert len(content) > 0
                 assert "# MHz S DB R 50" in content  # Option line
@@ -122,7 +121,7 @@ class TestTouchstoneExporter:
                     sample_frequencies, sample_sparameters, tmpdir
                 )
 
-                with open(output_path, "r") as f:
+                with open(output_path) as f:
                     content = f.read()
                     assert f"# {unit} S DB R" in content
 
@@ -149,11 +148,13 @@ class TestTouchstoneExporter:
             assert os.path.exists(output_path)
 
             # Verify file content
-            with open(output_path, "r") as f:
+            with open(output_path) as f:
                 lines = f.readlines()
                 # Find first data line (after comments and option line)
                 data_lines = [
-                    l for l in lines if l.strip() and not l.startswith(("!", "#"))
+                    line
+                    for line in lines
+                    if line.strip() and not line.startswith(("!", "#"))
                 ]
                 # Should have fewer columns than full 4-port
                 assert len(data_lines) > 0
@@ -321,7 +322,7 @@ class TestTouchstoneFormat:
                 sample_frequencies, sample_sparameters, tmpdir
             )
 
-            with open(output_path, "r") as f:
+            with open(output_path) as f:
                 content = f.read()
                 # Option line format: # <freq_unit> S <format> R <impedance>
                 assert "# MHz S DB R 50" in content
@@ -336,11 +337,11 @@ class TestTouchstoneFormat:
                 sample_frequencies, sample_sparameters, tmpdir
             )
 
-            with open(output_path, "r") as f:
+            with open(output_path) as f:
                 lines = f.readlines()
 
             # Check for comment lines
-            comment_lines = [l for l in lines if l.startswith("!")]
+            comment_lines = [line for line in lines if line.startswith("!")]
             assert len(comment_lines) > 0
 
             # Check for specific metadata
@@ -359,12 +360,14 @@ class TestTouchstoneFormat:
                 sample_frequencies, sample_sparameters, tmpdir
             )
 
-            with open(output_path, "r") as f:
+            with open(output_path) as f:
                 lines = f.readlines()
 
             # Find first data line
             data_lines = [
-                l for l in lines if l.strip() and not l.startswith(("!", "#"))
+                line
+                for line in lines
+                if line.strip() and not line.startswith(("!", "#"))
             ]
 
             assert len(data_lines) > 0

@@ -2,10 +2,8 @@
 Touchstone file export for S-parameter data.
 """
 
-import math
 import os
 from datetime import datetime
-from typing import Dict, Tuple
 
 import numpy as np
 
@@ -32,7 +30,7 @@ class TouchstoneExporter:
     def export(
         self,
         frequencies_hz: np.ndarray,
-        s_parameters: Dict[str, Tuple[np.ndarray, np.ndarray]],
+        s_parameters: dict[str, tuple[np.ndarray, np.ndarray]],
         output_path: str,
         filename: str = None,
         prefix: str = "measurement",
@@ -128,7 +126,7 @@ class TouchstoneExporter:
     @staticmethod
     def import_file(
         file_path: str,
-    ) -> Tuple[np.ndarray, Dict[str, Tuple[np.ndarray, np.ndarray]]]:
+    ) -> tuple[np.ndarray, dict[str, tuple[np.ndarray, np.ndarray]]]:
         """
         Import S-parameters from Touchstone file (.s2p format).
 
@@ -150,7 +148,7 @@ class TouchstoneExporter:
         frequencies = []
         s_params = {"S11": ([], []), "S21": ([], []), "S12": ([], []), "S22": ([], [])}
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
 

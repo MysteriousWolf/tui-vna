@@ -5,10 +5,8 @@ Provides mocks, fixtures, and helpers for testing without hardware.
 """
 
 import queue
-from typing import Dict, Tuple
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 import pyvisa
 

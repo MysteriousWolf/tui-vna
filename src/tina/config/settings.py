@@ -10,7 +10,6 @@ Provides cross-platform configuration storage following OS conventions:
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Optional
 
 from platformdirs import user_config_dir
 
@@ -22,8 +21,8 @@ class AppSettings:
     # Connection settings
     last_host: str = ""
     last_port: str = "inst0"
-    host_history: List[str] = None
-    port_history: List[str] = None
+    host_history: list[str] = None
+    port_history: list[str] = None
 
     # Measurement parameters
     freq_unit: str = "MHz"
@@ -94,7 +93,7 @@ class SettingsManager:
             return self.settings
 
         try:
-            with open(self.config_file, "r", encoding="utf-8") as f:
+            with open(self.config_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             # Convert dict to dataclass
@@ -105,13 +104,13 @@ class SettingsManager:
 
             return self.settings
 
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
+        except (json.JSONDecodeError, TypeError, ValueError):
             # If config is corrupted, start fresh with defaults
             self.settings = AppSettings()
             self.settings.port_history = self.DEFAULT_PORTS.copy()
             return self.settings
 
-    def save(self, settings: Optional[AppSettings] = None) -> None:
+    def save(self, settings: AppSettings | None = None) -> None:
         """
         Save settings to disk.
 
@@ -187,7 +186,7 @@ class SettingsManager:
         # Limit history size
         self._merge_port_history()
 
-    def get_port_options(self) -> List[tuple[str, str]]:
+    def get_port_options(self) -> list[tuple[str, str]]:
         """
         Get port options for dropdown (value, label).
 
@@ -231,7 +230,7 @@ class SettingsManager:
                 : self.MAX_HOST_HISTORY
             ]
 
-    def get_host_options(self) -> List[tuple[str, str]]:
+    def get_host_options(self) -> list[tuple[str, str]]:
         """
         Get host options for dropdown (value, label).
 

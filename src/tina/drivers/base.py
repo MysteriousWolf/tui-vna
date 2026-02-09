@@ -10,9 +10,9 @@ an IDN pattern matcher.
 import importlib
 import inspect
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 
@@ -51,10 +51,10 @@ class VNABase(ABC):
 
     # Class attribute for driver registration
     # Subclasses should override this with their IDN detection function
-    idn_matcher: Optional[Callable[[str], bool]] = None
+    idn_matcher: Callable[[str], bool] | None = None
     driver_name: str = "Unknown"
 
-    def __init__(self, config: Optional[VNAConfig] = None):
+    def __init__(self, config: VNAConfig | None = None):
         """
         Initialize VNA controller.
 
@@ -127,7 +127,7 @@ class VNABase(ABC):
         pass
 
     @abstractmethod
-    def get_sparam_data(self, param_num: int) -> Tuple[np.ndarray, np.ndarray]:
+    def get_sparam_data(self, param_num: int) -> tuple[np.ndarray, np.ndarray]:
         """
         Get S-parameter data for a specific parameter.
 
@@ -140,7 +140,7 @@ class VNABase(ABC):
         pass
 
     @abstractmethod
-    def get_all_sparameters(self) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    def get_all_sparameters(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """
         Get all S-parameter data.
 
@@ -152,7 +152,7 @@ class VNABase(ABC):
 
     def perform_measurement(
         self,
-    ) -> Tuple[np.ndarray, Dict[str, Tuple[np.ndarray, np.ndarray]]]:
+    ) -> tuple[np.ndarray, dict[str, tuple[np.ndarray, np.ndarray]]]:
         """
         Perform complete measurement cycle.
 
@@ -180,10 +180,10 @@ class VNABase(ABC):
 
 
 # Driver registry - populated automatically by scanning drivers/ directory
-_DRIVER_REGISTRY: Dict[str, Type[VNABase]] = {}
+_DRIVER_REGISTRY: dict[str, type[VNABase]] = {}
 
 
-def discover_drivers() -> Dict[str, Type[VNABase]]:
+def discover_drivers() -> dict[str, type[VNABase]]:
     """
     Automatically discover and load all VNA drivers from the drivers/ directory.
 
@@ -225,7 +225,7 @@ def discover_drivers() -> Dict[str, Type[VNABase]]:
                     driver_name = getattr(obj, "driver_name", name)
                     _DRIVER_REGISTRY[driver_name] = obj
 
-        except Exception as e:
+        except Exception:
             # Silently skip drivers that fail to load
             # You could add logging here if needed
             pass
@@ -233,7 +233,7 @@ def discover_drivers() -> Dict[str, Type[VNABase]]:
     return _DRIVER_REGISTRY
 
 
-def detect_vna_driver(idn_string: str) -> Optional[Type[VNABase]]:
+def detect_vna_driver(idn_string: str) -> type[VNABase] | None:
     """
     Detect the appropriate VNA driver from an IDN string.
 
@@ -265,7 +265,7 @@ def detect_vna_driver(idn_string: str) -> Optional[Type[VNABase]]:
     return None
 
 
-def list_available_drivers() -> List[str]:
+def list_available_drivers() -> list[str]:
     """
     Get a list of all available VNA drivers.
 
