@@ -15,10 +15,25 @@ CMD_SET_FORMAT_ASCII = "FORM:DATA ASCII"
 CMD_SET_FORMAT_BINARY = "FORM:DATA REAL"
 
 # Sweep control commands
+CMD_GET_INIT_CONTINUOUS = "INIT1:CONT?"
 CMD_INIT_CONTINUOUS_ON = "INIT1:CONT ON"
 CMD_INIT_CONTINUOUS_OFF = "INIT1:CONT OFF"
 CMD_ABORT = "ABOR"
 CMD_INIT = "INIT1"
+
+
+def cmd_set_init_continuous(state: bool) -> str:
+    """
+    Set continuous initiation mode.
+
+    Args:
+        state: True for ON, False for OFF
+
+    Returns:
+        SCPI command string
+    """
+    return f"INIT1:CONT {'ON' if state else 'OFF'}"
+
 
 # Sweep type commands
 CMD_SET_SWEEP_LINEAR = "SENS1:SWE:TYPE LIN"
@@ -84,6 +99,26 @@ def cmd_select_param(param_num: int) -> str:
 # Data retrieval commands
 CMD_GET_FORMATTED_DATA = "CALC1:DATA:FDAT?"  # Formatted data (mag/phase)
 CMD_GET_SDATA = "CALC1:DATA:SDAT?"  # Complex data (real/imag)
+
+# Trigger commands
+CMD_GET_TRIGGER_SOURCE = "TRIG:SOUR?"
+CMD_SET_TRIGGER_INTERNAL = "TRIG:SOUR INT"
+CMD_SET_TRIGGER_MANUAL = "TRIG:SOUR MAN"
+CMD_SET_TRIGGER_EXTERNAL = "TRIG:SOUR EXT"
+CMD_SET_TRIGGER_BUS = "TRIG:SOUR BUS"
+
+
+def cmd_set_trigger_source(source: str) -> str:
+    """
+    Set trigger source.
+
+    Args:
+        source: Trigger source (INT, MAN, EXT, BUS)
+
+    Returns:
+        SCPI command string
+    """
+    return f"TRIG:SOUR {source.upper()}"
 
 
 # HP E5071B specific commands

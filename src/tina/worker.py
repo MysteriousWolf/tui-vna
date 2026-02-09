@@ -11,12 +11,12 @@ import threading
 import traceback
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from .config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
 from .drivers import VNABase, VNAConfig, detect_vna_driver
+from .utils import LoggingVNAWrapper
 
 
 class MessageType(Enum):
@@ -81,47 +81,6 @@ class LogMessage:
 
     message: str
     level: str  # "tx", "rx", "info", "progress", etc.
-
-
-class LoggingVNAWrapper:
-    """Wrapper around VNA that automatically logs all SCPI commands."""
-
-    def __init__(self, vna: VNABase, log_callback: Callable[[str, str], None]):
-        """
-        Initialize wrapper.
-
-        Args:
-            vna: VNA instance to wrap
-            log_callback: Callback function(message, level) for logging
-        """
-        self._vna = vna
-        self._log = log_callback
-
-    def command(self, cmd: str):
-        """Send command with automatic logging."""
-        self._log(cmd, "tx")
-        self._vna._send_command(cmd)
-
-    def query(self, cmd: str) -> str:
-        """Query with automatic logging."""
-        self._log(cmd, "tx")
-        response = self._vna._query(cmd)
-
-        # Compress long responses for logging
-        response_stripped = response.strip()
-        if len(response_stripped) > SCPI_RESPONSE_TRUNCATE_LENGTH:
-            # Count data points (comma-separated values)
-            data_count = response_stripped.count(",") + 1
-            first_vals = ",".join(response_stripped.split(",")[:3])
-            self._log(f"[{data_count} values: {first_vals}...]", "rx")
-        else:
-            self._log(response_stripped, "rx")
-
-        return response
-
-    def __getattr__(self, name):
-        """Pass through other attributes to wrapped VNA."""
-        return getattr(self._vna, name)
 
 
 class MeasurementWorker:
@@ -311,10 +270,11 @@ class MeasurementWorker:
                 self._vna = driver_class(config)
                 self._vna.connect(progress_callback=on_progress)
 
-            # Create logging wrapper for automatic TX/RX logging
-            self._vna_wrapper = LoggingVNAWrapper(self._vna, self._log)
+            # Wrap driver with logging to capture all SCPI commands
+            self._vna = LoggingVNAWrapper(self._vna, self._log)
+            self._vna_wrapper = self._vna  # Keep for compatibility
 
-            # Log the IDN
+            # Log the IDN (already queried during connection)
             self._log("*IDN?", "tx")
             self._log(self._vna.idn, "rx")
 
@@ -341,38 +301,22 @@ class MeasurementWorker:
             self._send_response(MessageType.ERROR, error=f"Disconnect failed: {str(e)}")
 
     def _handle_read_params(self) -> None:
-        """Handle read parameters command."""
+        """Handle read parameters command using driver abstraction."""
         try:
             if not self._vna or not self._vna.is_connected():
                 raise RuntimeError("Not connected to VNA")
 
-            # Read start frequency
-            self._send_progress("Reading start frequency...", 10)
-            start_freq = float(self._vna_wrapper.query("SENS1:FREQ:STAR?").strip())
+            self._send_progress("Reading VNA parameters...", 50)
 
-            # Read stop frequency
-            self._send_progress("Reading stop frequency...", 30)
-            stop_freq = float(self._vna_wrapper.query("SENS1:FREQ:STOP?").strip())
-
-            # Read sweep points
-            self._send_progress("Reading sweep points...", 50)
-            points = int(float(self._vna_wrapper.query("SENS1:SWE:POIN?").strip()))
-
-            # Read averaging state
-            self._send_progress("Reading averaging state...", 70)
-            avg_state_resp = self._vna_wrapper.query("SENS1:AVER:STAT?").strip()
-            avg_state = avg_state_resp == "1"
-
-            # Read averaging count
-            self._send_progress("Reading averaging count...", 90)
-            avg_count = int(float(self._vna_wrapper.query("SENS1:AVER:COUN?").strip()))
+            # Get all parameters from driver
+            params = self._vna.get_current_parameters()
 
             result = ParamsResult(
-                start_freq=start_freq,
-                stop_freq=stop_freq,
-                points=points,
-                averaging_enabled=avg_state,
-                averaging_count=avg_count,
+                start_freq=params.get("start_freq_hz", 0.0),
+                stop_freq=params.get("stop_freq_hz", 0.0),
+                points=params.get("sweep_points", 0),
+                averaging_enabled=params.get("averaging_enabled", False),
+                averaging_count=params.get("averaging_count", 0),
             )
 
             self._send_progress("Done reading parameters", 100)
@@ -383,32 +327,8 @@ class MeasurementWorker:
                 MessageType.ERROR, error=f"Failed to read parameters: {str(e)}"
             )
 
-    def _wait_for_completion(self, vna_wrapper, timeout_seconds: float = 60.0) -> None:
-        """
-        Wait for VNA operation to complete.
-
-        Args:
-            vna_wrapper: VNA wrapper instance
-            timeout_seconds: Maximum time to wait
-
-        Raises:
-            TimeoutError: If operation doesn't complete within timeout
-        """
-        import time
-
-        timeout = time.time() + timeout_seconds
-        while time.time() < timeout:
-            resp = vna_wrapper.query("*OPC?")
-            if resp.strip() in ("1", "+1"):
-                return
-            time.sleep(0.1)
-
-        raise TimeoutError(
-            f"Operation did not complete within {timeout_seconds} seconds"
-        )
-
     def _handle_measure(self, config: VNAConfig) -> None:
-        """Handle measurement command."""
+        """Handle measurement command using driver abstraction."""
         try:
             if not self._vna or not self._vna.is_connected():
                 raise RuntimeError("Not connected to VNA")
@@ -417,58 +337,28 @@ class MeasurementWorker:
             self._config = config
             self._vna.config = config
 
-            vna = self._vna_wrapper  # Shorthand for readability
-
             # Configure frequency
             self._send_progress("Configuring frequency...", 5)
-            if config.set_freq_range:
-                vna.command(f"SENS1:FREQ:STAR {config.start_freq_hz}")
-                vna.command(f"SENS1:FREQ:STOP {config.stop_freq_hz}")
+            self._vna.configure_frequency()
 
             # Configure measurements
             self._send_progress("Configuring measurement settings...", 10)
-            vna.command("FORM:DATA ASCII")
-            vna.command("INIT1:CONT OFF")
-            vna.command("SENS1:SWE:TYPE LIN")
-
-            if config.set_sweep_points:
-                vna.command(f"SENS1:SWE:POIN {config.sweep_points}")
-
-            avg_state = "ON" if config.enable_averaging else "OFF"
-            vna.command(f"SENS1:AVER:STAT {avg_state}")
-
-            if config.set_averaging_count:
-                vna.command(f"SENS1:AVER:COUN {config.averaging_count}")
+            self._vna.configure_measurements()
 
             # Setup S-parameters
             self._send_progress("Setting up S-parameters...", 20)
-            vna.command("CALC1:PAR:COUN 4")
+            self._vna.setup_s_parameters()
 
-            for idx, param in enumerate(["S11", "S21", "S12", "S22"], start=1):
-                vna.command(f"CALC1:PAR{idx}:DEF {param}")
-                vna.command(f"CALC1:PAR{idx}:SEL")
-
-            vna.command("CALC1:PAR1:SEL")
-            vna.command("ABOR")
-            vna.command("INIT1")
-
-            # Wait for S-parameter setup completion
-            self._wait_for_completion(vna, timeout_seconds=30.0)
-
-            # Trigger sweep
+            # Save trigger state before sweep
             self._send_progress("Triggering sweep...", 30)
-            vna.command("ABOR")
-            vna.command("INIT1")
+            trigger_state = self._vna.save_trigger_state()
 
-            # Wait for sweep completion
-            self._wait_for_completion(vna, timeout_seconds=60.0)
+            # Trigger sweep (doesn't restore state)
+            self._vna.trigger_sweep()
 
             # Get frequency axis
             self._send_progress("Reading frequency data...", 50)
-            freqs_data = vna.query("SENS1:FREQ:DATA?")
-            freqs = np.array(
-                [float(x) for x in freqs_data.strip().split(",")], dtype=float
-            )
+            freqs = self._vna.get_frequency_axis()
 
             # Get S-parameters
             sparams = {}
@@ -476,26 +366,10 @@ class MeasurementWorker:
             for idx, name in enumerate(param_names, start=1):
                 progress = 50 + (idx * 10)
                 self._send_progress(f"Reading {name}...", progress)
+                sparams[name] = self._vna.get_sparam_data(idx)
 
-                # Select parameter
-                vna.command(f"CALC1:PAR{idx}:SEL")
-
-                # Query complex data
-                data_str = vna.query("CALC1:DATA:SDAT?")
-                data = [float(x) for x in data_str.strip().split(",")]
-
-                # Parse real and imaginary
-                if len(data) % 2 != 0:
-                    data = data[:-1]
-                real = np.array(data[0::2])
-                imag = np.array(data[1::2])
-
-                # Convert to magnitude (dB) and phase (degrees)
-                comp = real + 1j * imag
-                mag_db = 20 * np.log10(np.abs(comp) + 1e-15)
-                phase_deg = np.angle(comp, deg=True)
-
-                sparams[name] = (mag_db, phase_deg)
+            # Restore trigger state AFTER reading all data
+            self._vna.restore_trigger_state(trigger_state)
 
             result = MeasurementResult(frequencies=freqs, sparams=sparams)
 
