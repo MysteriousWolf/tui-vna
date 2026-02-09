@@ -1,0 +1,37 @@
+[
+  {
+    "label": "test",
+    "command": "uv run pytest",
+    "use_new_terminal": true
+  },
+  {
+    "label": "test-fast",
+    "command": "uv run pytest -m unit",
+    "use_new_terminal": true
+  },
+  {
+    "label": "test-coverage",
+    "command": "uv run pytest --cov=src/tina",
+    "use_new_terminal": true
+  },
+  {
+    "label": "lint-check",
+    "command": "./scripts/lint.sh --check",
+    "use_new_terminal": true
+  },
+  {
+    "label": "lint-fix",
+    "command": "./scripts/lint.sh --fix",
+    "use_new_terminal": true
+  },
+  {
+    "label": "open-coverage",
+    "command": "xdg-open htmlcov/index.html",
+    "use_new_terminal": false
+  },
+  {
+    "label": "run-app",
+    "command": "uv run tina",
+    "use_new_terminal": true
+  }
+]
