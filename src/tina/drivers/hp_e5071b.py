@@ -25,21 +25,26 @@ from .base import VNABase, VNAConfig
 from .scpi_commands import (
     CMD_ABORT,
     CMD_GET_FREQ_DATA,
+    CMD_GET_INIT_CONTINUOUS,
     CMD_GET_SDATA,
+    CMD_GET_TRIGGER_SOURCE,
     CMD_IDN,
     CMD_INIT,
     CMD_INIT_CONTINUOUS_OFF,
     CMD_OPC,
     CMD_SET_FORMAT_ASCII,
     CMD_SET_SWEEP_LINEAR,
+    CMD_SET_TRIGGER_BUS,
     cmd_define_param,
     cmd_select_param,
     cmd_set_averaging_count,
     cmd_set_averaging_state,
     cmd_set_freq_start,
     cmd_set_freq_stop,
+    cmd_set_init_continuous,
     cmd_set_param_count,
     cmd_set_sweep_points,
+    cmd_set_trigger_source,
 )
 
 
@@ -199,6 +204,58 @@ class HPE5071B(VNABase):
         self._ensure_connected()
         return self.inst.query_ascii_values(command)
 
+    def get_current_parameters(self) -> Dict[str, any]:
+        """
+        Query current VNA settings.
+
+        Returns:
+            Dictionary with current VNA configuration:
+            - start_freq_hz: Start frequency in Hz
+            - stop_freq_hz: Stop frequency in Hz
+            - sweep_points: Number of sweep points
+            - averaging_enabled: Whether averaging is enabled
+            - averaging_count: Averaging count
+        """
+        from .scpi_commands import (
+            CMD_GET_AVERAGING_COUNT,
+            CMD_GET_AVERAGING_STATE,
+            CMD_GET_FREQ_START,
+            CMD_GET_FREQ_STOP,
+            CMD_GET_SWEEP_POINTS,
+        )
+
+        params = {}
+
+        try:
+            params["start_freq_hz"] = float(self._query(CMD_GET_FREQ_START).strip())
+        except Exception:
+            params["start_freq_hz"] = None
+
+        try:
+            params["stop_freq_hz"] = float(self._query(CMD_GET_FREQ_STOP).strip())
+        except Exception:
+            params["stop_freq_hz"] = None
+
+        try:
+            params["sweep_points"] = int(self._query(CMD_GET_SWEEP_POINTS).strip())
+        except Exception:
+            params["sweep_points"] = None
+
+        try:
+            avg_state = self._query(CMD_GET_AVERAGING_STATE).strip()
+            params["averaging_enabled"] = avg_state in ("1", "ON")
+        except Exception:
+            params["averaging_enabled"] = None
+
+        try:
+            params["averaging_count"] = int(
+                self._query(CMD_GET_AVERAGING_COUNT).strip()
+            )
+        except Exception:
+            params["averaging_count"] = None
+
+        return params
+
     def configure_frequency(self) -> None:
         """Configure frequency range from config."""
         if self.config.set_freq_range:
@@ -207,12 +264,9 @@ class HPE5071B(VNABase):
             time.sleep(0.5)
 
     def configure_measurements(self) -> None:
-        """Configure measurement settings."""
+        """Configure measurement settings (does not touch trigger/continuous mode)."""
         # ASCII data format
         self._send_command(CMD_SET_FORMAT_ASCII)
-
-        # Continuous mode OFF for single sweep control
-        self._send_command(CMD_INIT_CONTINUOUS_OFF)
 
         # Linear sweep
         self._send_command(CMD_SET_SWEEP_LINEAR)
@@ -248,14 +302,6 @@ class HPE5071B(VNABase):
         self._send_command(cmd_select_param(1))
         time.sleep(0.1)
 
-        # Flush measurement to apply settings
-        self._send_command(CMD_ABORT)
-        time.sleep(0.2)
-        self._send_command(CMD_INIT)
-
-        # Wait for completion
-        self._wait_for_operation_complete(timeout_seconds=PARAM_SETUP_TIMEOUT_SEC)
-
     def _wait_for_operation_complete(
         self, timeout_seconds: float = OPERATION_TIMEOUT_SEC
     ) -> None:
@@ -279,11 +325,79 @@ class HPE5071B(VNABase):
             f"Operation did not complete within {timeout_seconds} seconds"
         )
 
+    def get_trigger_source(self) -> str:
+        """
+        Get current trigger source setting.
+
+        Returns:
+            Trigger source string (INT, MAN, EXT, BUS)
+        """
+        response = self._query(CMD_GET_TRIGGER_SOURCE).strip()
+        return response
+
+    def set_trigger_source(self, source: str) -> None:
+        """
+        Set trigger source.
+
+        Args:
+            source: Trigger source (INT, MAN, EXT, BUS)
+        """
+        self._send_command(cmd_set_trigger_source(source))
+        time.sleep(0.1)
+
+    def save_trigger_state(self) -> Tuple[str, bool]:
+        """
+        Save current trigger configuration.
+
+        Returns:
+            Tuple of (trigger_source, continuous_mode)
+        """
+        trigger = self.get_trigger_source()
+        continuous_resp = self._query(CMD_GET_INIT_CONTINUOUS).strip()
+        continuous = continuous_resp in ("1", "ON")
+        return (trigger, continuous)
+
+    def restore_trigger_state(self, state: Tuple[str, bool]) -> None:
+        """
+        Restore trigger configuration.
+
+        Args:
+            state: Tuple of (trigger_source, continuous_mode) from save_trigger_state()
+        """
+        trigger, continuous = state
+        self._send_command(cmd_set_trigger_source(trigger))
+        time.sleep(0.1)
+        self._send_command(cmd_set_init_continuous(continuous))
+        time.sleep(0.1)
+
     def trigger_sweep(self) -> None:
-        """Trigger a sweep and wait for completion."""
+        """
+        Trigger a single sweep and wait for completion.
+
+        Does NOT restore trigger state - caller must use save_trigger_state()
+        before calling this and restore_trigger_state() after reading all data.
+
+        This method:
+        1. Aborts any ongoing measurement
+        2. Sets to single sweep mode (continuous OFF) with BUS trigger
+        3. Triggers a new sweep
+        4. Waits for completion
+        """
+        # Abort any ongoing measurement to start fresh
         self._send_command(CMD_ABORT)
         time.sleep(0.2)
+
+        # Set to single sweep mode (continuous OFF) with BUS trigger
+        self._send_command(CMD_INIT_CONTINUOUS_OFF)
+        time.sleep(0.1)
+        self._send_command(CMD_SET_TRIGGER_BUS)
+        time.sleep(0.1)
+
+        # Trigger new measurement
         self._send_command(CMD_INIT)
+        time.sleep(0.1)
+
+        # Wait for sweep completion
         self._wait_for_operation_complete(timeout_seconds=SWEEP_TIMEOUT_SEC)
 
     def get_frequency_axis(self) -> np.ndarray:
