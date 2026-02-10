@@ -54,5 +54,6 @@ measurement/
 htmlcov/
 .coverage
 coverage.xml
+coverage.json
 *.cover
 .hypothesis/
