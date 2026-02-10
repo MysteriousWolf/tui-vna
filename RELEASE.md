@@ -3,8 +3,8 @@
 ## Creating a Release
 
 1. **Update version in both files:**
-   - `pyproject.toml`: `version = "0.1.0"`
-   - `src/tina/__init__.py`: `__version__ = "0.1.0"`
+   - `pyproject.toml`: `version = "0.1.2"`
+   - `src/tina/__init__.py`: `__version__ = "0.1.2"`
 
 2. **Commit changes**
 
@@ -13,13 +13,13 @@
    **CLI:**
 
    ```bash
-   git tag -a v0.1.0 -m "Release 0.1.0"
+   git tag -a v0.1.2 -m "Release 0.1.2"
    git push --tags
    ```
 
    **GitHub Web:**
    - Go to Releases → Create a new release
-   - Choose a tag: type `v0.1.0` and create new tag
+   - Choose a tag: type `v0.1.2` and create new tag
    - Click "Publish release"
 
 GitHub Actions will automatically generate a changelog from commits and build binaries for all platforms.
@@ -34,7 +34,7 @@ Follow [Semantic Versioning](https://semver.org/) (or embrace [0ver](https://0ve
 
 ## What Gets Built
 
-When you push a tag like `v0.1.0`, GitHub Actions builds:
+When you push a tag like `v0.1.2`, GitHub Actions builds:
 
 - `tina-linux-x86_64` - Main TUI for Linux
 - `tina-quick-linux-x86_64` - Quick measure for Linux

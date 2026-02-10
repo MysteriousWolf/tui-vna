@@ -62,3 +62,6 @@ coverage.json
 .ruff_cache/
 .mypy_cache/
 .black_cache/
+
+# UV lock file (package, not application)
+uv.lock
