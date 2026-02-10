@@ -4,7 +4,6 @@ Tests for path utilities.
 Tests path truncation and display logic.
 """
 
-
 from src.tina.utils.paths import truncate_path_intelligently
 
 

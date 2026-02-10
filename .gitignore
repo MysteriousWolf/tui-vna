@@ -57,3 +57,8 @@ coverage.xml
 coverage.json
 *.cover
 .hypothesis/
+
+# Linting/Formatting
+.ruff_cache/
+.mypy_cache/
+.black_cache/
