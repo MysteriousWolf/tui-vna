@@ -4,7 +4,6 @@ Tests for color utilities.
 Tests color conversion, theme parsing, and plot color scheme generation.
 """
 
-import pytest
 
 from src.tina.config.constants import (
     DEFAULT_BACKGROUND_COLOR,
