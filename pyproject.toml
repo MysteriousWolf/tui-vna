@@ -1,6 +1,6 @@
 [project]
 name = "tui-vna"
-version = "0.0.1"
+version = "0.1.2"
 description = "tina - Terminal UI Network Analyzer"
 requires-python = ">=3.10"
 dependencies = [
