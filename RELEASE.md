@@ -3,8 +3,8 @@
 ## Creating a Release
 
 1. **Update version in both files:**
-   - `pyproject.toml`: `version = "0.1.2"`
-   - `src/tina/__init__.py`: `__version__ = "0.1.2"`
+   - `pyproject.toml`: `version = "0.1.3"`
+   - `src/tina/__init__.py`: `__version__ = "0.1.3"`
 
 2. **Commit changes**
 
@@ -13,13 +13,13 @@
    **CLI:**
 
    ```bash
-   git tag -a v0.1.2 -m "Release 0.1.2"
+   git tag -a v0.1.3 -m "Release 0.1.3"
    git push --tags
    ```
 
    **GitHub Web:**
    - Go to Releases → Create a new release
-   - Choose a tag: type `v0.1.2` and create new tag
+   - Choose a tag: type `v0.1.3` and create new tag
    - Click "Publish release"
 
 GitHub Actions will automatically generate a changelog from commits and build binaries for all platforms.
