@@ -34,7 +34,7 @@ Follow [Semantic Versioning](https://semver.org/) (or embrace [0ver](https://0ve
 
 ## What Gets Built
 
-When you push a tag like `v0.1.2`, GitHub Actions builds:
+When you push a tag like `v0.x.y`, GitHub Actions builds:
 
 - `tina-linux-x86_64` - Main TUI for Linux
 - `tina-quick-linux-x86_64` - Quick measure for Linux
