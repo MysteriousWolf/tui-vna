@@ -33,5 +33,10 @@
     "label": "run-app",
     "command": "uv run tina",
     "use_new_terminal": true
+  },
+  {
+    "label": "run-app-test-updates",
+    "command": "uv run tina --test-updates",
+    "use_new_terminal": true
   }
 ]

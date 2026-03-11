@@ -21,6 +21,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Checkbox,
@@ -28,6 +29,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    Markdown,
     ProgressBar,
     Select,
     Static,
@@ -39,9 +41,19 @@ from textual.widgets import (
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
 
+from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
 from .utils import TouchstoneExporter
+from .utils.update_checker import (
+    fetch_test_update_data,
+    get_changelogs_since,
+    get_update_info,
+    load_last_acknowledged_version,
+    load_notified_prerelease,
+    save_last_acknowledged_version,
+    save_notified_prerelease,
+)
 from .worker import (
     LogMessage,
     MeasurementResult,
@@ -837,6 +849,139 @@ def _create_smith_chart(
     plt.close(fig)
 
 
+class UpdateNotificationScreen(ModalScreen):
+    """Reusable modal for update-related notifications (new release or post-update welcome)."""
+
+    DEFAULT_CSS = """
+    UpdateNotificationScreen {
+        align: center middle;
+    }
+    #notif-dialog {
+        width: 70;
+        height: auto;
+        background: $surface;
+        border: thick $primary;
+        padding: 1 2;
+    }
+    UpdateNotificationScreen.--welcome #notif-dialog {
+        border: thick $success;
+    }
+    UpdateNotificationScreen #notif-title {
+        text-style: bold;
+        width: 1fr;
+    }
+    UpdateNotificationScreen.--welcome #notif-title {
+        color: $success;
+    }
+    UpdateNotificationScreen #notif-badge {
+        margin-left: 1;
+    }
+    UpdateNotificationScreen .badge-stable {
+        background: $success;
+        color: $background;
+        padding: 0 1;
+    }
+    UpdateNotificationScreen .badge-pre {
+        background: $warning;
+        color: $background;
+        padding: 0 1;
+    }
+    UpdateNotificationScreen #notif-body {
+        height: auto;
+        max-height: 60vh;
+        border: solid $panel;
+        padding: 0 1;
+        margin: 0;
+    }
+    UpdateNotificationScreen #notif-body Markdown {
+        margin: 0;
+        padding: 0;
+    }
+    UpdateNotificationScreen #notif-body Markdown > * {
+        margin-top: 0;
+    }
+    UpdateNotificationScreen #notif-footer {
+        height: auto;
+        align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        title: str,
+        body: str,
+        button_label: str,
+        button_variant: str = "primary",
+        badge: str | None = None,
+        badge_class: str | None = None,
+        welcome: bool = False,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._body = body or "_No changelog provided._"
+        self._button_label = button_label
+        self._button_variant = button_variant
+        self._badge = badge
+        self._badge_class = badge_class
+        if welcome:
+            self.add_class("--welcome")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="notif-dialog"):
+            with Horizontal():
+                yield Label(self._title, id="notif-title")
+                if self._badge:
+                    yield Label(
+                        f" {self._badge} ",
+                        id="notif-badge",
+                        classes=self._badge_class or "",
+                    )
+            with VerticalScroll(id="notif-body"):
+                yield Markdown(self._body)
+            with Horizontal(id="notif-footer"):
+                yield Button(
+                    self._button_label,
+                    variant=self._button_variant,
+                    id="btn-notif-dismiss",
+                )
+
+    @on(Button.Pressed, "#btn-notif-dismiss")
+    def dismiss_notification(self) -> None:
+        self.dismiss()
+
+
+def _update_screen(release_info) -> UpdateNotificationScreen:
+    """Build an UpdateNotificationScreen for a new-release notification."""
+    rel = release_info
+    if rel.is_prerelease:
+        body = (
+            f"A new pre-release **v{rel.version}** is available.\n\n"
+            f"[View on GitHub]({rel.html_url})"
+        )
+        badge, badge_class = "PRE-RELEASE", "badge-pre"
+    else:
+        body = rel.changelog or "_No changelog provided._"
+        badge, badge_class = "STABLE", "badge-stable"
+    return UpdateNotificationScreen(
+        title=f"Update available:  v{rel.version}",
+        body=body,
+        button_label="Dismiss",
+        badge=badge,
+        badge_class=badge_class,
+    )
+
+
+def _welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
+    """Build an UpdateNotificationScreen for the post-update welcome."""
+    return UpdateNotificationScreen(
+        title=f"Thanks for updating to v{version}!",
+        body=changelog,
+        button_label="Got it!",
+        button_variant="success",
+        welcome=True,
+    )
+
+
 class VNAApp(App):
     """tina - Terminal uI Network Analyzer"""
 
@@ -1167,9 +1312,10 @@ class VNAApp(App):
 
     TITLE = "tina - Terminal UI Network Analyzer"
 
-    def __init__(self):
+    def __init__(self, test_updates: bool = False):
         super().__init__()
 
+        self._test_updates = test_updates
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load()
         self.worker = MeasurementWorker()
@@ -1527,6 +1673,8 @@ class VNAApp(App):
         self.worker.start()
         # Start message polling
         self._start_message_polling()
+        # Check for updates in background (after UI is ready)
+        self.call_after_refresh(self._check_for_updates)
 
     def _log_startup(self) -> None:
         """Log startup message after UI is ready."""
@@ -1538,6 +1686,43 @@ class VNAApp(App):
         self.log_message(
             f"Detected terminal: {self.terminal_program} | Font: {font_info}", "debug"
         )
+
+    async def _check_for_updates(self) -> None:
+        """Check GitHub for newer releases and show modals as appropriate."""
+        loop = asyncio.get_event_loop()
+
+        # --- Test mode: show all three modals with lorem ipsum content -------
+        if self._test_updates:
+            welcome_cl, stable_fake, pre_fake = await loop.run_in_executor(
+                None, fetch_test_update_data, __version__
+            )
+            await self.push_screen(_welcome_screen(__version__, welcome_cl))
+            await self.push_screen(_update_screen(stable_fake))
+            await self.push_screen(_update_screen(pre_fake))
+            return
+
+        # --- Post-update welcome (shown once per version after upgrading) ---
+        last_ack = load_last_acknowledged_version()
+        if last_ack and last_ack != __version__:
+            changelog = await loop.run_in_executor(
+                None, get_changelogs_since, last_ack, __version__
+            )
+            save_last_acknowledged_version(__version__)
+            await self.push_screen(_welcome_screen(__version__, changelog))
+        elif not last_ack:
+            # First run — just record the version silently, no welcome shown
+            save_last_acknowledged_version(__version__)
+
+        # --- Check for newer releases ---
+        stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
+
+        if stable:
+            await self.push_screen(_update_screen(stable))
+        elif pre:
+            notified = load_notified_prerelease()
+            if notified != pre.version:
+                save_notified_prerelease(pre.version)
+                await self.push_screen(_update_screen(pre))
 
     def _update_plot_type_options(self) -> None:
         """Update plot type dropdown options based on selected backend."""
@@ -3014,9 +3199,9 @@ class VNAApp(App):
         self.query_one("#btn_export_svg", Button).disabled = False
 
 
-def run_gui():
+def run_gui(test_updates: bool = False):
     """Run GUI mode with proper imports."""
-    app = VNAApp()
+    app = VNAApp(test_updates=test_updates)
     app.run()
 
 
@@ -3032,7 +3217,7 @@ def main():
         return run_cli_measurement(args)
     else:
         # GUI mode
-        run_gui()
+        run_gui(test_updates=args.test_updates)
         return 0
 
 

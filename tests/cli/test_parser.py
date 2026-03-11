@@ -32,6 +32,18 @@ class TestCliParser:
         args = parser.parse_args([])
         assert args.now is False
 
+    def test_parser_accepts_test_updates_flag(self):
+        """Test that parser accepts --test-updates flag."""
+        parser = create_cli_parser()
+        args = parser.parse_args(["--test-updates"])
+        assert args.test_updates is True
+
+    def test_parser_default_test_updates_is_false(self):
+        """Test that --test-updates defaults to False."""
+        parser = create_cli_parser()
+        args = parser.parse_args([])
+        assert args.test_updates is False
+
     def test_parser_accepts_host(self):
         """Test that parser accepts --host."""
         parser = create_cli_parser()
