@@ -2,6 +2,7 @@
 
 import argparse
 
+from .. import __version__
 from ..config.settings import AppSettings
 
 
@@ -24,6 +25,13 @@ Examples:
   # GUI mode (default)
   tina
         """,
+    )
+
+    parser.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     # Quick measurement option
