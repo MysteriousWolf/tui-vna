@@ -17,7 +17,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
-from textual import on
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -1687,6 +1687,7 @@ class VNAApp(App):
             f"Detected terminal: {self.terminal_program} | Font: {font_info}", "debug"
         )
 
+    @work
     async def _check_for_updates(self) -> None:
         """Check GitHub for newer releases and show modals as appropriate."""
         loop = asyncio.get_event_loop()
@@ -1696,9 +1697,9 @@ class VNAApp(App):
             welcome_cl, stable_fake, pre_fake = await loop.run_in_executor(
                 None, fetch_test_update_data, __version__
             )
-            await self.push_screen(_welcome_screen(__version__, welcome_cl))
-            await self.push_screen(_update_screen(stable_fake))
-            await self.push_screen(_update_screen(pre_fake))
+            await self.push_screen_wait(_welcome_screen(__version__, welcome_cl))
+            await self.push_screen_wait(_update_screen(stable_fake))
+            await self.push_screen_wait(_update_screen(pre_fake))
             return
 
         # --- Post-update welcome (shown once per version after upgrading) ---
@@ -1707,8 +1708,8 @@ class VNAApp(App):
             changelog = await loop.run_in_executor(
                 None, get_changelogs_since, last_ack, __version__
             )
+            await self.push_screen_wait(_welcome_screen(__version__, changelog))
             save_last_acknowledged_version(__version__)
-            await self.push_screen(_welcome_screen(__version__, changelog))
         elif not last_ack:
             # First run — just record the version silently, no welcome shown
             save_last_acknowledged_version(__version__)
@@ -1717,12 +1718,12 @@ class VNAApp(App):
         stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
 
         if stable:
-            await self.push_screen(_update_screen(stable))
+            await self.push_screen_wait(_update_screen(stable))
         elif pre:
             notified = load_notified_prerelease()
             if notified != pre.version:
+                await self.push_screen_wait(_update_screen(pre))
                 save_notified_prerelease(pre.version)
-                await self.push_screen(_update_screen(pre))
 
     def _update_plot_type_options(self) -> None:
         """Update plot type dropdown options based on selected backend."""

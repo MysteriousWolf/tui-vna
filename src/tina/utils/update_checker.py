@@ -28,7 +28,8 @@ class ReleaseInfo:
 def _load_state() -> dict:
     try:
         with open(_STATE_FILE, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
 
@@ -253,9 +254,9 @@ def get_update_info(
             changelog=release.get("body") or "",
             html_url=release.get("html_url", ""),
         )
-        if not is_pre and latest_stable is None:
+        if not is_pre and (latest_stable is None or v > Version(latest_stable.version)):
             latest_stable = info
-        elif is_pre and latest_pre is None:
+        elif is_pre and (latest_pre is None or v > Version(latest_pre.version)):
             latest_pre = info
 
     return latest_stable, latest_pre
