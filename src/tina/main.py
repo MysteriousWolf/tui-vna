@@ -957,9 +957,9 @@ def _update_screen(release_info) -> UpdateNotificationScreen:
     """Build an UpdateNotificationScreen for a new-release notification."""
     rel = release_info
     if rel.is_prerelease:
-        body = (
-            f"A new pre-release **v{rel.version}** is available.\n\n"
-            f"[View on GitHub]({rel.html_url})"
+        intro = f"A new pre-release **v{rel.version}** is available.\n\n"
+        body = intro + (
+            rel.changelog if rel.changelog else f"[View on GitHub]({rel.html_url})"
         )
         badge, badge_class = "PRE-RELEASE", "badge-pre"
     else:

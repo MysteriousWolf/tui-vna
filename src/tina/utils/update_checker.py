@@ -204,6 +204,8 @@ def get_changelogs_since(since_version: str, up_to_version: str) -> str:
             v = Version(tag)
         except Exception:
             continue
+        if v.is_prerelease:
+            continue
         if since < v <= up_to:
             body = release.get("body") or ""
             entries.append((v, tag, body))
