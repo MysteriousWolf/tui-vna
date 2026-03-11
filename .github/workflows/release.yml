@@ -135,6 +135,8 @@ jobs:
 
       - name: Generate changelog
         id: changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
 
@@ -142,7 +144,8 @@ jobs:
             echo "changelog=Initial release" >> $GITHUB_OUTPUT
           else
             echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
+            gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}" \
+              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> $GITHUB_OUTPUT
             echo "" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           fi
