@@ -916,6 +916,7 @@ class UpdateNotificationScreen(ModalScreen):
         badge_class: str | None = None,
         welcome: bool = False,
     ) -> None:
+        """Initialise the notification screen with title, markdown body, and button config."""
         super().__init__()
         self._title = title
         self._body = body or "_No changelog provided._"
@@ -927,6 +928,7 @@ class UpdateNotificationScreen(ModalScreen):
             self.add_class("--welcome")
 
     def compose(self) -> ComposeResult:
+        """Compose the modal layout: title row, scrollable body, and dismiss button."""
         with Vertical(id="notif-dialog"):
             with Horizontal():
                 yield Label(self._title, id="notif-title")
@@ -947,6 +949,7 @@ class UpdateNotificationScreen(ModalScreen):
 
     @on(Button.Pressed, "#btn-notif-dismiss")
     def dismiss_notification(self) -> None:
+        """Dismiss the modal when the button is pressed."""
         self.dismiss()
 
 
