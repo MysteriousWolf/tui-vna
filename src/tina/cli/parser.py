@@ -34,6 +34,14 @@ Examples:
         help="Quick measurement: use last settings to connect, measure, and save to s2p + png files",
     )
 
+    # Developer options
+    dev_group = parser.add_argument_group("developer options")
+    dev_group.add_argument(
+        "--test-updates",
+        action="store_true",
+        help="Show update notification popups with sample data (for testing UI layout)",
+    )
+
     # Connection parameters
     conn_group = parser.add_argument_group("connection settings")
     conn_group.add_argument("--host", help="VNA IP address (e.g., 192.168.1.100)")
