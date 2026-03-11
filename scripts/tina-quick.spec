@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import copy_metadata, collect_submodules
 
 # Get absolute paths - SPECPATH is the directory containing the spec file
 PROJECT_ROOT = os.path.dirname(SPECPATH)
@@ -31,6 +31,7 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
+        *collect_submodules('rich._unicode_data'),
         'pyvisa',
         'pyvisa_py',
         'pyvisa_py.highlevel',
