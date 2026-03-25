@@ -358,8 +358,14 @@ class MeasurementWorker:
             )
 
     def _handle_status_poll(self) -> None:
-        """Handle status poll command. Silently dropped during active measurement."""
+        """Handle status poll command.
+
+        Always emits STATUS_UPDATE so the UI's in-flight flag is cleared.
+        When measuring or disconnected a default (all-None) result is sent
+        instead of querying the VNA.
+        """
         if self._measuring or not self._vna or not self._vna.is_connected():
+            self._send_response(MessageType.STATUS_UPDATE, data=StatusResult())
             return
 
         raw = {}
