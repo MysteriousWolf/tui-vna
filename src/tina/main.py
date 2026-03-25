@@ -1874,7 +1874,7 @@ class VNAApp(App):
                     id="log_content", markup=True, highlight=False, wrap=False
                 )
                 log_area.border_title = (
-                    "Log  [@click='app.copy_log'][reverse] ⎘  [/][/]"
+                    "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
                 )
                 yield log_area
 
