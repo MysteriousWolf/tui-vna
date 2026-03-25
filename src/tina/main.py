@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tkinter as tk
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from tkinter import filedialog
 
@@ -17,9 +18,11 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
+from rich.markup import escape as rich_escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import Hit, Hits, Provider
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -31,11 +34,11 @@ from textual.widgets import (
     Label,
     Markdown,
     ProgressBar,
+    RichLog,
     Select,
     Static,
     TabbedContent,
     TabPane,
-    TextArea,
 )
 
 # Set matplotlib to non-interactive backend
@@ -61,6 +64,7 @@ from .worker import (
     MessageType,
     ParamsResult,
     ProgressUpdate,
+    StatusResult,
 )
 
 # GUI-only imports - done at module level to ensure proper terminal detection
@@ -166,6 +170,7 @@ def _get_terminal_font() -> tuple[str, float | None]:
     font_size = None
 
     def _parse_ghostty_config() -> None:
+        """Read font-family and font-size from the Ghostty config file if present."""
         nonlocal font_name, font_size
         cfg = home / ".config" / "ghostty" / "config"
         if cfg.exists():
@@ -985,8 +990,314 @@ def _welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
     )
 
 
+_POLL_OPTIONS = [
+    ("Status poll: Off", 0),
+    ("Status poll: 1 second", 1),
+    ("Status poll: 2 seconds", 2),
+    ("Status poll: 5 seconds", 5),
+    ("Status poll: 10 seconds", 10),
+    ("Status poll: 30 seconds", 30),
+]
+
+
+class StatusPollProvider(Provider):
+    """Command palette provider for changing the status bar poll interval."""
+
+    async def discover(self) -> Hits:
+        """Yield all available poll-interval options unconditionally."""
+        for label, value in _POLL_OPTIONS:
+            yield Hit(
+                1.0,
+                label,
+                partial(self._apply, value),
+                help="Set status bar refresh interval",
+            )
+
+    async def search(self, query: str) -> Hits:
+        """Yield poll-interval options whose labels match *query*."""
+        matcher = self.matcher(query)
+        for label, value in _POLL_OPTIONS:
+            score = matcher.match(label)
+            if score > 0:
+                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
+
+    def _apply(self, value: int) -> None:
+        """Apply the selected poll interval to settings and restart the poll timer."""
+        app = self.app
+        app.settings.status_poll_interval = value
+        app.query_one("#sb_poll_interval", Select).value = value
+        if app.connected:
+            app._start_status_polling(value)
+
+
+_SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
+
+# Short human-readable names for common SCPI error codes (IEEE 488.2 / SCPI 1999).
+_SCPI_ERROR_NAMES: dict[str, str] = {
+    "+0": "OK",
+    "0": "OK",
+    "-100": "CMD",
+    "-113": "UNDEF",
+    "-222": "RANGE",
+    "-224": "ILLEGAL",
+    "-310": "SYS",
+    "-350": "QUEUE",
+    "-400": "QUERY",
+    "-420": "UNTMN",
+    "-430": "DEADLK",
+}
+
+
+def _scpi_mnemonic(cmd: str) -> str:
+    """Return a compact display mnemonic for a SCPI command.
+
+    Strips parameter values (text after a space), trailing ``?``, and any
+    channel-number suffix on the first node (e.g. ``SENS1`` → removed so
+    ``SENS1:CORR:STAT?`` becomes ``CORR:STAT``).
+    """
+    base = cmd.split(" ")[0].rstrip("?")
+    parts = base.split(":")
+    if parts and parts[0] and parts[0][-1].isdigit():
+        parts = parts[1:]
+    return ":".join(parts) or base
+
+
+_ALL_SB_STATE_CLASSES = (
+    "--stale",
+    "--state-ok",
+    "--state-off",
+    "--smo-on",
+    "--trig-INT",
+    "--trig-MAN",
+    "--trig-EXT",
+    "--trig-BUS",
+)
+
+
+class StatusFooter(Footer):
+    """Textual Footer with VNA status items appended after the key bindings."""
+
+    DEFAULT_CSS = Footer.DEFAULT_CSS + """
+    StatusFooter #sb_spacer {
+        width: 1fr;
+        height: 1;
+    }
+    StatusFooter #sb_status_container {
+        width: auto;
+        height: 1;
+        padding: 0 1 0 0;
+    }
+    StatusFooter .sb-item {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        content-align: left middle;
+        background: $panel-lighten-1;
+    }
+    StatusFooter .sb-sep {
+        width: 1;
+        height: 1;
+    }
+    StatusFooter .sb-item.--stale {
+        background: $panel-lighten-1;
+        color: $text-muted;
+        text-style: dim;
+    }
+    StatusFooter .sb-item.--state-ok  { background: $success;   color: $background; }
+    StatusFooter .sb-item.--state-off { background: $error;     color: $background; }
+    StatusFooter .sb-item.--smo-on    { background: $accent;    color: $background; }
+    StatusFooter .sb-item.--trig-INT  { background: $primary;   color: $background; }
+    StatusFooter .sb-item.--trig-MAN  { background: $warning;   color: $background; }
+    StatusFooter .sb-item.--trig-EXT  { background: $secondary; color: $background; }
+    StatusFooter .sb-item.--trig-BUS  { background: $success;   color: $background; }
+    StatusFooter #sb_debug_group {
+        display: none;
+        width: auto;
+        height: 1;
+    }
+    StatusFooter #sb_debug_group.--visible {
+        display: block;
+    }
+    """
+
+    # Initial placeholder text shown before first poll
+    _PLACEHOLDERS: dict[str, str] = {
+        "sb_cal": "CAL",
+        "sb_smooth": "SMTH",
+        "sb_ifbw": "IFBW",
+        "sb_power": "PWR",
+        "sb_trigger": "TRIG",
+    }
+
+    def __init__(self, **kwargs):
+        """Initialise state stores for chip text/class and debug chip visibility."""
+        super().__init__(**kwargs)
+        # (text, css_class) — class "" means no coloured background
+        self._sb_state: dict[str, tuple[str, str]] = {
+            k: (self._PLACEHOLDERS[k], "--stale") for k in _SB_ITEMS
+        }
+        # Debug chip state — persists across Footer recomposes
+        self._debug_visible: bool = False
+        self._debug_chip_state: tuple[str, str] = ("ERR OK", "--state-ok")
+
+    def compose(self) -> ComposeResult:
+        """Build footer: key bindings (left), debug chip, spacer, status chips (right)."""
+        yield from super().compose()  # q Quit leftmost; ^p palette docked right
+        # Debug error chip — left-aligned next to q Quit, hidden until debug active.
+        # Classes are set from stored state so recomposes (triggered by Footer
+        # internals on focus changes) preserve visibility and chip content.
+        debug_text, debug_css = self._debug_chip_state
+        grp_classes = "--visible" if self._debug_visible else ""
+        with Horizontal(id="sb_debug_group", classes=grp_classes):
+            yield Static(" ", classes="sb-sep")
+            yield Static(
+                debug_text,
+                id="sb_lasterr",
+                classes=f"sb-item {debug_css}".strip(),
+            )
+        yield Static("", id="sb_spacer")  # pushes status items to the right
+        with Horizontal(id="sb_status_container"):
+            for i, item_id in enumerate(_SB_ITEMS):
+                if i > 0:
+                    yield Static(" ", classes="sb-sep")
+                text, css_class = self._sb_state[item_id]
+                yield Static(text, id=item_id, classes=f"sb-item {css_class}".strip())
+
+    def _set_item(self, item_id: str, text: str, css_class: str = "") -> None:
+        """Update a single status chip's text and CSS class in state and in the DOM."""
+        self._sb_state[item_id] = (text, css_class)
+        try:
+            w = self.query_one(f"#{item_id}", Static)
+            w.update(text)
+            w.remove_class(*_ALL_SB_STATE_CLASSES)
+            if css_class:
+                w.add_class(css_class)
+        except Exception:
+            pass
+
+    def _apply_debug_chip(self) -> None:
+        """Push stored debug chip state to the live widgets."""
+        try:
+            self.query_one("#sb_debug_group").set_class(
+                self._debug_visible, "--visible"
+            )
+            # Only update chip content when visible — avoids a colour flash
+            # when the group is being hidden (class change rendered before hide).
+            if not self._debug_visible:
+                return
+            text, css_class = self._debug_chip_state
+            chip = self.query_one("#sb_lasterr", Static)
+            chip.update(text)
+            chip.remove_class(*_ALL_SB_STATE_CLASSES)
+            if css_class:
+                chip.add_class(css_class)
+        except Exception:
+            pass
+
+    def set_disconnected(self) -> None:
+        """Mark all items as stale; preserve last-known text."""
+        for item_id in _SB_ITEMS:
+            text, _ = self._sb_state[item_id]
+            self._sb_state[item_id] = (text, "--stale")
+            try:
+                w = self.query_one(f"#{item_id}", Static)
+                w.remove_class(*_ALL_SB_STATE_CLASSES)
+                w.add_class("--stale")
+            except Exception:
+                pass
+        # Gray out debug chip while disconnected
+        prev_text, _ = self._debug_chip_state
+        self._debug_chip_state = (prev_text, "--stale")
+        self._apply_debug_chip()
+
+    def set_debug_mode(self, enabled: bool, connected: bool = True) -> None:
+        """Show or hide the last-error debug chip."""
+        self._debug_visible = enabled
+        if not enabled:
+            self._debug_chip_state = ("ERR OK", "--state-ok")
+        elif not connected:
+            self._debug_chip_state = ("ERR OK", "--stale")
+        self._apply_debug_chip()
+
+    def update_last_error(self, command: str, raw_error: str) -> None:
+        """Update the debug error chip from a SYST:ERR? response.
+
+        Args:
+            command:   The SCPI command that preceded the SYST:ERR? check.
+            raw_error: Stripped SYST:ERR? response, e.g. ``+0,"No error"``
+                       or ``-113,"Undefined header"``.
+        """
+        if raw_error.startswith("+0") or raw_error.startswith("0,"):
+            self._debug_chip_state = ("ERR OK", "--state-ok")
+        else:
+            code = raw_error.split(",")[0].strip()
+            name = _SCPI_ERROR_NAMES.get(code, code)
+            mnem = _scpi_mnemonic(command)
+            self._debug_chip_state = (f"{mnem} {name}", "--state-off")
+        self._apply_debug_chip()
+
+    def update_status(self, result: "StatusResult") -> None:
+        """Refresh all status chips from a fresh StatusResult."""
+        # Calibration
+        if result.cal_enabled is None:
+            self._set_item("sb_cal", self._sb_state["sb_cal"][0], "--stale")
+        elif result.cal_enabled:
+            self._set_item("sb_cal", (result.cal_type or "CAL").strip(), "--state-ok")
+        else:
+            self._set_item("sb_cal", "CAL", "--state-off")
+
+        # Smoothing
+        if result.smoothing_enabled is None:
+            self._set_item("sb_smooth", self._sb_state["sb_smooth"][0], "--stale")
+        elif result.smoothing_enabled and result.smoothing_aperture is not None:
+            self._set_item(
+                "sb_smooth", f"SMTH {result.smoothing_aperture:.1f}%", "--smo-on"
+            )
+        else:
+            self._set_item("sb_smooth", "SMTH", "--state-off")
+
+        # IF bandwidth
+        hz = result.if_bandwidth_hz
+        if hz is None:
+            self._set_item("sb_ifbw", self._sb_state["sb_ifbw"][0], "--stale")
+        elif hz >= 1e6:
+            self._set_item("sb_ifbw", f"{hz / 1e6:.3g} MHz")
+        elif hz >= 1e3:
+            self._set_item("sb_ifbw", f"{hz / 1e3:.3g} kHz")
+        else:
+            self._set_item("sb_ifbw", f"{hz:.3g} Hz")
+
+        # Port power
+        if result.port_power_dbm is None:
+            self._set_item("sb_power", self._sb_state["sb_power"][0], "--stale")
+        else:
+            self._set_item("sb_power", f"{result.port_power_dbm:+.1f} dBm")
+
+        # Trigger source
+        if result.trigger_source is None:
+            self._set_item("sb_trigger", self._sb_state["sb_trigger"][0], "--stale")
+        else:
+            src = result.trigger_source.strip().upper()
+            css = f"--trig-{src}" if f"--trig-{src}" in _ALL_SB_STATE_CLASSES else ""
+            self._set_item("sb_trigger", src, css)
+
+
 class VNAApp(App):
     """tina - Terminal uI Network Analyzer"""
+
+    # Maps log level names to their filter checkbox widget IDs.
+    # Both primary and secondary levels are listed here; composite levels
+    # (e.g. "tx/poll") require both halves to be enabled to show.
+    _LOG_FILTER_IDS: dict[str, str] = {
+        "tx": "#check_log_tx",
+        "rx": "#check_log_rx",
+        "info": "#check_log_info",
+        "progress": "#check_log_progress",
+        "success": "#check_log_success",
+        "error": "#check_log_error",
+        "debug": "#check_log_debug",
+        "poll": "#check_log_poll",
+    }
 
     CSS = """
     Screen {
@@ -1079,6 +1390,14 @@ class VNAApp(App):
     .filter-row Checkbox {
         width: auto;
         margin-right: 0;
+    }
+
+    .filter-spacer {
+        width: 1fr;
+    }
+
+    .secondary-filter {
+        opacity: 0.5;
     }
 
     .button-group {
@@ -1255,6 +1574,7 @@ class VNAApp(App):
         margin: 1 0;
     }
 
+
     #results_text {
         height: 100%;
         padding: 1;
@@ -1307,15 +1627,20 @@ class VNAApp(App):
     ImageWidget {
         margin: 1 0;
     }
+
     """
+
+    COMMANDS = App.COMMANDS | {StatusPollProvider}
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
+        Binding("ctrl+d", "toggle_debug_scpi", "SCPI Debug", show=False),
     ]
 
     TITLE = "tina - Terminal UI Network Analyzer"
 
     def __init__(self, test_updates: bool = False):
+        """Initialise application state, settings, worker thread, and timers."""
         super().__init__()
 
         self._test_updates = test_updates
@@ -1332,6 +1657,9 @@ class VNAApp(App):
         self._message_check_timer = None  # Timer for checking worker messages
         self._resize_timer = None  # Timer for debouncing resize events
         self._path_update_timer = None  # Timer for updating path label on resize
+        self._poll_timer = None  # Timer for status bar polling
+        self._status_poll_in_flight = False  # True while a STATUS_POLL is outstanding
+        self._debug_scpi = self.settings.debug_scpi
 
         # Create temporary directory for plot images
         self.plot_temp_dir = Path("/tmp/tui-vna-plots")
@@ -1365,6 +1693,22 @@ class VNAApp(App):
                                 placeholder="inst0",
                                 id="input_port",
                             )
+                        with Horizontal(classes="param-row"):
+                            yield Label("Status poll:", classes="col-label")
+                            yield Select(
+                                options=[
+                                    ("Off", 0),
+                                    ("1 s", 1),
+                                    ("2 s", 2),
+                                    ("5 s", 5),
+                                    ("10 s", 10),
+                                    ("30 s", 30),
+                                ],
+                                value=self.settings.status_poll_interval,
+                                id="sb_poll_interval",
+                                classes="col-input",
+                            )
+                            yield Static("", classes="col-check")
 
                     # Measurement Settings
                     with Container(classes="panel") as panel:
@@ -1513,11 +1857,25 @@ class VNAApp(App):
                         yield Checkbox("⋯ Busy", id="check_log_progress", value=True)
                         yield Checkbox("✓ Good", id="check_log_success", value=True)
                         yield Checkbox("✗ Bad", id="check_log_error", value=True)
-                        yield Checkbox("• Debug", id="check_log_debug", value=False)
-                log_area = TextArea(
-                    id="log_content", read_only=True, show_line_numbers=False
+                        yield Static("", classes="filter-spacer")
+                        yield Checkbox(
+                            "• Debug",
+                            id="check_log_debug",
+                            value=False,
+                            classes="secondary-filter",
+                        )
+                        yield Checkbox(
+                            "~ Poll",
+                            id="check_log_poll",
+                            value=False,
+                            classes="secondary-filter",
+                        )
+                log_area = RichLog(
+                    id="log_content", markup=True, highlight=False, wrap=False
                 )
-                log_area.border_title = "Log"
+                log_area.border_title = (
+                    "Log  [@click='app.copy_log'][reverse] ⎘  [/][/]"
+                )
                 yield log_area
 
             # Results Tab
@@ -1663,10 +2021,12 @@ class VNAApp(App):
                     variant="warning",
                 )
 
-        yield Footer()
+        yield StatusFooter()
 
     def on_mount(self) -> None:
         """Called when app starts."""
+        self._apply_debug_title()
+        self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
@@ -1761,6 +2121,11 @@ class VNAApp(App):
             # Default to magnitude if current type not available
             plot_type_select.value = "magnitude"
 
+    def on_app_theme_changed(self) -> None:
+        """Invalidate cached style map and rerender log with updated theme colors."""
+        self._cached_style_map = None
+        self._refresh_log_display()
+
     def on_unmount(self) -> None:
         """Called when app is shutting down."""
         # Save settings before exit
@@ -1853,6 +2218,32 @@ class VNAApp(App):
         """Start polling worker thread for messages."""
         self._message_check_timer = self.set_interval(0.05, self._check_worker_messages)
 
+    def _start_status_polling(self, interval_s: int) -> None:
+        """Start (or restart) periodic VNA status polling."""
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
+        if interval_s > 0:
+            self._poll_timer = self.set_interval(interval_s, self._do_status_poll)
+
+    def _stop_status_polling(self) -> None:
+        """Stop status polling and clear the status bar."""
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
+        self.query_one(StatusFooter).set_disconnected()
+
+    def _do_status_poll(self) -> None:
+        """Send a status poll request to the worker.
+
+        Skipped when disconnected, measuring, or a previous poll has not yet
+        returned a STATUS_UPDATE — prevents backlog when polls take longer than
+        the polling interval.
+        """
+        if self.connected and not self.measuring and not self._status_poll_in_flight:
+            self._status_poll_in_flight = True
+            self.worker.send_command(MessageType.STATUS_POLL)
+
     def _check_worker_messages(self):
         """Check for messages from worker thread (called periodically)."""
         try:
@@ -1880,14 +2271,22 @@ class VNAApp(App):
             self.update_connect_button()
             self.enable_buttons_for_state()
             self.reset_progress()
+            self._start_status_polling(self.settings.status_poll_interval)
+            if self._debug_scpi:
+                self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=True)
+            # Immediate first poll without waiting for the interval
+            self._status_poll_in_flight = True
+            self.worker.send_command(MessageType.STATUS_POLL)
 
         elif msg.type == MessageType.DISCONNECTED:
             self.connected = False
+            self._status_poll_in_flight = False
             self.sub_title = ""
             self.log_message("Disconnected from VNA", "success")
             self.update_connect_button()
             self.enable_buttons_for_state()
             self.reset_progress()
+            self._stop_status_polling()
 
         elif msg.type == MessageType.PARAMS_READ:
             result: ParamsResult = msg.data
@@ -1905,15 +2304,36 @@ class VNAApp(App):
             # Schedule the async handler
             asyncio.create_task(self._handle_measurement_complete(result))
 
+        elif msg.type == MessageType.STATUS_UPDATE:
+            self._status_poll_in_flight = False
+            result: StatusResult = msg.data
+            self.query_one(StatusFooter).update_status(result)
+
+        elif msg.type == MessageType.SCPI_ERROR_UPDATE:
+            if self._debug_scpi:
+                self.query_one(StatusFooter).update_last_error(
+                    msg.data["command"], msg.data["error"]
+                )
+
         elif msg.type == MessageType.ERROR:
             self.log_message(msg.error, "error")
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
                 self.connected = False
                 self.sub_title = ""
                 self.update_connect_button()
+                self._stop_status_polling()
             self.enable_buttons_for_state()
             self.reset_progress()
             self.measuring = False
+
+    @on(Select.Changed, "#sb_poll_interval")
+    def on_poll_interval_change(self, event: Select.Changed) -> None:
+        """Handle status poll interval change."""
+        if event.value == Select.BLANK:
+            return
+        self.settings.status_poll_interval = event.value
+        if self.connected:
+            self._start_status_polling(event.value)
 
     @on(Checkbox.Changed, "#check_custom_filename")
     def on_custom_filename_change(self, event: Checkbox.Changed) -> None:
@@ -1926,7 +2346,7 @@ class VNAApp(App):
         """Handle tab activation - scroll log to bottom when Log tab is opened, redraw plots when Results tab is opened."""
         if event.pane.id == "tab_log":
             # Scroll log to bottom when opening log tab
-            log_content = self.query_one("#log_content", TextArea)
+            log_content = self.query_one("#log_content", RichLog)
             log_content.scroll_end(animate=False)
         elif event.pane.id == "tab_results":
             # Redraw plot with correct sizing when switching to results tab
@@ -1935,93 +2355,100 @@ class VNAApp(App):
 
     @on(
         Checkbox.Changed,
-        "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, #check_log_success, #check_log_error, #check_log_debug",
+        "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, #check_log_success, #check_log_error, #check_log_debug, #check_log_poll",
     )
     def on_log_filter_change(self, event: Checkbox.Changed) -> None:
         """Handle log filter checkbox changes."""
         self._refresh_log_display()
 
-    def log_message(self, message: str, level: str = "info"):
-        """Add message to log with plain text formatting for TextArea."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+    # Cached level→(icon, Rich style) map; None means rebuild on next use.
+    # Invalidated by on_app_theme_changed so colors always match the active theme.
+    _cached_style_map: dict[str, tuple[str, str]] | None = None
 
-        # Clear, distinct icons for different message types
-        icons = {
-            "info": "i",  # Simple letter, cross-platform compatible
-            "success": "✓",  # Checkmark
-            "error": "✗",  # X mark
-            "progress": "⋯",  # Horizontal ellipsis for progress
-            "tx": "↑",  # Up arrow for sent SCPI commands
-            "rx": "↓",  # Down arrow for received SCPI responses
-            "debug": "•",  # Bullet for debug messages
+    def _build_style_map(self) -> dict[str, tuple[str, str]]:
+        """Build the level→(icon, style) map from current Textual theme variables."""
+        v = self.get_css_variables()
+        c_tx = v.get("accent", "#ffa62b")
+        c_rx = v.get("secondary", "#0178D4")
+        c_suc = v.get("success", "#4EBF71")
+        c_err = v.get("error", "#ba3c5b")
+        return {
+            "tx": ("↑", c_tx),
+            "rx": ("↓", c_rx),
+            "tx/poll": ("↑~", f"dim {c_tx}"),
+            "rx/poll": ("↓~", f"dim {c_rx}"),
+            "tx/debug": ("↑•", "dim"),
+            "rx/debug": ("↓•", "dim"),
+            "info": ("i", "default"),
+            "success": ("✓", f"bold {c_suc}"),
+            "error": ("✗", f"bold {c_err}"),
+            "progress": ("⋯", "dim italic"),
+            "debug": ("•", "dim"),
         }
-        icon = icons.get(level, "•")
 
-        # Remove "TX: " or "RX: " prefix if present (we use arrows instead)
-        display_message = message
-        if level in ("tx", "rx"):
-            if message.startswith("TX: "):
-                display_message = message[4:]
-            elif message.startswith("RX: "):
-                display_message = message[4:]
+    def _format_log_entry(self, entry: dict) -> str:
+        """Render a stored log entry to Rich markup.
 
-        # Plain text format for TextArea (no Rich markup)
-        formatted_message = f"{timestamp} {icon} {display_message}"
+        The style map is cached after the first call and only rebuilt when the
+        theme changes, so ``get_css_variables()`` is not called per-entry
+        during a full log redraw.
+        """
+        if self._cached_style_map is None:
+            self._cached_style_map = self._build_style_map()
+        icon, style = self._cached_style_map.get(entry["level"], ("•", "default"))
+        safe_msg = rich_escape(entry["message"])
+        return f"[dim]{entry['timestamp']}[/dim] [{style}]{icon}[/] {safe_msg}"
 
-        # Store message with metadata
+    def log_message(self, message: str, level: str = "info"):
+        """Add message to log."""
         log_entry = {
-            "timestamp": timestamp,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
             "level": level,
             "message": message,
-            "icon": icon,
-            "formatted": formatted_message,
         }
         self.log_messages.append(log_entry)
 
-        # Check if this message should be displayed based on filters
         if self._should_show_log(level):
-            log_content = self.query_one("#log_content", TextArea)
-            # Append to TextArea
-            current_text = log_content.text
-            if current_text:
-                log_content.text = current_text + "\n" + log_entry["formatted"]
-            else:
-                log_content.text = log_entry["formatted"]
-            # Scroll to bottom
+            log_content = self.query_one("#log_content", RichLog)
+            log_content.write(self._format_log_entry(log_entry))
             log_content.scroll_end(animate=False)
 
     def _should_show_log(self, level: str) -> bool:
-        """Check if a log message should be displayed based on filter settings."""
-        try:
-            filter_map = {
-                "tx": "#check_log_tx",
-                "rx": "#check_log_rx",
-                "info": "#check_log_info",
-                "progress": "#check_log_progress",
-                "success": "#check_log_success",
-                "error": "#check_log_error",
-                "debug": "#check_log_debug",
-            }
+        """Return True if *level* passes all active log filter checkboxes.
 
-            checkbox_id = filter_map.get(level)
+        Composite levels (e.g. ``"tx/poll"``) require both the primary and
+        secondary checkbox to be checked.  Unknown levels are shown by default.
+        """
+        try:
+            if "/" in level:
+                primary, secondary = level.split("/", 1)
+                primary_id = self._LOG_FILTER_IDS.get(primary)
+                secondary_id = self._LOG_FILTER_IDS.get(secondary)
+                primary_ok = (
+                    self.query_one(primary_id, Checkbox).value if primary_id else True
+                )
+                secondary_ok = (
+                    self.query_one(secondary_id, Checkbox).value
+                    if secondary_id
+                    else True
+                )
+                return primary_ok and secondary_ok
+
+            checkbox_id = self._LOG_FILTER_IDS.get(level)
             if checkbox_id:
                 return self.query_one(checkbox_id, Checkbox).value
-            return True  # Show by default if unknown level
+            return True  # Unknown levels are always shown
         except Exception:
             # During initialization, show everything
             return True
 
     def _refresh_log_display(self):
-        """Refresh log display based on current filter settings."""
-        log_content = self.query_one("#log_content", TextArea)
-
-        # Rebuild text from filtered messages
-        filtered_lines = [
-            entry["formatted"]
-            for entry in self.log_messages
-            if self._should_show_log(entry["level"])
-        ]
-        log_content.text = "\n".join(filtered_lines)
+        """Rebuild log display from stored entries using current theme colors and filters."""
+        log_content = self.query_one("#log_content", RichLog)
+        log_content.clear()
+        for entry in self.log_messages:
+            if self._should_show_log(entry["level"]):
+                log_content.write(self._format_log_entry(entry))
         log_content.scroll_end(animate=False)
 
     def set_progress(self, label: str, progress: float = 0):
@@ -2061,15 +2488,32 @@ class VNAApp(App):
             btn.label = "📡 Connect"
             btn.variant = "primary"
 
+    def action_copy_log(self) -> None:
+        """Copy visible log entries as plain text to the system clipboard."""
+        style_map = self._cached_style_map or self._build_style_map()
+        lines = [
+            f"{e['timestamp']} {style_map.get(e['level'], ('•', ''))[0]} {e['message']}"
+            for e in self.log_messages
+            if self._should_show_log(e["level"])
+        ]
+        self.copy_to_clipboard("\n".join(lines))
+        self.notify("Log copied to clipboard", timeout=2)
+
     @on(Button.Pressed, "#btn_connect")
     def handle_connect(self) -> None:
         """Connect or disconnect from VNA."""
         self.disable_all_buttons()
 
         if self.connected:
+            # Stop polling immediately so no more STATUS_POLLs queue up
+            self.connected = False
+            if self._poll_timer is not None:
+                self._poll_timer.stop()
+                self._poll_timer = None
             # Disconnect
             self.set_progress("Disconnecting...", 50)
             self.log_message("Disconnecting from VNA...", "progress")
+            self.worker.clear_commands()
             self.worker.send_command(MessageType.DISCONNECT)
         else:
             # Connect
@@ -2104,6 +2548,23 @@ class VNAApp(App):
                 self.log_message(f"Connection setup failed: {str(e)}", "error")
                 self.enable_buttons_for_state()
                 self.reset_progress()
+
+    def action_toggle_debug_scpi(self) -> None:
+        """Toggle per-command SCPI error checking (debug mode)."""
+        self._debug_scpi = not self._debug_scpi
+        self.settings.debug_scpi = self._debug_scpi
+        self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=self._debug_scpi)
+        self._apply_debug_title()
+        self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, self.connected)
+        state = "ON" if self._debug_scpi else "OFF"
+        self.log_message(
+            f"SCPI debug mode {state} — queries SYST:ERR? after each command", "info"
+        )
+
+    def _apply_debug_title(self) -> None:
+        """Reflect debug mode state in the app title."""
+        base = "tina - Terminal UI Network Analyzer"
+        self.title = f"{base} 🐛" if self._debug_scpi else base
 
     @on(Button.Pressed, "#btn_read_params")
     def handle_read_params(self) -> None:

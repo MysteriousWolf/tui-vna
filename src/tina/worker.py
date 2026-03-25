@@ -27,13 +27,17 @@ class MessageType(Enum):
     DISCONNECT = "disconnect"
     READ_PARAMS = "read_params"
     MEASURE = "measure"
+    STATUS_POLL = "status_poll"
     SHUTDOWN = "shutdown"
+    SET_DEBUG_SCPI = "set_debug_scpi"
 
     # Responses (Worker -> UI)
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     PARAMS_READ = "params_read"
     MEASUREMENT_COMPLETE = "measurement_complete"
+    STATUS_UPDATE = "status_update"
+    SCPI_ERROR_UPDATE = "scpi_error_update"
     ERROR = "error"
     PROGRESS = "progress"
     LOG = "log"  # Log message (TX/RX/info)
@@ -73,6 +77,19 @@ class ParamsResult:
     points: int
     averaging_enabled: bool
     averaging_count: int
+
+
+@dataclass
+class StatusResult:
+    """Live VNA status for the status bar."""
+
+    cal_enabled: bool | None = None
+    cal_type: str | None = None
+    smoothing_enabled: bool | None = None
+    smoothing_aperture: float | None = None
+    if_bandwidth_hz: float | None = None
+    port_power_dbm: float | None = None
+    trigger_source: str | None = None
 
 
 @dataclass
@@ -118,6 +135,8 @@ class MeasurementWorker:
         self._vna: VNABase | None = None
         self._vna_wrapper: LoggingVNAWrapper | None = None
         self._config: VNAConfig | None = None
+        self._measuring = False
+        self._debug_scpi = False
 
     def start(self):
         """Start the worker thread."""
@@ -156,6 +175,14 @@ class MeasurementWorker:
         """
         self._command_queue.put(Message(type=msg_type, data=data))
 
+    def clear_commands(self) -> None:
+        """Drain all pending commands from the queue (e.g. before disconnect)."""
+        while True:
+            try:
+                self._command_queue.get_nowait()
+            except queue.Empty:
+                break
+
     def get_response(self, timeout: float = 0.1) -> Message:
         """
         Get response from worker thread (non-blocking with timeout).
@@ -188,18 +215,6 @@ class MeasurementWorker:
         """Send log message to UI thread."""
         self._send_response(MessageType.LOG, LogMessage(message=message, level=level))
 
-    def _vna_command(self, command: str):
-        """Send VNA command with logging."""
-        self._log(command, "tx")
-        self._vna._send_command(command)
-
-    def _vna_query(self, command: str) -> str:
-        """Query VNA with logging."""
-        self._log(command, "tx")
-        response = self._vna._query(command)
-        self._log(response.strip(), "rx")
-        return response
-
     def _worker_loop(self):
         """Main worker thread loop."""
         while self._running:
@@ -222,6 +237,10 @@ class MeasurementWorker:
                     self._handle_read_params()
                 elif msg.type == MessageType.MEASURE:
                     self._handle_measure(msg.data)
+                elif msg.type == MessageType.STATUS_POLL:
+                    self._handle_status_poll()
+                elif msg.type == MessageType.SET_DEBUG_SCPI:
+                    self._handle_set_debug_scpi(msg.data)
 
             except Exception as e:
                 # Catch-all error handler
@@ -244,6 +263,7 @@ class MeasurementWorker:
 
             # Progress callback
             def on_progress(msg, pct):
+                """Forward connection progress to the UI."""
                 self._send_progress(msg, pct)
 
             # Connect to get IDN
@@ -270,9 +290,19 @@ class MeasurementWorker:
                 self._vna = driver_class(config)
                 self._vna.connect(progress_callback=on_progress)
 
-            # Wrap driver with logging to capture all SCPI commands
-            self._vna = LoggingVNAWrapper(self._vna, self._log)
-            self._vna_wrapper = self._vna  # Keep for compatibility
+            # Replace the driver reference with its logging wrapper so all calls
+            # to self._vna (including higher-level methods like get_status) go
+            # through the wrapper automatically via __getattr__.
+            # _vna_wrapper is a typed alias to the same object for accessing
+            # wrapper-specific attributes (debug, log_tag) without a cast.
+            self._vna = LoggingVNAWrapper(
+                self._vna, self._log, on_scpi_error=self._on_scpi_error
+            )
+            self._vna_wrapper = self._vna
+            self._vna_wrapper.debug = self._debug_scpi
+
+            # Clear the instrument's error queue (logged via wrapper)
+            self._vna._send_command("*CLS")
 
             # Log the IDN (already queried during connection)
             self._log("*IDN?", "tx")
@@ -327,8 +357,59 @@ class MeasurementWorker:
                 MessageType.ERROR, error=f"Failed to read parameters: {str(e)}"
             )
 
+    def _handle_status_poll(self) -> None:
+        """Handle status poll command.
+
+        Always emits STATUS_UPDATE so the UI's in-flight flag is cleared.
+        When measuring or disconnected a default (all-None) result is sent
+        instead of querying the VNA.
+        """
+        if self._measuring or not self._vna or not self._vna.is_connected():
+            self._send_response(MessageType.STATUS_UPDATE, data=StatusResult())
+            return
+
+        raw = {}
+        try:
+            if self._vna_wrapper is not None:
+                self._vna_wrapper.log_tag = "poll"
+            raw = self._vna.get_status()
+        except Exception as e:
+            self._log(f"Status poll failed: {e}", "debug")
+        finally:
+            if self._vna_wrapper is not None:
+                self._vna_wrapper.log_tag = None
+
+        result = StatusResult(
+            cal_enabled=raw.get("cal_enabled"),
+            cal_type=raw.get("cal_type"),
+            smoothing_enabled=raw.get("smoothing_enabled"),
+            smoothing_aperture=raw.get("smoothing_aperture"),
+            if_bandwidth_hz=raw.get("if_bandwidth_hz"),
+            port_power_dbm=raw.get("port_power_dbm"),
+            trigger_source=raw.get("trigger_source"),
+        )
+        self._send_response(MessageType.STATUS_UPDATE, data=result)
+
+    def _handle_set_debug_scpi(self, enabled: bool) -> None:
+        """Enable/disable per-command SCPI error checking."""
+        self._debug_scpi = enabled
+        if self._vna_wrapper is not None:
+            self._vna_wrapper.debug = enabled
+
+    def _on_scpi_error(self, command: str, raw_error: str) -> None:
+        """Callback fired by LoggingVNAWrapper after each SYST:ERR? check.
+
+        Forwards the result to the UI as a SCPI_ERROR_UPDATE message so the
+        footer debug chip can reflect the last command's error state.
+        """
+        self._send_response(
+            MessageType.SCPI_ERROR_UPDATE,
+            data={"command": command, "error": raw_error},
+        )
+
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""
+        self._measuring = True
         try:
             if not self._vna or not self._vna.is_connected():
                 raise RuntimeError("Not connected to VNA")
@@ -384,6 +465,8 @@ class MeasurementWorker:
             self._send_response(
                 MessageType.ERROR, error=f"Measurement failed: {str(e)}"
             )
+        finally:
+            self._measuring = False
 
     def _handle_shutdown(self) -> None:
         """Handle shutdown command."""

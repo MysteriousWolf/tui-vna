@@ -339,6 +339,66 @@ class TestWorkerErrorHandling:
         worker.stop()
 
 
+class TestWorkerQueueManagement:
+    """Test queue drain and debug-flag helpers added in the status-bar feature."""
+
+    @pytest.mark.unit
+    def test_clear_commands_drains_queue(self):
+        """clear_commands() must remove all pending commands without blocking."""
+        worker = MeasurementWorker()
+        # Queue three commands without starting the thread
+        worker.send_command(MessageType.STATUS_POLL)
+        worker.send_command(MessageType.STATUS_POLL)
+        worker.send_command(MessageType.STATUS_POLL)
+        assert not worker._command_queue.empty()
+
+        worker.clear_commands()
+
+        assert worker._command_queue.empty()
+
+    @pytest.mark.unit
+    def test_clear_commands_on_empty_queue_is_safe(self):
+        """clear_commands() must be idempotent on an already-empty queue."""
+        worker = MeasurementWorker()
+        worker.clear_commands()  # Should not raise
+        worker.clear_commands()  # Calling twice is also safe
+
+    @pytest.mark.unit
+    def test_set_debug_scpi_updates_worker_flag(self):
+        """SET_DEBUG_SCPI must update _debug_scpi on the worker thread."""
+        worker = MeasurementWorker()
+        worker.start()
+
+        assert worker._debug_scpi is False
+        worker.send_command(MessageType.SET_DEBUG_SCPI, data=True)
+
+        # Give the worker thread a moment to process
+        import time
+
+        time.sleep(0.1)
+
+        assert worker._debug_scpi is True
+
+        worker.stop()
+
+    @pytest.mark.unit
+    def test_set_debug_scpi_toggle_off(self):
+        """SET_DEBUG_SCPI can also turn debug back off."""
+        worker = MeasurementWorker()
+        worker._debug_scpi = True
+        worker.start()
+
+        worker.send_command(MessageType.SET_DEBUG_SCPI, data=False)
+
+        import time
+
+        time.sleep(0.1)
+
+        assert worker._debug_scpi is False
+
+        worker.stop()
+
+
 class TestWorkerLogging:
     """Test worker logging functionality."""
 
