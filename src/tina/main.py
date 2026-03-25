@@ -2025,7 +2025,7 @@ class VNAApp(App):
 
     def on_mount(self) -> None:
         """Called when app starts."""
-        self._apply_debug_title()
+        self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
         # Initialize progress bar to 0 (not indeterminate)
@@ -2265,8 +2265,9 @@ class VNAApp(App):
 
         elif msg.type == MessageType.CONNECTED:
             idn = msg.data
-            self.sub_title = idn
             self.connected = True
+            self.sub_title = idn
+            self._update_title()
             self.log_message(f"Connected: {idn}", "success")
             self.update_connect_button()
             self.enable_buttons_for_state()
@@ -2282,6 +2283,7 @@ class VNAApp(App):
             self.connected = False
             self._status_poll_in_flight = False
             self.sub_title = ""
+            self._update_title()
             self.log_message("Disconnected from VNA", "success")
             self.update_connect_button()
             self.enable_buttons_for_state()
@@ -2320,6 +2322,7 @@ class VNAApp(App):
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
                 self.connected = False
                 self.sub_title = ""
+                self._update_title()
                 self.update_connect_button()
                 self._stop_status_polling()
             self.enable_buttons_for_state()
@@ -2554,16 +2557,16 @@ class VNAApp(App):
         self._debug_scpi = not self._debug_scpi
         self.settings.debug_scpi = self._debug_scpi
         self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=self._debug_scpi)
-        self._apply_debug_title()
+        self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, self.connected)
         state = "ON" if self._debug_scpi else "OFF"
         self.log_message(
             f"SCPI debug mode {state} — queries SYST:ERR? after each command", "info"
         )
 
-    def _apply_debug_title(self) -> None:
-        """Reflect debug mode state in the app title."""
-        base = "tina - Terminal UI Network Analyzer"
+    def _update_title(self) -> None:
+        """Reflect connection and debug mode state in the app title."""
+        base = "tina" if self.connected else "tina - Terminal UI Network Analyzer"
         self.title = f"{base} 🐛" if self._debug_scpi else base
 
     @on(Button.Pressed, "#btn_read_params")
