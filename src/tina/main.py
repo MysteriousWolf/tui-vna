@@ -2458,7 +2458,7 @@ class VNAApp(App):
     def _apply_debug_title(self) -> None:
         """Reflect debug mode state in the app title."""
         base = "tina - Terminal UI Network Analyzer"
-        self.title = f"{base} [SCPI DEBUG]" if self._debug_scpi else base
+        self.title = f"{base} 🐛" if self._debug_scpi else base
 
     @on(Button.Pressed, "#btn_read_params")
     def handle_read_params(self) -> None:
