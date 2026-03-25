@@ -369,9 +369,14 @@ class MeasurementWorker:
 
         raw = {}
         try:
+            if self._vna_wrapper is not None:
+                self._vna_wrapper.log_tag = "poll"
             raw = self._vna.get_status()
         except Exception as e:
             self._log(f"Status poll failed: {e}", "debug")
+        finally:
+            if self._vna_wrapper is not None:
+                self._vna_wrapper.log_tag = None
 
         result = StatusResult(
             cal_enabled=raw.get("cal_enabled"),
