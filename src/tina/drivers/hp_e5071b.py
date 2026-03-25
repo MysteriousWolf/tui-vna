@@ -128,6 +128,7 @@ class HPE5071B(VNABase):
         """
 
         def report(msg: str, pct: float) -> None:
+            """Forward a progress message to the caller's callback if provided."""
             if progress_callback:
                 progress_callback(msg, pct)
 

@@ -40,6 +40,7 @@ def get_terminal_font() -> tuple[str, float | None]:
     font_size = None
 
     def _parse_ghostty_config() -> None:
+        """Read font-family and font-size from the Ghostty config file if present."""
         nonlocal font_name, font_size
         cfg = home / ".config" / "ghostty" / "config"
         if cfg.exists():

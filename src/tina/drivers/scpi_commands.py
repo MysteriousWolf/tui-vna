@@ -137,9 +137,6 @@ CMD_GET_IF_BANDWIDTH = "SENS1:BWID?"
 # Port power command
 CMD_GET_PORT_POWER = "SOUR1:POW?"
 
-# Sweep mode command (CONT, SING, HOLD, POIN, PHAS)
-CMD_GET_SWEEP_MODE = "SENS1:SWE:MODE?"
-
 
 # HP E5071B specific commands
 class HPE5071B:

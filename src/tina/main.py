@@ -170,6 +170,7 @@ def _get_terminal_font() -> tuple[str, float | None]:
     font_size = None
 
     def _parse_ghostty_config() -> None:
+        """Read font-family and font-size from the Ghostty config file if present."""
         nonlocal font_name, font_size
         cfg = home / ".config" / "ghostty" / "config"
         if cfg.exists():
@@ -1003,6 +1004,7 @@ class StatusPollProvider(Provider):
     """Command palette provider for changing the status bar poll interval."""
 
     async def discover(self) -> Hits:
+        """Yield all available poll-interval options unconditionally."""
         for label, value in _POLL_OPTIONS:
             yield Hit(
                 1.0,
@@ -1012,6 +1014,7 @@ class StatusPollProvider(Provider):
             )
 
     async def search(self, query: str) -> Hits:
+        """Yield poll-interval options whose labels match *query*."""
         matcher = self.matcher(query)
         for label, value in _POLL_OPTIONS:
             score = matcher.match(label)
@@ -1019,6 +1022,7 @@ class StatusPollProvider(Provider):
                 yield Hit(score, matcher.highlight(label), partial(self._apply, value))
 
     def _apply(self, value: int) -> None:
+        """Apply the selected poll interval to settings and restart the poll timer."""
         app = self.app
         app.settings.status_poll_interval = value
         app.query_one("#sb_poll_interval", Select).value = value
@@ -1126,6 +1130,7 @@ class StatusFooter(Footer):
     }
 
     def __init__(self, **kwargs):
+        """Initialise state stores for chip text/class and debug chip visibility."""
         super().__init__(**kwargs)
         # (text, css_class) — class "" means no coloured background
         self._sb_state: dict[str, tuple[str, str]] = {
@@ -1136,6 +1141,7 @@ class StatusFooter(Footer):
         self._debug_chip_state: tuple[str, str] = ("ERR OK", "--state-ok")
 
     def compose(self) -> ComposeResult:
+        """Build footer: key bindings (left), debug chip, spacer, status chips (right)."""
         yield from super().compose()  # q Quit leftmost; ^p palette docked right
         # Debug error chip — left-aligned next to q Quit, hidden until debug active.
         # Classes are set from stored state so recomposes (triggered by Footer
@@ -1158,6 +1164,7 @@ class StatusFooter(Footer):
                 yield Static(text, id=item_id, classes=f"sb-item {css_class}".strip())
 
     def _set_item(self, item_id: str, text: str, css_class: str = "") -> None:
+        """Update a single status chip's text and CSS class in state and in the DOM."""
         self._sb_state[item_id] = (text, css_class)
         try:
             w = self.query_one(f"#{item_id}", Static)
@@ -1230,6 +1237,7 @@ class StatusFooter(Footer):
         self._apply_debug_chip()
 
     def update_status(self, result: "StatusResult") -> None:
+        """Refresh all status chips from a fresh StatusResult."""
         # Calibration
         if result.cal_enabled is None:
             self._set_item("sb_cal", self._sb_state["sb_cal"][0], "--stale")
@@ -1265,15 +1273,13 @@ class StatusFooter(Footer):
         else:
             self._set_item("sb_power", f"{result.port_power_dbm:+.1f} dBm")
 
-        # Trigger source + sweep mode
+        # Trigger source
         if result.trigger_source is None:
             self._set_item("sb_trigger", self._sb_state["sb_trigger"][0], "--stale")
         else:
             src = result.trigger_source.strip().upper()
-            mode = (result.sweep_mode or "").strip().upper()
-            label = f"{src} {mode}".strip() if mode else src
             css = f"--trig-{src}" if f"--trig-{src}" in _ALL_SB_STATE_CLASSES else ""
-            self._set_item("sb_trigger", label, css)
+            self._set_item("sb_trigger", src, css)
 
 
 class VNAApp(App):
@@ -1634,6 +1640,7 @@ class VNAApp(App):
     TITLE = "tina - Terminal UI Network Analyzer"
 
     def __init__(self, test_updates: bool = False):
+        """Initialise application state, settings, worker thread, and timers."""
         super().__init__()
 
         self._test_updates = test_updates
@@ -1651,6 +1658,7 @@ class VNAApp(App):
         self._resize_timer = None  # Timer for debouncing resize events
         self._path_update_timer = None  # Timer for updating path label on resize
         self._poll_timer = None  # Timer for status bar polling
+        self._status_poll_in_flight = False  # True while a STATUS_POLL is outstanding
         self._debug_scpi = self.settings.debug_scpi
 
         # Create temporary directory for plot images
@@ -2226,8 +2234,14 @@ class VNAApp(App):
         self.query_one(StatusFooter).set_disconnected()
 
     def _do_status_poll(self) -> None:
-        """Send a status poll request to the worker (no-op during measurement)."""
-        if self.connected and not self.measuring:
+        """Send a status poll request to the worker.
+
+        Skipped when disconnected, measuring, or a previous poll has not yet
+        returned a STATUS_UPDATE — prevents backlog when polls take longer than
+        the polling interval.
+        """
+        if self.connected and not self.measuring and not self._status_poll_in_flight:
+            self._status_poll_in_flight = True
             self.worker.send_command(MessageType.STATUS_POLL)
 
     def _check_worker_messages(self):
@@ -2261,10 +2275,12 @@ class VNAApp(App):
             if self._debug_scpi:
                 self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=True)
             # Immediate first poll without waiting for the interval
+            self._status_poll_in_flight = True
             self.worker.send_command(MessageType.STATUS_POLL)
 
         elif msg.type == MessageType.DISCONNECTED:
             self.connected = False
+            self._status_poll_in_flight = False
             self.sub_title = ""
             self.log_message("Disconnected from VNA", "success")
             self.update_connect_button()
@@ -2289,6 +2305,7 @@ class VNAApp(App):
             asyncio.create_task(self._handle_measurement_complete(result))
 
         elif msg.type == MessageType.STATUS_UPDATE:
+            self._status_poll_in_flight = False
             result: StatusResult = msg.data
             self.query_one(StatusFooter).update_status(result)
 
