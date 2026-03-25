@@ -6,6 +6,7 @@ Implements VNABase interface for HP/Agilent E5071B series VNAs.
 
 import socket
 import time
+from typing import Any
 
 import numpy as np
 import pyvisa
@@ -202,7 +203,7 @@ class HPE5071B(VNABase):
         self._ensure_connected()
         return self.inst.query_ascii_values(command)
 
-    def get_current_parameters(self) -> dict[str, any]:
+    def get_current_parameters(self) -> dict[str, Any]:
         """
         Query current VNA settings.
 
@@ -254,7 +255,7 @@ class HPE5071B(VNABase):
 
         return params
 
-    def get_status(self) -> dict[str, any]:
+    def get_status(self) -> dict[str, Any]:
         """
         Query live VNA status for the status bar.
 
