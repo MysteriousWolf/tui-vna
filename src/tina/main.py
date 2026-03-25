@@ -2264,11 +2264,11 @@ class VNAApp(App):
             self.set_progress(update.message, update.progress_pct)
 
         elif msg.type == MessageType.CONNECTED:
-            idn = msg.data
+            display_name = msg.data
             self.connected = True
-            self.sub_title = idn
+            self.sub_title = display_name
             self._update_title()
-            self.log_message(f"Connected: {idn}", "success")
+            self.log_message(f"Connected: {display_name}", "success")
             self.update_connect_button()
             self.enable_buttons_for_state()
             self.reset_progress()
