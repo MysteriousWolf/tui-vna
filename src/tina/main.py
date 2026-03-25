@@ -18,6 +18,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
+from rich.markup import escape as rich_escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -33,11 +34,11 @@ from textual.widgets import (
     Label,
     Markdown,
     ProgressBar,
+    RichLog,
     Select,
     Static,
     TabbedContent,
     TabPane,
-    TextArea,
 )
 
 # Set matplotlib to non-interactive backend
@@ -1272,6 +1273,14 @@ class VNAApp(App):
         margin-right: 0;
     }
 
+    .filter-spacer {
+        width: 1fr;
+    }
+
+    .secondary-filter {
+        opacity: 0.5;
+    }
+
     .button-group {
         height: auto;
         margin-top: 1;
@@ -1726,9 +1735,21 @@ class VNAApp(App):
                         yield Checkbox("⋯ Busy", id="check_log_progress", value=True)
                         yield Checkbox("✓ Good", id="check_log_success", value=True)
                         yield Checkbox("✗ Bad", id="check_log_error", value=True)
-                        yield Checkbox("• Debug", id="check_log_debug", value=False)
-                log_area = TextArea(
-                    id="log_content", read_only=True, show_line_numbers=False
+                        yield Static("", classes="filter-spacer")
+                        yield Checkbox(
+                            "• Debug",
+                            id="check_log_debug",
+                            value=False,
+                            classes="secondary-filter",
+                        )
+                        yield Checkbox(
+                            "~ Poll",
+                            id="check_log_poll",
+                            value=False,
+                            classes="secondary-filter",
+                        )
+                log_area = RichLog(
+                    id="log_content", markup=True, highlight=False, wrap=False
                 )
                 log_area.border_title = "Log"
                 yield log_area
@@ -1975,6 +1996,10 @@ class VNAApp(App):
             # Default to magnitude if current type not available
             plot_type_select.value = "magnitude"
 
+    def on_app_theme_changed(self) -> None:
+        """Rerender log with updated theme colors when the theme changes."""
+        self._refresh_log_display()
+
     def on_unmount(self) -> None:
         """Called when app is shutting down."""
         # Save settings before exit
@@ -2180,7 +2205,7 @@ class VNAApp(App):
         """Handle tab activation - scroll log to bottom when Log tab is opened, redraw plots when Results tab is opened."""
         if event.pane.id == "tab_log":
             # Scroll log to bottom when opening log tab
-            log_content = self.query_one("#log_content", TextArea)
+            log_content = self.query_one("#log_content", RichLog)
             log_content.scroll_end(animate=False)
         elif event.pane.id == "tab_results":
             # Redraw plot with correct sizing when switching to results tab
@@ -2189,63 +2214,70 @@ class VNAApp(App):
 
     @on(
         Checkbox.Changed,
-        "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, #check_log_success, #check_log_error, #check_log_debug",
+        "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, #check_log_success, #check_log_error, #check_log_debug, #check_log_poll",
     )
     def on_log_filter_change(self, event: Checkbox.Changed) -> None:
         """Handle log filter checkbox changes."""
         self._refresh_log_display()
 
-    def log_message(self, message: str, level: str = "info"):
-        """Add message to log with plain text formatting for TextArea."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+    def _format_log_entry(self, entry: dict) -> str:
+        """Render a log entry to Rich markup using current theme colors.
 
-        # Clear, distinct icons for different message types
-        icons = {
-            "info": "i",  # Simple letter, cross-platform compatible
-            "success": "✓",  # Checkmark
-            "error": "✗",  # X mark
-            "progress": "⋯",  # Horizontal ellipsis for progress
-            "tx": "↑",  # Up arrow for sent SCPI commands
-            "rx": "↓",  # Down arrow for received SCPI responses
-            "debug": "•",  # Bullet for debug messages
+        Called at display time so theme changes apply to all stored entries.
+        """
+        v = self.get_css_variables()
+        c_tx = v.get("accent", "#ffa62b")
+        c_rx = v.get("secondary", "#0178D4")
+        c_suc = v.get("success", "#4EBF71")
+        c_err = v.get("error", "#ba3c5b")
+
+        style_map = {
+            "tx": ("↑", c_tx),
+            "rx": ("↓", c_rx),
+            "tx/poll": ("↑~", f"dim {c_tx}"),
+            "rx/poll": ("↓~", f"dim {c_rx}"),
+            "tx/debug": ("↑•", "dim"),
+            "rx/debug": ("↓•", "dim"),
+            "info": ("i", "default"),
+            "success": ("✓", f"bold {c_suc}"),
+            "error": ("✗", f"bold {c_err}"),
+            "progress": ("⋯", "dim italic"),
+            "debug": ("•", "dim"),
         }
-        icon = icons.get(level, "•")
+        level = entry["level"]
+        icon, style = style_map.get(level, ("•", "default"))
+        primary_level = level.split("/")[0] if "/" in level else level
 
-        # Remove "TX: " or "RX: " prefix if present (we use arrows instead)
-        display_message = message
-        if level in ("tx", "rx"):
-            if message.startswith("TX: "):
-                display_message = message[4:]
-            elif message.startswith("RX: "):
-                display_message = message[4:]
+        display_message = entry["message"]
+        if primary_level in ("tx", "rx"):
+            if display_message.startswith("TX: "):
+                display_message = display_message[4:]
+            elif display_message.startswith("RX: "):
+                display_message = display_message[4:]
 
-        # Plain text format for TextArea (no Rich markup)
-        formatted_message = f"{timestamp} {icon} {display_message}"
+        safe_msg = rich_escape(display_message)
+        return f"[dim]{entry['timestamp']}[/dim] [{style}]{icon}[/] {safe_msg}"
 
-        # Store message with metadata
+    def log_message(self, message: str, level: str = "info"):
+        """Add message to log."""
         log_entry = {
-            "timestamp": timestamp,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
             "level": level,
             "message": message,
-            "icon": icon,
-            "formatted": formatted_message,
         }
         self.log_messages.append(log_entry)
 
-        # Check if this message should be displayed based on filters
         if self._should_show_log(level):
-            log_content = self.query_one("#log_content", TextArea)
-            # Append to TextArea
-            current_text = log_content.text
-            if current_text:
-                log_content.text = current_text + "\n" + log_entry["formatted"]
-            else:
-                log_content.text = log_entry["formatted"]
-            # Scroll to bottom
+            log_content = self.query_one("#log_content", RichLog)
+            log_content.write(self._format_log_entry(log_entry))
             log_content.scroll_end(animate=False)
 
     def _should_show_log(self, level: str) -> bool:
-        """Check if a log message should be displayed based on filter settings."""
+        """Check if a log message should be displayed based on filter settings.
+
+        Levels can be composite "primary/secondary" (e.g. "tx/poll", "rx/debug").
+        Both the primary and secondary checkboxes must be enabled to show the message.
+        """
         try:
             filter_map = {
                 "tx": "#check_log_tx",
@@ -2255,7 +2287,22 @@ class VNAApp(App):
                 "success": "#check_log_success",
                 "error": "#check_log_error",
                 "debug": "#check_log_debug",
+                "poll": "#check_log_poll",
             }
+
+            if "/" in level:
+                primary, secondary = level.split("/", 1)
+                primary_id = filter_map.get(primary)
+                secondary_id = filter_map.get(secondary)
+                primary_ok = (
+                    self.query_one(primary_id, Checkbox).value if primary_id else True
+                )
+                secondary_ok = (
+                    self.query_one(secondary_id, Checkbox).value
+                    if secondary_id
+                    else True
+                )
+                return primary_ok and secondary_ok
 
             checkbox_id = filter_map.get(level)
             if checkbox_id:
@@ -2266,16 +2313,12 @@ class VNAApp(App):
             return True
 
     def _refresh_log_display(self):
-        """Refresh log display based on current filter settings."""
-        log_content = self.query_one("#log_content", TextArea)
-
-        # Rebuild text from filtered messages
-        filtered_lines = [
-            entry["formatted"]
-            for entry in self.log_messages
-            if self._should_show_log(entry["level"])
-        ]
-        log_content.text = "\n".join(filtered_lines)
+        """Rebuild log display from stored entries using current theme colors and filters."""
+        log_content = self.query_one("#log_content", RichLog)
+        log_content.clear()
+        for entry in self.log_messages:
+            if self._should_show_log(entry["level"]):
+                log_content.write(self._format_log_entry(entry))
         log_content.scroll_end(animate=False)
 
     def set_progress(self, label: str, progress: float = 0):

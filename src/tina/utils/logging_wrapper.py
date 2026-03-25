@@ -24,6 +24,7 @@ class LoggingVNAWrapper:
         self._vna = vna
         self._log = log_callback
         self.debug = False
+        self.log_tag: str | None = None  # When set, overrides "tx"/"rx" with this tag
 
         # Wrap the low-level SCPI methods
         self._wrap_scpi_methods()
@@ -38,15 +39,22 @@ class LoggingVNAWrapper:
         # Capture raw query before wrapping (used for SYST:ERR? checks)
         self._raw_query = original_query
 
+        def _tags(self) -> tuple[str, str]:
+            """Return (send_tag, recv_tag) based on current log_tag."""
+            if self.log_tag:
+                return f"tx/{self.log_tag}", f"rx/{self.log_tag}"
+            return "tx", "rx"
+
         # Wrap _send_command
         def logged_send_command(command: str):
-            self._log(command, "tx")
+            send_tag, _ = _tags(self)
+            self._log(command, send_tag)
             result = original_send_command(command)
             if self.debug:
                 try:
-                    self._log("SYST:ERR?", "debug")
+                    self._log("SYST:ERR?", "tx/debug")
                     err = self._raw_query("SYST:ERR?").strip()
-                    self._log(err, "debug")
+                    self._log(err, "rx/debug")
                     if not err.startswith("+0"):
                         self._log(f"SCPI ERR after '{command}': {err}", "error")
                 except Exception:
@@ -55,7 +63,8 @@ class LoggingVNAWrapper:
 
         # Wrap _query
         def logged_query(command: str) -> str:
-            self._log(command, "tx")
+            send_tag, recv_tag = _tags(self)
+            self._log(command, send_tag)
             response = original_query(command)
 
             # Log response (truncated if needed)
@@ -63,15 +72,15 @@ class LoggingVNAWrapper:
             if len(response_stripped) > SCPI_RESPONSE_TRUNCATE_LENGTH:
                 data_count = response_stripped.count(",") + 1
                 first_vals = ",".join(response_stripped.split(",")[:3])
-                self._log(f"[{data_count} values: {first_vals}...]", "rx")
+                self._log(f"[{data_count} values: {first_vals}...]", recv_tag)
             else:
-                self._log(response_stripped, "rx")
+                self._log(response_stripped, recv_tag)
 
             if self.debug:
                 try:
-                    self._log("SYST:ERR?", "debug")
+                    self._log("SYST:ERR?", "tx/debug")
                     err = self._raw_query("SYST:ERR?").strip()
-                    self._log(err, "debug")
+                    self._log(err, "rx/debug")
                     if not err.startswith("+0"):
                         self._log(f"SCPI ERR after '{command}': {err}", "error")
                 except Exception:
@@ -81,23 +90,24 @@ class LoggingVNAWrapper:
 
         # Wrap _query_ascii_values
         def logged_query_ascii(command: str):
-            self._log(command, "tx")
+            send_tag, recv_tag = _tags(self)
+            self._log(command, send_tag)
             result = original_query_ascii(command)
 
             # Log abbreviated response for large arrays
             if len(result) > 10:
                 self._log(
                     f"[{len(result)} values: {result[0]:.3e},{result[1]:.3e},{result[2]:.3e}...]",
-                    "rx",
+                    recv_tag,
                 )
             else:
-                self._log(str(result), "rx")
+                self._log(str(result), recv_tag)
 
             if self.debug:
                 try:
-                    self._log("SYST:ERR?", "debug")
+                    self._log("SYST:ERR?", "tx/debug")
                     err = self._raw_query("SYST:ERR?").strip()
-                    self._log(err, "debug")
+                    self._log(err, "rx/debug")
                     if not err.startswith("+0"):
                         self._log(f"SCPI ERR after '{command}': {err}", "error")
                 except Exception:
