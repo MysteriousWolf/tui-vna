@@ -1455,6 +1455,7 @@ class VNAApp(App):
         margin: 1 0;
     }
 
+
     #results_text {
         height: 100%;
         padding: 1;
@@ -1751,7 +1752,9 @@ class VNAApp(App):
                 log_area = RichLog(
                     id="log_content", markup=True, highlight=False, wrap=False
                 )
-                log_area.border_title = "Log"
+                log_area.border_title = (
+                    "Log  [@click='app.copy_log'][reverse] ⎘  [/][/]"
+                )
                 yield log_area
 
             # Results Tab
@@ -2357,6 +2360,39 @@ class VNAApp(App):
         else:
             btn.label = "📡 Connect"
             btn.variant = "primary"
+
+    def action_copy_log(self) -> None:
+        """Copy visible log entries (plain text) to clipboard."""
+        lines = []
+        for entry in self.log_messages:
+            if self._should_show_log(entry["level"]):
+                # Re-use the strip logic from _format_log_entry but without markup
+                msg = entry["message"]
+                primary = (
+                    entry["level"].split("/")[0]
+                    if "/" in entry["level"]
+                    else entry["level"]
+                )
+                if primary in ("tx", "rx"):
+                    if msg.startswith("TX: ") or msg.startswith("RX: "):
+                        msg = msg[4:]
+                icon_map = {
+                    "tx": "↑",
+                    "rx": "↓",
+                    "tx/poll": "↑~",
+                    "rx/poll": "↓~",
+                    "tx/debug": "↑•",
+                    "rx/debug": "↓•",
+                    "info": "i",
+                    "success": "✓",
+                    "error": "✗",
+                    "progress": "⋯",
+                    "debug": "•",
+                }
+                icon = icon_map.get(entry["level"], "•")
+                lines.append(f"{entry['timestamp']} {icon} {msg}")
+        self.copy_to_clipboard("\n".join(lines))
+        self.notify("Log copied to clipboard", timeout=2)
 
     @on(Button.Pressed, "#btn_connect")
     def handle_connect(self) -> None:
