@@ -7,6 +7,7 @@ Tests the base driver abstraction, driver discovery, and configuration.
 import pytest
 
 from src.tina.drivers.base import (
+    IDNInfo,
     VNABase,
     VNAConfig,
     detect_vna_driver,
@@ -14,6 +15,226 @@ from src.tina.drivers.base import (
     list_available_drivers,
 )
 from tests.fixtures.mock_vna import MockVNA as DummyVNA
+
+
+class TestIDNInfo:
+    """Tests for IDNInfo parsing and formatting."""
+
+    # --- from_idn_string ---
+
+    @pytest.mark.unit
+    def test_parse_full_idn(self):
+        """Parse a complete four-field IDN string."""
+        info = IDNInfo.from_idn_string("Agilent Technologies,E5071B,MY42402671,A.05.01")
+        assert info.vendor == "Agilent Technologies"
+        assert info.model == "E5071B"
+        assert info.serial == "MY42402671"
+        assert info.firmware == "A.05.01"
+        assert info.raw == "Agilent Technologies,E5071B,MY42402671,A.05.01"
+
+    @pytest.mark.unit
+    def test_parse_idn_strips_whitespace(self):
+        """Fields with surrounding whitespace are stripped."""
+        info = IDNInfo.from_idn_string(" Agilent , E5071B , MY123 , A.01 ")
+        assert info.vendor == "Agilent"
+        assert info.model == "E5071B"
+        assert info.serial == "MY123"
+        assert info.firmware == "A.01"
+
+    @pytest.mark.unit
+    def test_parse_idn_three_fields(self):
+        """IDN with only three fields leaves firmware empty."""
+        info = IDNInfo.from_idn_string("Vendor,Model,Serial")
+        assert info.vendor == "Vendor"
+        assert info.model == "Model"
+        assert info.serial == "Serial"
+        assert info.firmware == ""
+
+    @pytest.mark.unit
+    def test_parse_idn_two_fields(self):
+        """IDN with only two fields leaves serial and firmware empty."""
+        info = IDNInfo.from_idn_string("Vendor,Model")
+        assert info.vendor == "Vendor"
+        assert info.model == "Model"
+        assert info.serial == ""
+        assert info.firmware == ""
+
+    @pytest.mark.unit
+    def test_parse_idn_one_field(self):
+        """IDN with a single token fills only vendor."""
+        info = IDNInfo.from_idn_string("OnlyVendor")
+        assert info.vendor == "OnlyVendor"
+        assert info.model == ""
+        assert info.serial == ""
+        assert info.firmware == ""
+
+    @pytest.mark.unit
+    def test_parse_empty_string(self):
+        """Empty IDN string produces all-empty fields."""
+        info = IDNInfo.from_idn_string("")
+        assert info.vendor == ""
+        assert info.model == ""
+        assert info.serial == ""
+        assert info.firmware == ""
+        assert info.raw == ""
+
+    @pytest.mark.unit
+    def test_parse_preserves_raw(self):
+        """raw field holds the original unmodified string."""
+        raw = "  Agilent , E5071B , MY123 , A.01 "
+        info = IDNInfo.from_idn_string(raw)
+        assert info.raw == raw
+
+    @pytest.mark.unit
+    def test_parse_extra_fields_ignored(self):
+        """Extra comma-separated fields beyond four are silently ignored."""
+        info = IDNInfo.from_idn_string("V,M,S,F,extra,more")
+        assert info.vendor == "V"
+        assert info.model == "M"
+        assert info.serial == "S"
+        assert info.firmware == "F"
+
+    @pytest.mark.unit
+    def test_parse_hewlett_packard_idn(self):
+        """Parse the legacy HEWLETT-PACKARD IDN format used in mock tests."""
+        info = IDNInfo.from_idn_string("HEWLETT-PACKARD,E5071B,MY12345678,A.01.02")
+        assert info.vendor == "HEWLETT-PACKARD"
+        assert info.model == "E5071B"
+        assert info.serial == "MY12345678"
+        assert info.firmware == "A.01.02"
+
+    # --- __str__ ---
+
+    @pytest.mark.unit
+    def test_str_all_fields(self):
+        """All four fields produce the full formatted string."""
+        info = IDNInfo(
+            vendor="Agilent Technologies",
+            model="E5071B",
+            serial="MY42402671",
+            firmware="A.05.01",
+        )
+        assert str(info) == "Agilent Technologies E5071B (SN: MY42402671, FW: A.05.01)"
+
+    @pytest.mark.unit
+    def test_str_no_serial(self):
+        """Missing serial omits the SN label; FW label still appears."""
+        info = IDNInfo(vendor="Agilent", model="E5071B", firmware="A.05.01")
+        assert str(info) == "Agilent E5071B (FW: A.05.01)"
+
+    @pytest.mark.unit
+    def test_str_no_firmware(self):
+        """Missing firmware omits the FW label; SN label still appears."""
+        info = IDNInfo(vendor="Agilent", model="E5071B", serial="MY123")
+        assert str(info) == "Agilent E5071B (SN: MY123)"
+
+    @pytest.mark.unit
+    def test_str_no_serial_no_firmware(self):
+        """No serial and no firmware omit the parenthesised block entirely."""
+        info = IDNInfo(vendor="Agilent", model="E5071B")
+        assert str(info) == "Agilent E5071B"
+
+    @pytest.mark.unit
+    def test_str_only_vendor(self):
+        """Only vendor present produces just the vendor name."""
+        info = IDNInfo(vendor="Agilent")
+        assert str(info) == "Agilent"
+
+    @pytest.mark.unit
+    def test_str_empty(self):
+        """Fully empty IDNInfo produces an empty string."""
+        assert str(IDNInfo()) == ""
+
+    @pytest.mark.unit
+    def test_str_serial_only_in_details(self):
+        """Serial-only detail block uses SN label without FW."""
+        info = IDNInfo(serial="MY123")
+        assert str(info) == "(SN: MY123)"
+
+    @pytest.mark.unit
+    def test_str_firmware_only_in_details(self):
+        """Firmware-only detail block uses FW label without SN."""
+        info = IDNInfo(firmware="A.05.01")
+        assert str(info) == "(FW: A.05.01)"
+
+    # --- roundtrip ---
+
+    @pytest.mark.unit
+    def test_roundtrip_str_contains_model(self):
+        """str(from_idn_string(s)) includes the model from the raw string."""
+        idn = "Agilent Technologies,E5071B,MY42402671,A.05.01"
+        assert "E5071B" in str(IDNInfo.from_idn_string(idn))
+
+
+class TestVNABaseIDNProperties:
+    """Tests for VNABase.idn_info and VNABase.display_name properties."""
+
+    @pytest.mark.unit
+    def test_idn_info_before_connect(self, mock_vna):
+        """idn_info returns all-empty IDNInfo when not yet connected."""
+        info = mock_vna.idn_info
+        assert isinstance(info, IDNInfo)
+        assert info.vendor == ""
+        assert info.model == ""
+        assert info.serial == ""
+        assert info.firmware == ""
+
+    @pytest.mark.unit
+    def test_idn_info_after_connect(self, connected_mock_e5071b):
+        """idn_info is populated with correct fields after connection."""
+        info = connected_mock_e5071b.idn_info
+        assert isinstance(info, IDNInfo)
+        assert info.vendor != ""
+        assert info.model != ""
+        # MockE5071B IDN contains E5071B
+        assert "E5071B" in info.model.upper() or "E5071B" in info.raw.upper()
+
+    @pytest.mark.unit
+    def test_idn_info_fields_match_idn_string(self, connected_mock_e5071b):
+        """idn_info fields are consistent with the raw idn property."""
+        idn_str = connected_mock_e5071b.idn
+        info = connected_mock_e5071b.idn_info
+        assert info.raw == idn_str
+        parts = [p.strip() for p in idn_str.split(",")]
+        assert info.vendor == parts[0]
+        assert info.model == parts[1]
+
+    @pytest.mark.unit
+    def test_display_name_contains_driver_name(self, connected_mock_e5071b):
+        """display_name includes the driver_name in square brackets."""
+        name = connected_mock_e5071b.display_name
+        assert f"[{connected_mock_e5071b.driver_name}]" in name
+
+    @pytest.mark.unit
+    def test_display_name_contains_model(self, connected_mock_e5071b):
+        """display_name includes the model number from the IDN."""
+        name = connected_mock_e5071b.display_name
+        info = connected_mock_e5071b.idn_info
+        assert info.model in name
+
+    @pytest.mark.unit
+    def test_display_name_contains_host_and_port(self, connected_mock_e5071b):
+        """display_name includes the host:port from the config in parentheses."""
+        name = connected_mock_e5071b.display_name
+        cfg = connected_mock_e5071b.config
+        assert f"({cfg.host}:{cfg.port})" in name
+
+    @pytest.mark.unit
+    def test_display_name_format(self, connected_mock_e5071b):
+        """display_name matches '<vendor> <model> (<host>:<port>) [driver]'."""
+        name = connected_mock_e5071b.display_name
+        info = connected_mock_e5071b.idn_info
+        cfg = connected_mock_e5071b.config
+        instrument = " ".join(p for p in (info.vendor, info.model) if p)
+        expected = f"{instrument} ({cfg.host}:{cfg.port}) [{connected_mock_e5071b.driver_name}]"
+        assert name == expected
+
+    @pytest.mark.unit
+    def test_display_name_before_connect(self, mock_vna):
+        """display_name before connection still returns a valid string."""
+        name = mock_vna.display_name
+        assert isinstance(name, str)
+        assert f"[{mock_vna.driver_name}]" in name
 
 
 class TestVNAConfig:

@@ -6,6 +6,7 @@ in this directory that defines a VNABase subclass with an idn_matcher.
 """
 
 from .base import (
+    IDNInfo,
     VNABase,
     VNAConfig,
     detect_vna_driver,
@@ -17,6 +18,7 @@ from .base import (
 from .hp_e5071b import HPE5071B
 
 __all__ = [
+    "IDNInfo",
     "VNABase",
     "VNAConfig",
     "HPE5071B",
