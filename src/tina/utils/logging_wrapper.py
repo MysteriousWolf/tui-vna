@@ -23,6 +23,7 @@ class LoggingVNAWrapper:
         """
         self._vna = vna
         self._log = log_callback
+        self.debug = False
 
         # Wrap the low-level SCPI methods
         self._wrap_scpi_methods()
@@ -34,10 +35,23 @@ class LoggingVNAWrapper:
         original_query = self._vna._query
         original_query_ascii = self._vna._query_ascii_values
 
+        # Capture raw query before wrapping (used for SYST:ERR? checks)
+        self._raw_query = original_query
+
         # Wrap _send_command
         def logged_send_command(command: str):
             self._log(command, "tx")
-            return original_send_command(command)
+            result = original_send_command(command)
+            if self.debug:
+                try:
+                    self._log("SYST:ERR?", "debug")
+                    err = self._raw_query("SYST:ERR?").strip()
+                    self._log(err, "debug")
+                    if not err.startswith("+0"):
+                        self._log(f"SCPI ERR after '{command}': {err}", "error")
+                except Exception:
+                    pass
+            return result
 
         # Wrap _query
         def logged_query(command: str) -> str:
@@ -52,6 +66,16 @@ class LoggingVNAWrapper:
                 self._log(f"[{data_count} values: {first_vals}...]", "rx")
             else:
                 self._log(response_stripped, "rx")
+
+            if self.debug:
+                try:
+                    self._log("SYST:ERR?", "debug")
+                    err = self._raw_query("SYST:ERR?").strip()
+                    self._log(err, "debug")
+                    if not err.startswith("+0"):
+                        self._log(f"SCPI ERR after '{command}': {err}", "error")
+                except Exception:
+                    pass
 
             return response
 
@@ -68,6 +92,16 @@ class LoggingVNAWrapper:
                 )
             else:
                 self._log(str(result), "rx")
+
+            if self.debug:
+                try:
+                    self._log("SYST:ERR?", "debug")
+                    err = self._raw_query("SYST:ERR?").strip()
+                    self._log(err, "debug")
+                    if not err.startswith("+0"):
+                        self._log(f"SCPI ERR after '{command}': {err}", "error")
+                except Exception:
+                    pass
 
             return result
 

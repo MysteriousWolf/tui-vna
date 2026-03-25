@@ -27,13 +27,16 @@ class MessageType(Enum):
     DISCONNECT = "disconnect"
     READ_PARAMS = "read_params"
     MEASURE = "measure"
+    STATUS_POLL = "status_poll"
     SHUTDOWN = "shutdown"
+    SET_DEBUG_SCPI = "set_debug_scpi"
 
     # Responses (Worker -> UI)
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     PARAMS_READ = "params_read"
     MEASUREMENT_COMPLETE = "measurement_complete"
+    STATUS_UPDATE = "status_update"
     ERROR = "error"
     PROGRESS = "progress"
     LOG = "log"  # Log message (TX/RX/info)
@@ -73,6 +76,20 @@ class ParamsResult:
     points: int
     averaging_enabled: bool
     averaging_count: int
+
+
+@dataclass
+class StatusResult:
+    """Live VNA status for the status bar."""
+
+    cal_enabled: bool | None = None
+    cal_type: str | None = None
+    smoothing_enabled: bool | None = None
+    smoothing_aperture: float | None = None
+    if_bandwidth_hz: float | None = None
+    port_power_dbm: float | None = None
+    trigger_source: str | None = None
+    sweep_mode: str | None = None
 
 
 @dataclass
@@ -118,6 +135,8 @@ class MeasurementWorker:
         self._vna: VNABase | None = None
         self._vna_wrapper: LoggingVNAWrapper | None = None
         self._config: VNAConfig | None = None
+        self._measuring = False
+        self._debug_scpi = False
 
     def start(self):
         """Start the worker thread."""
@@ -155,6 +174,14 @@ class MeasurementWorker:
             data: Optional data payload
         """
         self._command_queue.put(Message(type=msg_type, data=data))
+
+    def clear_commands(self) -> None:
+        """Drain all pending commands from the queue (e.g. before disconnect)."""
+        while True:
+            try:
+                self._command_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def get_response(self, timeout: float = 0.1) -> Message:
         """
@@ -222,6 +249,10 @@ class MeasurementWorker:
                     self._handle_read_params()
                 elif msg.type == MessageType.MEASURE:
                     self._handle_measure(msg.data)
+                elif msg.type == MessageType.STATUS_POLL:
+                    self._handle_status_poll()
+                elif msg.type == MessageType.SET_DEBUG_SCPI:
+                    self._handle_set_debug_scpi(msg.data)
 
             except Exception as e:
                 # Catch-all error handler
@@ -273,6 +304,10 @@ class MeasurementWorker:
             # Wrap driver with logging to capture all SCPI commands
             self._vna = LoggingVNAWrapper(self._vna, self._log)
             self._vna_wrapper = self._vna  # Keep for compatibility
+            self._vna_wrapper.debug = self._debug_scpi
+
+            # Clear the instrument's error queue (logged via wrapper)
+            self._vna._send_command("*CLS")
 
             # Log the IDN (already queried during connection)
             self._log("*IDN?", "tx")
@@ -327,8 +362,39 @@ class MeasurementWorker:
                 MessageType.ERROR, error=f"Failed to read parameters: {str(e)}"
             )
 
+    def _handle_status_poll(self) -> None:
+        """Handle status poll command. Silently dropped during active measurement."""
+        if self._measuring or not self._vna or not self._vna.is_connected():
+            return
+
+        raw = {}
+        try:
+            raw = self._vna.get_status()
+        except Exception as e:
+            self._log(f"Status poll failed: {e}", "debug")
+
+        result = StatusResult(
+            cal_enabled=raw.get("cal_enabled"),
+            cal_type=raw.get("cal_type"),
+            smoothing_enabled=raw.get("smoothing_enabled"),
+            smoothing_aperture=raw.get("smoothing_aperture"),
+            if_bandwidth_hz=raw.get("if_bandwidth_hz"),
+            port_power_dbm=raw.get("port_power_dbm"),
+            trigger_source=raw.get("trigger_source"),
+            sweep_mode=raw.get("sweep_mode"),
+        )
+        self._send_response(MessageType.STATUS_UPDATE, data=result)
+
+    def _handle_set_debug_scpi(self, enabled: bool) -> None:
+        """Enable/disable per-command SCPI error checking."""
+        self._debug_scpi = enabled
+        if self._vna_wrapper is not None:
+            self._vna_wrapper.debug = enabled
+        self._log(f"SCPI debug mode {'ON' if enabled else 'OFF'}", "info")
+
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""
+        self._measuring = True
         try:
             if not self._vna or not self._vna.is_connected():
                 raise RuntimeError("Not connected to VNA")
@@ -384,6 +450,8 @@ class MeasurementWorker:
             self._send_response(
                 MessageType.ERROR, error=f"Measurement failed: {str(e)}"
             )
+        finally:
+            self._measuring = False
 
     def _handle_shutdown(self) -> None:
         """Handle shutdown command."""
