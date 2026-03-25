@@ -16,6 +16,8 @@ _STATE_FILE = _CONFIG_DIR / "update_state.json"
 
 @dataclass
 class ReleaseInfo:
+    """Parsed metadata for a single GitHub release."""
+
     version: str
     is_prerelease: bool
     changelog: str

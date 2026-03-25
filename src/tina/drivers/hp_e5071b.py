@@ -6,6 +6,7 @@ Implements VNABase interface for HP/Agilent E5071B series VNAs.
 
 import socket
 import time
+from typing import Any
 
 import numpy as np
 import pyvisa
@@ -127,6 +128,7 @@ class HPE5071B(VNABase):
         """
 
         def report(msg: str, pct: float) -> None:
+            """Forward a progress message to the caller's callback if provided."""
             if progress_callback:
                 progress_callback(msg, pct)
 
@@ -202,7 +204,7 @@ class HPE5071B(VNABase):
         self._ensure_connected()
         return self.inst.query_ascii_values(command)
 
-    def get_current_parameters(self) -> dict[str, any]:
+    def get_current_parameters(self) -> dict[str, Any]:
         """
         Query current VNA settings.
 
@@ -253,6 +255,75 @@ class HPE5071B(VNABase):
             params["averaging_count"] = None
 
         return params
+
+    def get_status(self) -> dict[str, Any]:
+        """
+        Query live VNA status for the status bar.
+
+        Returns:
+            Dictionary with current instrument status:
+            - cal_enabled: Correction/calibration state (bool)
+            - cal_type: Calibration type string (e.g. 'SOLT')
+            - smoothing_enabled: Smoothing state (bool)
+            - smoothing_aperture: Smoothing aperture in % (float)
+            - if_bandwidth_hz: IF bandwidth in Hz (float)
+            - port_power_dbm: Port 1 stimulus power in dBm (float)
+            - trigger_source: Trigger source string (e.g. 'INT')
+        """
+        from .scpi_commands import (
+            CMD_GET_CORRECTION_STATE,
+            CMD_GET_CORRECTION_TYPE,
+            CMD_GET_IF_BANDWIDTH,
+            CMD_GET_PORT_POWER,
+            CMD_GET_SMOOTHING_APERTURE,
+            CMD_GET_SMOOTHING_STATE,
+            CMD_GET_TRIGGER_SOURCE,
+        )
+
+        status = {}
+
+        try:
+            raw = self._query(CMD_GET_CORRECTION_STATE).strip()
+            status["cal_enabled"] = raw in ("1", "ON")
+        except Exception:
+            status["cal_enabled"] = None
+
+        try:
+            raw = self._query(CMD_GET_CORRECTION_TYPE).strip()
+            # Response may contain extra comma-separated fields; take first token only
+            status["cal_type"] = raw.split(",")[0].strip()
+        except Exception:
+            status["cal_type"] = None
+
+        try:
+            raw = self._query(CMD_GET_SMOOTHING_STATE).strip()
+            status["smoothing_enabled"] = raw in ("1", "ON")
+        except Exception:
+            status["smoothing_enabled"] = None
+
+        try:
+            status["smoothing_aperture"] = float(
+                self._query(CMD_GET_SMOOTHING_APERTURE).strip()
+            )
+        except Exception:
+            status["smoothing_aperture"] = None
+
+        try:
+            status["if_bandwidth_hz"] = float(self._query(CMD_GET_IF_BANDWIDTH).strip())
+        except Exception:
+            status["if_bandwidth_hz"] = None
+
+        try:
+            status["port_power_dbm"] = float(self._query(CMD_GET_PORT_POWER).strip())
+        except Exception:
+            status["port_power_dbm"] = None
+
+        try:
+            status["trigger_source"] = self._query(CMD_GET_TRIGGER_SOURCE).strip()
+        except Exception:
+            status["trigger_source"] = None
+
+        return status
 
     def configure_frequency(self) -> None:
         """Configure frequency range from config."""

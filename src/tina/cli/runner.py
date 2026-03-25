@@ -49,6 +49,7 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         vna = VNA(vna_config)
 
         def progress_callback(message: str, progress: float):
+            """Print connection progress to stdout."""
             print(f"  {message} ({progress:.0f}%)")
 
         vna.connect(progress_callback)
