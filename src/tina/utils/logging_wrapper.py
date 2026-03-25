@@ -93,6 +93,7 @@ class LoggingVNAWrapper:
                 pass
 
         def logged_send_command(command: str):
+            """Log TX, execute, then run the debug SYST:ERR? check."""
             send_tag, _ = _tx_rx()
             self._log(command, send_tag)
             result = original_send(command)
@@ -100,6 +101,7 @@ class LoggingVNAWrapper:
             return result
 
         def logged_query(command: str) -> str:
+            """Log TX, execute query, log RX (truncated if long), then error-check."""
             send_tag, recv_tag = _tx_rx()
             self._log(command, send_tag)
             response = original_query(command)
@@ -114,6 +116,7 @@ class LoggingVNAWrapper:
             return response
 
         def logged_query_ascii(command: str):
+            """Log TX, execute ASCII query, log RX summary, then error-check."""
             send_tag, recv_tag = _tx_rx()
             self._log(command, send_tag)
             result = original_query_ascii(command)

@@ -90,7 +90,6 @@ class StatusResult:
     if_bandwidth_hz: float | None = None
     port_power_dbm: float | None = None
     trigger_source: str | None = None
-    sweep_mode: str | None = None
 
 
 @dataclass
@@ -264,6 +263,7 @@ class MeasurementWorker:
 
             # Progress callback
             def on_progress(msg, pct):
+                """Forward connection progress to the UI."""
                 self._send_progress(msg, pct)
 
             # Connect to get IDN
@@ -381,7 +381,6 @@ class MeasurementWorker:
             if_bandwidth_hz=raw.get("if_bandwidth_hz"),
             port_power_dbm=raw.get("port_power_dbm"),
             trigger_source=raw.get("trigger_source"),
-            sweep_mode=raw.get("sweep_mode"),
         )
         self._send_response(MessageType.STATUS_UPDATE, data=result)
 
