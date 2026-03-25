@@ -1027,6 +1027,37 @@ class StatusPollProvider(Provider):
 
 
 _SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
+
+# Short human-readable names for common SCPI error codes (IEEE 488.2 / SCPI 1999).
+_SCPI_ERROR_NAMES: dict[str, str] = {
+    "+0": "OK",
+    "0": "OK",
+    "-100": "CMD",
+    "-113": "UNDEF",
+    "-222": "RANGE",
+    "-224": "ILLEGAL",
+    "-310": "SYS",
+    "-350": "QUEUE",
+    "-400": "QUERY",
+    "-420": "UNTMN",
+    "-430": "DEADLK",
+}
+
+
+def _scpi_mnemonic(cmd: str) -> str:
+    """Return a compact display mnemonic for a SCPI command.
+
+    Strips parameter values (text after a space), trailing ``?``, and any
+    channel-number suffix on the first node (e.g. ``SENS1`` → removed so
+    ``SENS1:CORR:STAT?`` becomes ``CORR:STAT``).
+    """
+    base = cmd.split(" ")[0].rstrip("?")
+    parts = base.split(":")
+    if parts and parts[0] and parts[0][-1].isdigit():
+        parts = parts[1:]
+    return ":".join(parts) or base
+
+
 _ALL_SB_STATE_CLASSES = (
     "--stale",
     "--state-ok",
@@ -1075,6 +1106,14 @@ class StatusFooter(Footer):
     StatusFooter .sb-item.--trig-MAN  { background: $warning;   color: $background; }
     StatusFooter .sb-item.--trig-EXT  { background: $secondary; color: $background; }
     StatusFooter .sb-item.--trig-BUS  { background: $success;   color: $background; }
+    StatusFooter #sb_debug_group {
+        display: none;
+        width: auto;
+        height: 1;
+    }
+    StatusFooter #sb_debug_group.--visible {
+        display: block;
+    }
     """
 
     # Initial placeholder text shown before first poll
@@ -1092,9 +1131,24 @@ class StatusFooter(Footer):
         self._sb_state: dict[str, tuple[str, str]] = {
             k: (self._PLACEHOLDERS[k], "--stale") for k in _SB_ITEMS
         }
+        # Debug chip state — persists across Footer recomposes
+        self._debug_visible: bool = False
+        self._debug_chip_state: tuple[str, str] = ("ERR OK", "--state-ok")
 
     def compose(self) -> ComposeResult:
         yield from super().compose()  # q Quit leftmost; ^p palette docked right
+        # Debug error chip — left-aligned next to q Quit, hidden until debug active.
+        # Classes are set from stored state so recomposes (triggered by Footer
+        # internals on focus changes) preserve visibility and chip content.
+        debug_text, debug_css = self._debug_chip_state
+        grp_classes = "--visible" if self._debug_visible else ""
+        with Horizontal(id="sb_debug_group", classes=grp_classes):
+            yield Static(" ", classes="sb-sep")
+            yield Static(
+                debug_text,
+                id="sb_lasterr",
+                classes=f"sb-item {debug_css}".strip(),
+            )
         yield Static("", id="sb_spacer")  # pushes status items to the right
         with Horizontal(id="sb_status_container"):
             for i, item_id in enumerate(_SB_ITEMS):
@@ -1114,6 +1168,25 @@ class StatusFooter(Footer):
         except Exception:
             pass
 
+    def _apply_debug_chip(self) -> None:
+        """Push stored debug chip state to the live widgets."""
+        try:
+            self.query_one("#sb_debug_group").set_class(
+                self._debug_visible, "--visible"
+            )
+            # Only update chip content when visible — avoids a colour flash
+            # when the group is being hidden (class change rendered before hide).
+            if not self._debug_visible:
+                return
+            text, css_class = self._debug_chip_state
+            chip = self.query_one("#sb_lasterr", Static)
+            chip.update(text)
+            chip.remove_class(*_ALL_SB_STATE_CLASSES)
+            if css_class:
+                chip.add_class(css_class)
+        except Exception:
+            pass
+
     def set_disconnected(self) -> None:
         """Mark all items as stale; preserve last-known text."""
         for item_id in _SB_ITEMS:
@@ -1125,6 +1198,36 @@ class StatusFooter(Footer):
                 w.add_class("--stale")
             except Exception:
                 pass
+        # Gray out debug chip while disconnected
+        prev_text, _ = self._debug_chip_state
+        self._debug_chip_state = (prev_text, "--stale")
+        self._apply_debug_chip()
+
+    def set_debug_mode(self, enabled: bool, connected: bool = True) -> None:
+        """Show or hide the last-error debug chip."""
+        self._debug_visible = enabled
+        if not enabled:
+            self._debug_chip_state = ("ERR OK", "--state-ok")
+        elif not connected:
+            self._debug_chip_state = ("ERR OK", "--stale")
+        self._apply_debug_chip()
+
+    def update_last_error(self, command: str, raw_error: str) -> None:
+        """Update the debug error chip from a SYST:ERR? response.
+
+        Args:
+            command:   The SCPI command that preceded the SYST:ERR? check.
+            raw_error: Stripped SYST:ERR? response, e.g. ``+0,"No error"``
+                       or ``-113,"Undefined header"``.
+        """
+        if raw_error.startswith("+0") or raw_error.startswith("0,"):
+            self._debug_chip_state = ("ERR OK", "--state-ok")
+        else:
+            code = raw_error.split(",")[0].strip()
+            name = _SCPI_ERROR_NAMES.get(code, code)
+            mnem = _scpi_mnemonic(command)
+            self._debug_chip_state = (f"{mnem} {name}", "--state-off")
+        self._apply_debug_chip()
 
     def update_status(self, result: "StatusResult") -> None:
         # Calibration
@@ -1915,6 +2018,7 @@ class VNAApp(App):
     def on_mount(self) -> None:
         """Called when app starts."""
         self._apply_debug_title()
+        self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
@@ -2188,6 +2292,12 @@ class VNAApp(App):
             result: StatusResult = msg.data
             self.query_one(StatusFooter).update_status(result)
 
+        elif msg.type == MessageType.SCPI_ERROR_UPDATE:
+            if self._debug_scpi:
+                self.query_one(StatusFooter).update_last_error(
+                    msg.data["command"], msg.data["error"]
+                )
+
         elif msg.type == MessageType.ERROR:
             self.log_message(msg.error, "error")
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
@@ -2428,6 +2538,7 @@ class VNAApp(App):
         self.settings.debug_scpi = self._debug_scpi
         self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=self._debug_scpi)
         self._apply_debug_title()
+        self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, self.connected)
         state = "ON" if self._debug_scpi else "OFF"
         self.log_message(
             f"SCPI debug mode {state} — queries SYST:ERR? after each command", "info"

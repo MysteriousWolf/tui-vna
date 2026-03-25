@@ -269,3 +269,97 @@ class TestRawQueryBypass:
         # SYST:ERR? should appear exactly once in the query log (from _raw_query),
         # not twice (which would happen if it went through the patched _query again).
         assert _messages(log_calls).count("SYST:ERR?") == 1
+
+
+# ---------------------------------------------------------------------------
+# on_scpi_error callback
+# ---------------------------------------------------------------------------
+
+
+class TestOnScpiError:
+    def test_callback_not_called_when_debug_off(self):
+        errors: list[tuple[str, str]] = []
+        stub, wrapper, _ = _make_wrapper()
+        wrapper.on_scpi_error = lambda cmd, err: errors.append((cmd, err))
+        wrapper.debug = False
+        stub._send_command("*RST")
+        assert errors == []
+
+    def test_callback_called_on_clean_response(self):
+        """on_scpi_error fires even for +0 responses so the UI can show OK."""
+        errors: list[tuple[str, str]] = []
+        stub, wrapper, _ = _make_wrapper({"BWID?": "70000\n"})
+        wrapper.on_scpi_error = lambda cmd, err: errors.append((cmd, err))
+        wrapper.debug = True
+        stub._query("BWID?")
+        assert len(errors) == 1
+        cmd, raw = errors[0]
+        assert cmd == "BWID?"
+        assert raw.startswith("+0")
+
+    def test_callback_called_with_error_response(self):
+        responses = {"BAD:CMD": "ignored\n", "SYST:ERR?": '-113,"Undefined header"\n'}
+        errors: list[tuple[str, str]] = []
+        stub, wrapper, _ = _make_wrapper(responses)
+        wrapper.on_scpi_error = lambda cmd, err: errors.append((cmd, err))
+        wrapper.debug = True
+        stub._query("BAD:CMD")
+        assert len(errors) == 1
+        cmd, raw = errors[0]
+        assert cmd == "BAD:CMD"
+        assert "-113" in raw
+
+    def test_callback_called_after_send_command(self):
+        errors: list[tuple[str, str]] = []
+        stub, wrapper, _ = _make_wrapper()
+        wrapper.on_scpi_error = lambda cmd, err: errors.append((cmd, err))
+        wrapper.debug = True
+        stub._send_command("*RST")
+        assert len(errors) == 1
+        assert errors[0][0] == "*RST"
+
+    def test_callback_silenced_on_syst_err_exception(self):
+        """If SYST:ERR? raises, on_scpi_error must not be called and must not propagate."""
+        errors: list[tuple[str, str]] = []
+        stub, wrapper, _ = _make_wrapper()
+        wrapper.on_scpi_error = lambda cmd, err: errors.append((cmd, err))
+        wrapper._raw_query = lambda _: (_ for _ in ()).throw(OSError("broken"))
+        wrapper.debug = True
+        stub._send_command("*RST")  # must not raise
+        assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# _scpi_mnemonic helper
+# ---------------------------------------------------------------------------
+
+
+class TestScpiMnemonic:
+    """Tests for the _scpi_mnemonic() display helper in main.py."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from src.tina.main import _scpi_mnemonic
+
+        self.mnem = _scpi_mnemonic
+
+    def test_strips_query_mark(self):
+        assert self.mnem("BWID?") == "BWID"
+
+    def test_strips_channel_prefix(self):
+        assert self.mnem("SENS1:CORR:STAT?") == "CORR:STAT"
+
+    def test_strips_channel_prefix_calc(self):
+        assert self.mnem("CALC1:SMO:APER?") == "SMO:APER"
+
+    def test_no_channel_prefix_left_intact(self):
+        assert self.mnem("TRIG:SOUR?") == "TRIG:SOUR"
+
+    def test_star_command(self):
+        assert self.mnem("*RST") == "*RST"
+
+    def test_strips_parameter_value(self):
+        assert self.mnem("SOUR1:POW -10") == "POW"
+
+    def test_single_node_with_channel(self):
+        assert self.mnem("SENS1:BWID?") == "BWID"

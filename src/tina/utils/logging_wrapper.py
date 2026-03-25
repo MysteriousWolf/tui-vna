@@ -19,21 +19,36 @@ class LoggingVNAWrapper:
     produce log entries without any changes to the driver itself.
 
     Attributes:
-        debug:    When True, issues ``SYST:ERR?`` after every command and logs
-                  any non-zero error codes at ``"error"`` level.
-        log_tag:  When set, composite log levels ``"tx/<tag>"`` / ``"rx/<tag>"``
-                  replace plain ``"tx"`` / ``"rx"``.  Set to ``"poll"`` during
-                  status polling to allow separate filtering in the UI.
+        debug:          When True, issues ``SYST:ERR?`` after every command and
+                        logs any non-zero error codes at ``"error"`` level.
+        log_tag:        When set, composite log levels ``"tx/<tag>"`` /
+                        ``"rx/<tag>"`` replace plain ``"tx"`` / ``"rx"``.  Set
+                        to ``"poll"`` during status polling to allow separate
+                        filtering in the UI.
+        on_scpi_error:  Optional callback ``(command, raw_error)`` fired after
+                        every ``SYST:ERR?`` check when ``debug=True``.  Called
+                        for both clean (``"+0,…"``) and error responses so the
+                        caller can maintain a last-error display.
     """
 
-    def __init__(self, vna: VNABase, log_callback: Callable[[str, str], None]):
+    def __init__(
+        self,
+        vna: VNABase,
+        log_callback: Callable[[str, str], None],
+        on_scpi_error: Callable[[str, str], None] | None = None,
+    ):
         """
         Args:
-            vna:          VNA driver instance to wrap.
-            log_callback: ``callback(message, level)`` used for all log output.
+            vna:            VNA driver instance to wrap.
+            log_callback:   ``callback(message, level)`` used for all log output.
+            on_scpi_error:  Optional ``callback(command, raw_error)`` fired after
+                            every ``SYST:ERR?`` check in debug mode.  ``raw_error``
+                            is the stripped SYST:ERR? response string; the command is
+                            the SCPI command that preceded the check.
         """
         self._vna = vna
         self._log = log_callback
+        self.on_scpi_error = on_scpi_error
         self.debug = False
         self.log_tag: str | None = None
 
@@ -72,6 +87,8 @@ class LoggingVNAWrapper:
                 self._log(err, "rx/debug")
                 if not err.startswith("+0"):
                     self._log(f"SCPI ERR after '{command}': {err}", "error")
+                if self.on_scpi_error is not None:
+                    self.on_scpi_error(command, err)
             except Exception:
                 pass
 
