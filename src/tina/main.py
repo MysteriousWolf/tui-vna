@@ -2510,6 +2510,7 @@ class VNAApp(App):
         if self.connected:
             # Stop polling immediately so no more STATUS_POLLs queue up
             self.connected = False
+            self._update_title()
             if self._poll_timer is not None:
                 self._poll_timer.stop()
                 self._poll_timer = None
