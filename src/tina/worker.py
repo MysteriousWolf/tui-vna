@@ -395,7 +395,6 @@ class MeasurementWorker:
         self._debug_scpi = enabled
         if self._vna_wrapper is not None:
             self._vna_wrapper.debug = enabled
-        self._log(f"SCPI debug mode {'ON' if enabled else 'OFF'}", "info")
 
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""
