@@ -37,6 +37,7 @@ class MessageType(Enum):
     PARAMS_READ = "params_read"
     MEASUREMENT_COMPLETE = "measurement_complete"
     STATUS_UPDATE = "status_update"
+    SCPI_ERROR_UPDATE = "scpi_error_update"
     ERROR = "error"
     PROGRESS = "progress"
     LOG = "log"  # Log message (TX/RX/info)
@@ -294,7 +295,9 @@ class MeasurementWorker:
             # through the wrapper automatically via __getattr__.
             # _vna_wrapper is a typed alias to the same object for accessing
             # wrapper-specific attributes (debug, log_tag) without a cast.
-            self._vna = LoggingVNAWrapper(self._vna, self._log)
+            self._vna = LoggingVNAWrapper(
+                self._vna, self._log, on_scpi_error=self._on_scpi_error
+            )
             self._vna_wrapper = self._vna
             self._vna_wrapper.debug = self._debug_scpi
 
@@ -387,6 +390,17 @@ class MeasurementWorker:
         self._debug_scpi = enabled
         if self._vna_wrapper is not None:
             self._vna_wrapper.debug = enabled
+
+    def _on_scpi_error(self, command: str, raw_error: str) -> None:
+        """Callback fired by LoggingVNAWrapper after each SYST:ERR? check.
+
+        Forwards the result to the UI as a SCPI_ERROR_UPDATE message so the
+        footer debug chip can reflect the last command's error state.
+        """
+        self._send_response(
+            MessageType.SCPI_ERROR_UPDATE,
+            data={"command": command, "error": raw_error},
+        )
 
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""
