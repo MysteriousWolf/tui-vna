@@ -215,18 +215,6 @@ class MeasurementWorker:
         """Send log message to UI thread."""
         self._send_response(MessageType.LOG, LogMessage(message=message, level=level))
 
-    def _vna_command(self, command: str):
-        """Send VNA command with logging."""
-        self._log(command, "tx")
-        self._vna._send_command(command)
-
-    def _vna_query(self, command: str) -> str:
-        """Query VNA with logging."""
-        self._log(command, "tx")
-        response = self._vna._query(command)
-        self._log(response.strip(), "rx")
-        return response
-
     def _worker_loop(self):
         """Main worker thread loop."""
         while self._running:
@@ -301,9 +289,13 @@ class MeasurementWorker:
                 self._vna = driver_class(config)
                 self._vna.connect(progress_callback=on_progress)
 
-            # Wrap driver with logging to capture all SCPI commands
+            # Replace the driver reference with its logging wrapper so all calls
+            # to self._vna (including higher-level methods like get_status) go
+            # through the wrapper automatically via __getattr__.
+            # _vna_wrapper is a typed alias to the same object for accessing
+            # wrapper-specific attributes (debug, log_tag) without a cast.
             self._vna = LoggingVNAWrapper(self._vna, self._log)
-            self._vna_wrapper = self._vna  # Keep for compatibility
+            self._vna_wrapper = self._vna
             self._vna_wrapper.debug = self._debug_scpi
 
             # Clear the instrument's error queue (logged via wrapper)

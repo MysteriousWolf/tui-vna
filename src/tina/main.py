@@ -1167,11 +1167,7 @@ class StatusFooter(Footer):
             self._set_item("sb_trigger", self._sb_state["sb_trigger"][0], "--stale")
         else:
             src = result.trigger_source.strip().upper()
-            mode = (
-                (result.sweep_mode or "").strip().upper()
-                if hasattr(result, "sweep_mode")
-                else ""
-            )
+            mode = (result.sweep_mode or "").strip().upper()
             label = f"{src} {mode}".strip() if mode else src
             css = f"--trig-{src}" if f"--trig-{src}" in _ALL_SB_STATE_CLASSES else ""
             self._set_item("sb_trigger", label, css)
@@ -1179,6 +1175,20 @@ class StatusFooter(Footer):
 
 class VNAApp(App):
     """tina - Terminal uI Network Analyzer"""
+
+    # Maps log level names to their filter checkbox widget IDs.
+    # Both primary and secondary levels are listed here; composite levels
+    # (e.g. "tx/poll") require both halves to be enabled to show.
+    _LOG_FILTER_IDS: dict[str, str] = {
+        "tx": "#check_log_tx",
+        "rx": "#check_log_rx",
+        "info": "#check_log_info",
+        "progress": "#check_log_progress",
+        "success": "#check_log_success",
+        "error": "#check_log_error",
+        "debug": "#check_log_debug",
+        "poll": "#check_log_poll",
+    }
 
     CSS = """
     Screen {
@@ -2000,7 +2010,8 @@ class VNAApp(App):
             plot_type_select.value = "magnitude"
 
     def on_app_theme_changed(self) -> None:
-        """Rerender log with updated theme colors when the theme changes."""
+        """Invalidate cached style map and rerender log with updated theme colors."""
+        self._cached_style_map = None
         self._refresh_log_display()
 
     def on_unmount(self) -> None:
@@ -2223,18 +2234,18 @@ class VNAApp(App):
         """Handle log filter checkbox changes."""
         self._refresh_log_display()
 
-    def _format_log_entry(self, entry: dict) -> str:
-        """Render a log entry to Rich markup using current theme colors.
+    # Cached level→(icon, Rich style) map; None means rebuild on next use.
+    # Invalidated by on_app_theme_changed so colors always match the active theme.
+    _cached_style_map: dict[str, tuple[str, str]] | None = None
 
-        Called at display time so theme changes apply to all stored entries.
-        """
+    def _build_style_map(self) -> dict[str, tuple[str, str]]:
+        """Build the level→(icon, style) map from current Textual theme variables."""
         v = self.get_css_variables()
         c_tx = v.get("accent", "#ffa62b")
         c_rx = v.get("secondary", "#0178D4")
         c_suc = v.get("success", "#4EBF71")
         c_err = v.get("error", "#ba3c5b")
-
-        style_map = {
+        return {
             "tx": ("↑", c_tx),
             "rx": ("↓", c_rx),
             "tx/poll": ("↑~", f"dim {c_tx}"),
@@ -2247,18 +2258,18 @@ class VNAApp(App):
             "progress": ("⋯", "dim italic"),
             "debug": ("•", "dim"),
         }
-        level = entry["level"]
-        icon, style = style_map.get(level, ("•", "default"))
-        primary_level = level.split("/")[0] if "/" in level else level
 
-        display_message = entry["message"]
-        if primary_level in ("tx", "rx"):
-            if display_message.startswith("TX: "):
-                display_message = display_message[4:]
-            elif display_message.startswith("RX: "):
-                display_message = display_message[4:]
+    def _format_log_entry(self, entry: dict) -> str:
+        """Render a stored log entry to Rich markup.
 
-        safe_msg = rich_escape(display_message)
+        The style map is cached after the first call and only rebuilt when the
+        theme changes, so ``get_css_variables()`` is not called per-entry
+        during a full log redraw.
+        """
+        if self._cached_style_map is None:
+            self._cached_style_map = self._build_style_map()
+        icon, style = self._cached_style_map.get(entry["level"], ("•", "default"))
+        safe_msg = rich_escape(entry["message"])
         return f"[dim]{entry['timestamp']}[/dim] [{style}]{icon}[/] {safe_msg}"
 
     def log_message(self, message: str, level: str = "info"):
@@ -2276,27 +2287,16 @@ class VNAApp(App):
             log_content.scroll_end(animate=False)
 
     def _should_show_log(self, level: str) -> bool:
-        """Check if a log message should be displayed based on filter settings.
+        """Return True if *level* passes all active log filter checkboxes.
 
-        Levels can be composite "primary/secondary" (e.g. "tx/poll", "rx/debug").
-        Both the primary and secondary checkboxes must be enabled to show the message.
+        Composite levels (e.g. ``"tx/poll"``) require both the primary and
+        secondary checkbox to be checked.  Unknown levels are shown by default.
         """
         try:
-            filter_map = {
-                "tx": "#check_log_tx",
-                "rx": "#check_log_rx",
-                "info": "#check_log_info",
-                "progress": "#check_log_progress",
-                "success": "#check_log_success",
-                "error": "#check_log_error",
-                "debug": "#check_log_debug",
-                "poll": "#check_log_poll",
-            }
-
             if "/" in level:
                 primary, secondary = level.split("/", 1)
-                primary_id = filter_map.get(primary)
-                secondary_id = filter_map.get(secondary)
+                primary_id = self._LOG_FILTER_IDS.get(primary)
+                secondary_id = self._LOG_FILTER_IDS.get(secondary)
                 primary_ok = (
                     self.query_one(primary_id, Checkbox).value if primary_id else True
                 )
@@ -2307,10 +2307,10 @@ class VNAApp(App):
                 )
                 return primary_ok and secondary_ok
 
-            checkbox_id = filter_map.get(level)
+            checkbox_id = self._LOG_FILTER_IDS.get(level)
             if checkbox_id:
                 return self.query_one(checkbox_id, Checkbox).value
-            return True  # Show by default if unknown level
+            return True  # Unknown levels are always shown
         except Exception:
             # During initialization, show everything
             return True
@@ -2362,35 +2362,13 @@ class VNAApp(App):
             btn.variant = "primary"
 
     def action_copy_log(self) -> None:
-        """Copy visible log entries (plain text) to clipboard."""
-        lines = []
-        for entry in self.log_messages:
-            if self._should_show_log(entry["level"]):
-                # Re-use the strip logic from _format_log_entry but without markup
-                msg = entry["message"]
-                primary = (
-                    entry["level"].split("/")[0]
-                    if "/" in entry["level"]
-                    else entry["level"]
-                )
-                if primary in ("tx", "rx"):
-                    if msg.startswith("TX: ") or msg.startswith("RX: "):
-                        msg = msg[4:]
-                icon_map = {
-                    "tx": "↑",
-                    "rx": "↓",
-                    "tx/poll": "↑~",
-                    "rx/poll": "↓~",
-                    "tx/debug": "↑•",
-                    "rx/debug": "↓•",
-                    "info": "i",
-                    "success": "✓",
-                    "error": "✗",
-                    "progress": "⋯",
-                    "debug": "•",
-                }
-                icon = icon_map.get(entry["level"], "•")
-                lines.append(f"{entry['timestamp']} {icon} {msg}")
+        """Copy visible log entries as plain text to the system clipboard."""
+        style_map = self._cached_style_map or self._build_style_map()
+        lines = [
+            f"{e['timestamp']} {style_map.get(e['level'], ('•', ''))[0]} {e['message']}"
+            for e in self.log_messages
+            if self._should_show_log(e["level"])
+        ]
         self.copy_to_clipboard("\n".join(lines))
         self.notify("Log copied to clipboard", timeout=2)
 
