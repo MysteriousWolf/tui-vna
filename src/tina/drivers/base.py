@@ -18,6 +18,80 @@ import numpy as np
 
 
 @dataclass
+class IDNInfo:
+    """Parsed components of a SCPI *IDN? response.
+
+    The IEEE 488.2 *IDN? response is a comma-separated string with four
+    mandatory fields: manufacturer, model, serial number, and firmware
+    version.  Any field that is absent or empty in the raw string is stored
+    as an empty string.
+
+    Attributes:
+        vendor:   Manufacturer name (e.g. ``"Agilent Technologies"``).
+        model:    Instrument model number (e.g. ``"E5071B"``).
+        serial:   Serial number string (e.g. ``"MY42402671"``).
+        firmware: Firmware / software version string (e.g. ``"A.05.01"``).
+        raw:      The original, unmodified IDN string as returned by the
+                  instrument.
+    """
+
+    vendor: str = ""
+    model: str = ""
+    serial: str = ""
+    firmware: str = ""
+    raw: str = ""
+
+    @classmethod
+    def from_idn_string(cls, idn_string: str) -> "IDNInfo":
+        """Parse a standard comma-separated SCPI *IDN? string.
+
+        Splits the response on commas and strips surrounding whitespace from
+        each field.  Fields missing from the response are stored as empty
+        strings.
+
+        Args:
+            idn_string: Raw *IDN? response, e.g.
+                ``"Agilent Technologies,E5071B,MY42402671,A.05.01"``.
+
+        Returns:
+            :class:`IDNInfo` populated from the parsed fields.
+        """
+        parts = [p.strip() for p in idn_string.split(",")]
+        return cls(
+            vendor=parts[0] if len(parts) > 0 else "",
+            model=parts[1] if len(parts) > 1 else "",
+            serial=parts[2] if len(parts) > 2 else "",
+            firmware=parts[3] if len(parts) > 3 else "",
+            raw=idn_string,
+        )
+
+    def __str__(self) -> str:
+        """Return a human-readable instrument description.
+
+        Formats as ``"<vendor> <model> (SN: <serial>, FW: <firmware>)"``,
+        omitting any fields that are empty.  If neither serial nor firmware
+        is present the parenthesised detail block is omitted entirely.
+
+        Returns:
+            Human-readable string, e.g.
+            ``"Agilent Technologies E5071B (SN: MY42402671, FW: A.05.01)"``.
+        """
+        parts = []
+        if self.vendor:
+            parts.append(self.vendor)
+        if self.model:
+            parts.append(self.model)
+        details = []
+        if self.serial:
+            details.append(f"SN: {self.serial}")
+        if self.firmware:
+            details.append(f"FW: {self.firmware}")
+        if details:
+            parts.append(f"({', '.join(details)})")
+        return " ".join(parts)
+
+
+@dataclass
 class VNAConfig:
     """VNA configuration parameters."""
 
@@ -91,6 +165,43 @@ class VNABase(ABC):
     def idn(self) -> str:
         """Return instrument identification string."""
         return self._idn
+
+    @property
+    def idn_info(self) -> IDNInfo:
+        """Return the parsed *IDN? response as an :class:`IDNInfo` instance.
+
+        Parses :attr:`idn` on every access.  The result exposes the vendor,
+        model, serial number, and firmware version as individual attributes.
+
+        Returns:
+            :class:`IDNInfo` populated from the current IDN string, or an
+            empty :class:`IDNInfo` if the instrument is not yet connected.
+        """
+        return IDNInfo.from_idn_string(self._idn)
+
+    @property
+    def display_name(self) -> str:
+        """Return a human-readable instrument name for display in the UI.
+
+        Combines the vendor and model from the IDN string with the connection
+        address (host and port from the config) and the driver's
+        human-readable :attr:`driver_name` tag.  Subclasses may override
+        this to customise the presentation.
+
+        Returns:
+            String of the form
+            ``"<vendor> <model> (<host>:<port>) [<driver_name>]"``,
+            with empty IDN fields omitted.
+
+        Example::
+
+            "Agilent Technologies E5071B (11.214.14.66:inst0) [HP E5071B]"
+        """
+        info = self.idn_info
+        instrument = " ".join(p for p in (info.vendor, info.model) if p)
+        address = f"{self.config.host}:{self.config.port}"
+        prefix = f"{instrument} " if instrument else ""
+        return f"{prefix}({address}) [{self.driver_name}]"
 
     def is_connected(self) -> bool:
         """Check if connected to VNA."""

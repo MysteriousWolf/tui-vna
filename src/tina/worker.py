@@ -308,9 +308,21 @@ class MeasurementWorker:
             self._log("*IDN?", "tx")
             self._log(self._vna.idn, "rx")
 
-            # Send success response with driver info
-            driver_info = f"{self._vna.idn} [{self._vna.driver_name}]"
-            self._send_response(MessageType.CONNECTED, data=driver_info)
+            # Send success response with human-readable driver info
+            self._send_response(MessageType.CONNECTED, data=self._vna.display_name)
+
+            # Log serial and firmware details not shown in the title
+            info = self._vna.idn_info
+            details = ", ".join(
+                p
+                for p in (
+                    f"Serial number: {info.serial}" if info.serial else "",
+                    f"Firmware: {info.firmware}" if info.firmware else "",
+                )
+                if p
+            )
+            if details:
+                self._log(details, "info")
 
         except Exception as e:
             self._send_response(MessageType.ERROR, error=f"Connection failed: {str(e)}")
