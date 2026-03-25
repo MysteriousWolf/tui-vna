@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tkinter as tk
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from tkinter import filedialog
 
@@ -20,6 +21,7 @@ import skrf as rf
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import Hit, Hits, Provider
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -61,6 +63,7 @@ from .worker import (
     MessageType,
     ParamsResult,
     ProgressUpdate,
+    StatusResult,
 )
 
 # GUI-only imports - done at module level to ensure proper terminal detection
@@ -985,6 +988,194 @@ def _welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
     )
 
 
+_POLL_OPTIONS = [
+    ("Status poll: Off", 0),
+    ("Status poll: 1 second", 1),
+    ("Status poll: 2 seconds", 2),
+    ("Status poll: 5 seconds", 5),
+    ("Status poll: 10 seconds", 10),
+    ("Status poll: 30 seconds", 30),
+]
+
+
+class StatusPollProvider(Provider):
+    """Command palette provider for changing the status bar poll interval."""
+
+    async def discover(self) -> Hits:
+        for label, value in _POLL_OPTIONS:
+            yield Hit(
+                1.0,
+                label,
+                partial(self._apply, value),
+                help="Set status bar refresh interval",
+            )
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for label, value in _POLL_OPTIONS:
+            score = matcher.match(label)
+            if score > 0:
+                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
+
+    def _apply(self, value: int) -> None:
+        app = self.app
+        app.settings.status_poll_interval = value
+        app.query_one("#sb_poll_interval", Select).value = value
+        if app.connected:
+            app._start_status_polling(value)
+
+
+_SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
+_ALL_SB_STATE_CLASSES = (
+    "--stale",
+    "--state-ok",
+    "--state-off",
+    "--smo-on",
+    "--trig-INT",
+    "--trig-MAN",
+    "--trig-EXT",
+    "--trig-BUS",
+)
+
+
+class StatusFooter(Footer):
+    """Textual Footer with VNA status items appended after the key bindings."""
+
+    DEFAULT_CSS = Footer.DEFAULT_CSS + """
+    StatusFooter #sb_spacer {
+        width: 1fr;
+        height: 1;
+    }
+    StatusFooter #sb_status_container {
+        width: auto;
+        height: 1;
+        padding: 0 1 0 0;
+    }
+    StatusFooter .sb-item {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        content-align: left middle;
+        background: $panel-lighten-1;
+    }
+    StatusFooter .sb-sep {
+        width: 1;
+        height: 1;
+    }
+    StatusFooter .sb-item.--stale {
+        background: $panel-lighten-1;
+        color: $text-muted;
+        text-style: dim;
+    }
+    StatusFooter .sb-item.--state-ok  { background: $success;   color: $background; }
+    StatusFooter .sb-item.--state-off { background: $error;     color: $background; }
+    StatusFooter .sb-item.--smo-on    { background: $accent;    color: $background; }
+    StatusFooter .sb-item.--trig-INT  { background: $primary;   color: $background; }
+    StatusFooter .sb-item.--trig-MAN  { background: $warning;   color: $background; }
+    StatusFooter .sb-item.--trig-EXT  { background: $secondary; color: $background; }
+    StatusFooter .sb-item.--trig-BUS  { background: $success;   color: $background; }
+    """
+
+    # Initial placeholder text shown before first poll
+    _PLACEHOLDERS: dict[str, str] = {
+        "sb_cal": "CAL",
+        "sb_smooth": "SMTH",
+        "sb_ifbw": "IFBW",
+        "sb_power": "PWR",
+        "sb_trigger": "TRIG",
+    }
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # (text, css_class) — class "" means no coloured background
+        self._sb_state: dict[str, tuple[str, str]] = {
+            k: (self._PLACEHOLDERS[k], "--stale") for k in _SB_ITEMS
+        }
+
+    def compose(self) -> ComposeResult:
+        yield from super().compose()  # q Quit leftmost; ^p palette docked right
+        yield Static("", id="sb_spacer")  # pushes status items to the right
+        with Horizontal(id="sb_status_container"):
+            for i, item_id in enumerate(_SB_ITEMS):
+                if i > 0:
+                    yield Static(" ", classes="sb-sep")
+                text, css_class = self._sb_state[item_id]
+                yield Static(text, id=item_id, classes=f"sb-item {css_class}".strip())
+
+    def _set_item(self, item_id: str, text: str, css_class: str = "") -> None:
+        self._sb_state[item_id] = (text, css_class)
+        try:
+            w = self.query_one(f"#{item_id}", Static)
+            w.update(text)
+            w.remove_class(*_ALL_SB_STATE_CLASSES)
+            if css_class:
+                w.add_class(css_class)
+        except Exception:
+            pass
+
+    def set_disconnected(self) -> None:
+        """Mark all items as stale; preserve last-known text."""
+        for item_id in _SB_ITEMS:
+            text, _ = self._sb_state[item_id]
+            self._sb_state[item_id] = (text, "--stale")
+            try:
+                w = self.query_one(f"#{item_id}", Static)
+                w.remove_class(*_ALL_SB_STATE_CLASSES)
+                w.add_class("--stale")
+            except Exception:
+                pass
+
+    def update_status(self, result: "StatusResult") -> None:
+        # Calibration
+        if result.cal_enabled is None:
+            self._set_item("sb_cal", self._sb_state["sb_cal"][0], "--stale")
+        elif result.cal_enabled:
+            self._set_item("sb_cal", (result.cal_type or "CAL").strip(), "--state-ok")
+        else:
+            self._set_item("sb_cal", "CAL", "--state-off")
+
+        # Smoothing
+        if result.smoothing_enabled is None:
+            self._set_item("sb_smooth", self._sb_state["sb_smooth"][0], "--stale")
+        elif result.smoothing_enabled and result.smoothing_aperture is not None:
+            self._set_item(
+                "sb_smooth", f"SMTH {result.smoothing_aperture:.1f}%", "--smo-on"
+            )
+        else:
+            self._set_item("sb_smooth", "SMTH", "--state-off")
+
+        # IF bandwidth
+        hz = result.if_bandwidth_hz
+        if hz is None:
+            self._set_item("sb_ifbw", self._sb_state["sb_ifbw"][0], "--stale")
+        elif hz >= 1e6:
+            self._set_item("sb_ifbw", f"{hz / 1e6:.3g} MHz")
+        elif hz >= 1e3:
+            self._set_item("sb_ifbw", f"{hz / 1e3:.3g} kHz")
+        else:
+            self._set_item("sb_ifbw", f"{hz:.3g} Hz")
+
+        # Port power
+        if result.port_power_dbm is None:
+            self._set_item("sb_power", self._sb_state["sb_power"][0], "--stale")
+        else:
+            self._set_item("sb_power", f"{result.port_power_dbm:+.1f} dBm")
+
+        # Trigger source + sweep mode
+        if result.trigger_source is None:
+            self._set_item("sb_trigger", self._sb_state["sb_trigger"][0], "--stale")
+        else:
+            src = result.trigger_source.strip().upper()
+            mode = (
+                (result.sweep_mode or "").strip().upper()
+                if hasattr(result, "sweep_mode")
+                else ""
+            )
+            label = f"{src} {mode}".strip() if mode else src
+            css = f"--trig-{src}" if f"--trig-{src}" in _ALL_SB_STATE_CLASSES else ""
+            self._set_item("sb_trigger", label, css)
+
+
 class VNAApp(App):
     """tina - Terminal uI Network Analyzer"""
 
@@ -1307,10 +1498,14 @@ class VNAApp(App):
     ImageWidget {
         margin: 1 0;
     }
+
     """
+
+    COMMANDS = App.COMMANDS | {StatusPollProvider}
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
+        Binding("ctrl+d", "toggle_debug_scpi", "SCPI Debug", show=False),
     ]
 
     TITLE = "tina - Terminal UI Network Analyzer"
@@ -1332,6 +1527,8 @@ class VNAApp(App):
         self._message_check_timer = None  # Timer for checking worker messages
         self._resize_timer = None  # Timer for debouncing resize events
         self._path_update_timer = None  # Timer for updating path label on resize
+        self._poll_timer = None  # Timer for status bar polling
+        self._debug_scpi = self.settings.debug_scpi
 
         # Create temporary directory for plot images
         self.plot_temp_dir = Path("/tmp/tui-vna-plots")
@@ -1365,6 +1562,22 @@ class VNAApp(App):
                                 placeholder="inst0",
                                 id="input_port",
                             )
+                        with Horizontal(classes="param-row"):
+                            yield Label("Status poll:", classes="col-label")
+                            yield Select(
+                                options=[
+                                    ("Off", 0),
+                                    ("1 s", 1),
+                                    ("2 s", 2),
+                                    ("5 s", 5),
+                                    ("10 s", 10),
+                                    ("30 s", 30),
+                                ],
+                                value=self.settings.status_poll_interval,
+                                id="sb_poll_interval",
+                                classes="col-input",
+                            )
+                            yield Static("", classes="col-check")
 
                     # Measurement Settings
                     with Container(classes="panel") as panel:
@@ -1663,10 +1876,11 @@ class VNAApp(App):
                     variant="warning",
                 )
 
-        yield Footer()
+        yield StatusFooter()
 
     def on_mount(self) -> None:
         """Called when app starts."""
+        self._apply_debug_title()
         self.call_after_refresh(self._log_startup)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
@@ -1853,6 +2067,26 @@ class VNAApp(App):
         """Start polling worker thread for messages."""
         self._message_check_timer = self.set_interval(0.05, self._check_worker_messages)
 
+    def _start_status_polling(self, interval_s: int) -> None:
+        """Start (or restart) periodic VNA status polling."""
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
+        if interval_s > 0:
+            self._poll_timer = self.set_interval(interval_s, self._do_status_poll)
+
+    def _stop_status_polling(self) -> None:
+        """Stop status polling and clear the status bar."""
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
+        self.query_one(StatusFooter).set_disconnected()
+
+    def _do_status_poll(self) -> None:
+        """Send a status poll request to the worker (no-op during measurement)."""
+        if self.connected and not self.measuring:
+            self.worker.send_command(MessageType.STATUS_POLL)
+
     def _check_worker_messages(self):
         """Check for messages from worker thread (called periodically)."""
         try:
@@ -1880,6 +2114,11 @@ class VNAApp(App):
             self.update_connect_button()
             self.enable_buttons_for_state()
             self.reset_progress()
+            self._start_status_polling(self.settings.status_poll_interval)
+            if self._debug_scpi:
+                self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=True)
+            # Immediate first poll without waiting for the interval
+            self.worker.send_command(MessageType.STATUS_POLL)
 
         elif msg.type == MessageType.DISCONNECTED:
             self.connected = False
@@ -1888,6 +2127,7 @@ class VNAApp(App):
             self.update_connect_button()
             self.enable_buttons_for_state()
             self.reset_progress()
+            self._stop_status_polling()
 
         elif msg.type == MessageType.PARAMS_READ:
             result: ParamsResult = msg.data
@@ -1905,15 +2145,29 @@ class VNAApp(App):
             # Schedule the async handler
             asyncio.create_task(self._handle_measurement_complete(result))
 
+        elif msg.type == MessageType.STATUS_UPDATE:
+            result: StatusResult = msg.data
+            self.query_one(StatusFooter).update_status(result)
+
         elif msg.type == MessageType.ERROR:
             self.log_message(msg.error, "error")
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
                 self.connected = False
                 self.sub_title = ""
                 self.update_connect_button()
+                self._stop_status_polling()
             self.enable_buttons_for_state()
             self.reset_progress()
             self.measuring = False
+
+    @on(Select.Changed, "#sb_poll_interval")
+    def on_poll_interval_change(self, event: Select.Changed) -> None:
+        """Handle status poll interval change."""
+        if event.value == Select.BLANK:
+            return
+        self.settings.status_poll_interval = event.value
+        if self.connected:
+            self._start_status_polling(event.value)
 
     @on(Checkbox.Changed, "#check_custom_filename")
     def on_custom_filename_change(self, event: Checkbox.Changed) -> None:
@@ -2067,9 +2321,15 @@ class VNAApp(App):
         self.disable_all_buttons()
 
         if self.connected:
+            # Stop polling immediately so no more STATUS_POLLs queue up
+            self.connected = False
+            if self._poll_timer is not None:
+                self._poll_timer.stop()
+                self._poll_timer = None
             # Disconnect
             self.set_progress("Disconnecting...", 50)
             self.log_message("Disconnecting from VNA...", "progress")
+            self.worker.clear_commands()
             self.worker.send_command(MessageType.DISCONNECT)
         else:
             # Connect
@@ -2104,6 +2364,22 @@ class VNAApp(App):
                 self.log_message(f"Connection setup failed: {str(e)}", "error")
                 self.enable_buttons_for_state()
                 self.reset_progress()
+
+    def action_toggle_debug_scpi(self) -> None:
+        """Toggle per-command SCPI error checking (debug mode)."""
+        self._debug_scpi = not self._debug_scpi
+        self.settings.debug_scpi = self._debug_scpi
+        self.worker.send_command(MessageType.SET_DEBUG_SCPI, data=self._debug_scpi)
+        self._apply_debug_title()
+        state = "ON" if self._debug_scpi else "OFF"
+        self.log_message(
+            f"SCPI debug mode {state} — queries SYST:ERR? after each command", "info"
+        )
+
+    def _apply_debug_title(self) -> None:
+        """Reflect debug mode state in the app title."""
+        base = "tina - Terminal UI Network Analyzer"
+        self.title = f"{base} [SCPI DEBUG]" if self._debug_scpi else base
 
     @on(Button.Pressed, "#btn_read_params")
     def handle_read_params(self) -> None:

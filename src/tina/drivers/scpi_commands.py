@@ -9,6 +9,8 @@ making it easier to maintain and adapt for different instruments.
 CMD_IDN = "*IDN?"
 CMD_OPC = "*OPC?"
 CMD_RESET = "*RST"
+CMD_CLEAR_STATUS = "*CLS"  # Clears error queue and status registers
+CMD_GET_SYSTEM_ERROR = "SYST:ERR?"
 
 # Data format commands
 CMD_SET_FORMAT_ASCII = "FORM:DATA ASCII"
@@ -119,6 +121,24 @@ def cmd_set_trigger_source(source: str) -> str:
         SCPI command string
     """
     return f"TRIG:SOUR {source.upper()}"
+
+
+# Correction / calibration commands
+CMD_GET_CORRECTION_STATE = "SENS1:CORR:STAT?"
+CMD_GET_CORRECTION_TYPE = "SENS1:CORR:TYPE?"
+
+# Smoothing commands
+CMD_GET_SMOOTHING_STATE = "CALC1:SMO:STAT?"
+CMD_GET_SMOOTHING_APERTURE = "CALC1:SMO:APER?"
+
+# IF bandwidth command
+CMD_GET_IF_BANDWIDTH = "SENS1:BWID?"
+
+# Port power command
+CMD_GET_PORT_POWER = "SOUR1:POW?"
+
+# Sweep mode command (CONT, SING, HOLD, POIN, PHAS)
+CMD_GET_SWEEP_MODE = "SENS1:SWE:MODE?"
 
 
 # HP E5071B specific commands

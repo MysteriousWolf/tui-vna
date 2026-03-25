@@ -47,6 +47,10 @@ class AppSettings:
     export_s12: bool = True
     export_s22: bool = True
 
+    # Status bar settings
+    status_poll_interval: int = 5  # seconds; 0 = off
+    debug_scpi: bool = False
+
     # Plot settings
     plot_s11: bool = True
     plot_s21: bool = True
