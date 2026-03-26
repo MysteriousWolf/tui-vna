@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
 from rich.markup import escape as rich_escape
+from rich.table import Table
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -34,6 +35,8 @@ from textual.widgets import (
     Label,
     Markdown,
     ProgressBar,
+    RadioButton,
+    RadioSet,
     RichLog,
     Select,
     Static,
@@ -47,6 +50,7 @@ matplotlib.use("Agg")
 from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
+from .tools import DistortionTool, MeasureTool
 from .utils import TouchstoneExporter
 from .utils.update_checker import (
     fetch_test_update_data,
@@ -1030,6 +1034,82 @@ class StatusPollProvider(Provider):
             app._start_status_polling(value)
 
 
+_BACKEND_OPTIONS = [
+    ("Plot backend: Terminal", "terminal"),
+    ("Plot backend: Image", "image"),
+]
+
+
+class PlotBackendProvider(Provider):
+    """Command palette provider for switching the global plot backend."""
+
+    async def discover(self) -> Hits:
+        """Yield all backend options unconditionally."""
+        for label, value in _BACKEND_OPTIONS:
+            yield Hit(
+                1.0,
+                label,
+                partial(self._apply, value),
+                help="Set plot rendering backend",
+            )
+
+    async def search(self, query: str) -> Hits:
+        """Yield backend options whose labels match *query*."""
+        matcher = self.matcher(query)
+        for label, value in _BACKEND_OPTIONS:
+            score = matcher.match(label)
+            if score > 0:
+                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
+
+    def _apply(self, value: str) -> None:
+        """Apply the selected backend globally and refresh the plot."""
+        app = self.app
+        app.settings.plot_backend = value
+        app._update_plot_type_options()
+        app.settings_manager.save(app.settings)
+        if app.last_measurement is not None:
+            app.call_after_refresh(
+                app._update_results,
+                app.last_measurement["freqs"],
+                app.last_measurement["sparams"],
+                app.last_measurement["output_path"],
+            )
+
+
+_CURSOR_MARKER_OPTIONS = [
+    ("Cursor marker: ▼ (arrow down)", "▼"),
+    ("Cursor marker: ✕ (cross)", "✕"),
+    ("Cursor marker: ○ (circle)", "○"),
+]
+
+
+class CursorMarkerProvider(Provider):
+    """Command palette provider for selecting the cursor marker symbol."""
+
+    async def discover(self) -> Hits:
+        for label, value in _CURSOR_MARKER_OPTIONS:
+            yield Hit(
+                1.0,
+                label,
+                partial(self._apply, value),
+                help="Set cursor marker style for Tools tab",
+            )
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for label, value in _CURSOR_MARKER_OPTIONS:
+            score = matcher.match(label)
+            if score > 0:
+                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
+
+    def _apply(self, value: str) -> None:
+        app = self.app
+        app.settings.cursor_marker_style = value
+        app.settings_manager.save(app.settings)
+        if app.last_measurement is not None:
+            app.call_after_refresh(app._refresh_tools_plot)
+
+
 _SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
 
 # Short human-readable names for common SCPI error codes (IEEE 488.2 / SCPI 1999).
@@ -1628,9 +1708,106 @@ class VNAApp(App):
         margin: 1 0;
     }
 
+    #tools_plot_container {
+        width: 100%;
+        align: center top;
+        height: auto;
+        padding: 0;
+    }
+
+    #tools_plot_placeholder {
+        padding: 1 1;
+        content-align: center middle;
+        width: 100%;
+    }
+
+    #tools_params_container {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+
+    #tools_tool_panel {
+        dock: bottom;
+        margin-bottom: 0;
+    }
+
+    #tools_tool_panel .button-group {
+        margin-top: 0;
+    }
+
+    #tools_middle_row {
+        layout: grid;
+        grid-size: 2 1;
+        grid-columns: 2fr 1fr;
+        height: auto;
+    }
+
+    #tools_middle_row > Container {
+        height: 100%;
+        margin-bottom: 0;
+    }
+
+    #tools_results_container {
+        align: center middle;
+    }
+
+    #tools_params_placeholder {
+        padding: 1 0;
+        width: 100%;
+        content-align: center middle;
+    }
+
+    #tools_results_display {
+        padding: 1 0;
+        width: auto;
+        height: auto;
+        content-align: center middle;
+    }
+
+    .tools-cursor-1 {
+        color: $warning;
+    }
+
+    .tools-cursor-2 {
+        color: #00d7ff;
+    }
+
+    #tools_trace_radioset {
+        height: 3;
+        border: none;
+        background: transparent;
+        margin: 0;
+        padding: 0;
+        layout: horizontal;
+    }
+
+    #tools_trace_radioset RadioButton {
+        height: 3;
+        border: none;
+        background: transparent;
+        padding: 0 1;
+        width: auto;
+        content-align: left middle;
+    }
+
+    #btn_tool_measure,
+    #btn_tool_distortion {
+        width: 1fr;
+        margin: 0 1 0 0;
+    }
+
+    #btn_tool_distortion {
+        margin-right: 0;
+    }
+
     """
 
-    COMMANDS = App.COMMANDS | {StatusPollProvider}
+    COMMANDS = App.COMMANDS | {
+        StatusPollProvider,
+        PlotBackendProvider,
+        CursorMarkerProvider,
+    }
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -1660,6 +1837,11 @@ class VNAApp(App):
         self._poll_timer = None  # Timer for status bar polling
         self._status_poll_in_flight = False  # True while a STATUS_POLL is outstanding
         self._debug_scpi = self.settings.debug_scpi
+
+        # Tools tab state
+        self._tools_cursor1_hz: float | None = None
+        self._tools_cursor2_hz: float | None = None
+        self._tools_resize_timer = None
 
         # Create temporary directory for plot images
         self.plot_temp_dir = Path("/tmp/tui-vna-plots")
@@ -1873,9 +2055,7 @@ class VNAApp(App):
                 log_area = RichLog(
                     id="log_content", markup=True, highlight=False, wrap=False
                 )
-                log_area.border_title = (
-                    "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
-                )
+                log_area.border_title = "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
                 yield log_area
 
             # Results Tab
@@ -1885,20 +2065,6 @@ class VNAApp(App):
                     with Container(classes="panel") as panel:
                         panel.border_title = "Plot"
                         with Horizontal(classes="plot-controls"):
-                            yield Label("Backend:")
-                            yield Select(
-                                options=[
-                                    ("Terminal", "terminal"),
-                                    ("Image", "image"),
-                                ],
-                                value=(
-                                    self.settings.plot_backend
-                                    if self.settings.plot_backend
-                                    in ["terminal", "image"]
-                                    else "terminal"
-                                ),
-                                id="select_plot_backend",
-                            )
                             yield Label("Type:")
                             yield Select(
                                 options=[
@@ -1998,6 +2164,91 @@ class VNAApp(App):
                                 disabled=True,
                             )
 
+            # Tools Tab
+            with TabPane("Tools", id="tab_tools"):
+                # Tool selector — docked to bottom of the tab
+                with Container(id="tools_tool_panel", classes="panel") as panel:
+                    panel.border_title = "Tool"
+                    with Horizontal(classes="button-group"):
+                        yield Button(
+                            "⊙ Measure",
+                            id="btn_tool_measure",
+                            variant="default",
+                        )
+                        yield Button(
+                            "⌇ Distortion",
+                            id="btn_tool_distortion",
+                            variant="default",
+                        )
+                with VerticalScroll():
+                    # Plot frame
+                    with Container(id="tools_plot_container", classes="panel") as panel:
+                        panel.border_title = "Plot"
+                        yield Static(
+                            "[dim]No measurement loaded.[/dim]",
+                            id="tools_plot_placeholder",
+                            markup=True,
+                        )
+                    # Selection + Results side by side
+                    with Horizontal(id="tools_middle_row"):
+                        # Selection frame (left half)
+                        with Container(classes="panel") as panel:
+                            panel.border_title = "Selection"
+                            with Horizontal(classes="plot-controls"):
+                                yield Label("Type:")
+                                yield Select(
+                                    options=[
+                                        ("Magnitude", "magnitude"),
+                                        ("Phase", "phase"),
+                                    ],
+                                    value=(
+                                        self.settings.tools_plot_type
+                                        if self.settings.tools_plot_type
+                                        in ("magnitude", "phase")
+                                        else "magnitude"
+                                    ),
+                                    id="select_tools_plot_type",
+                                )
+                                yield Label("Trace:")
+                                with RadioSet(id="tools_trace_radioset"):
+                                    yield RadioButton(
+                                        "S11",
+                                        id="tools_radio_s11",
+                                        value=(self.settings.tools_trace == "S11"),
+                                    )
+                                    yield RadioButton(
+                                        "S21",
+                                        id="tools_radio_s21",
+                                        value=(self.settings.tools_trace == "S21"),
+                                    )
+                                    yield RadioButton(
+                                        "S12",
+                                        id="tools_radio_s12",
+                                        value=(self.settings.tools_trace == "S12"),
+                                    )
+                                    yield RadioButton(
+                                        "S22",
+                                        id="tools_radio_s22",
+                                        value=(self.settings.tools_trace == "S22"),
+                                    )
+                            # Dynamic parameters area (populated when a tool is active)
+                            with Container(id="tools_params_container"):
+                                yield Static(
+                                    "[dim]Activate a tool below to see options.[/dim]",
+                                    id="tools_params_placeholder",
+                                    markup=True,
+                                )
+                        # Results frame (right half)
+                        with Container(
+                            id="tools_results_container", classes="panel"
+                        ) as panel:
+                            panel.border_title = "Tool Results"
+                            yield Static(
+                                "[dim]No tool active.[/dim]",
+                                id="tools_results_display",
+                                markup=True,
+                            )
+
         # Controls panel with progress bar (left) and buttons (right)
         with Container(id="controls_panel") as controls:
             controls.border_title = "Controls"
@@ -2090,7 +2341,7 @@ class VNAApp(App):
 
     def _update_plot_type_options(self) -> None:
         """Update plot type dropdown options based on selected backend."""
-        plot_backend = self.query_one("#select_plot_backend", Select).value
+        plot_backend = self.settings.plot_backend
         plot_type_select = self.query_one("#select_plot_type", Select)
         current_type = plot_type_select.value
 
@@ -2125,6 +2376,8 @@ class VNAApp(App):
         """Invalidate cached style map and rerender log with updated theme colors."""
         self._cached_style_map = None
         self._refresh_log_display()
+        if self.last_measurement is not None:
+            self.call_after_refresh(self._refresh_tools_plot)
 
     def on_unmount(self) -> None:
         """Called when app is shutting down."""
@@ -2204,9 +2457,15 @@ class VNAApp(App):
             self.settings.plot_s12 = self.query_one("#check_plot_s12", Checkbox).value
             self.settings.plot_s22 = self.query_one("#check_plot_s22", Checkbox).value
             self.settings.plot_type = self.query_one("#select_plot_type", Select).value
-            self.settings.plot_backend = self.query_one(
-                "#select_plot_backend", Select
-            ).value
+
+            # Tools tab settings
+            self.settings.tools_trace = self._get_tools_trace()
+            try:
+                self.settings.tools_plot_type = self.query_one(
+                    "#select_tools_plot_type", Select
+                ).value
+            except Exception:
+                pass
 
             # Save to disk
             self.settings_manager.save(self.settings)
@@ -2355,6 +2614,10 @@ class VNAApp(App):
             # Redraw plot with correct sizing when switching to results tab
             if self.last_measurement is not None:
                 self.set_timer(0.3, self._delayed_redraw_plot)
+        elif event.pane.id == "tab_tools":
+            # Redraw tools plot when switching to tools tab
+            if self.last_measurement is not None:
+                self.set_timer(0.3, self._delayed_redraw_tools_plot)
 
     @on(
         Checkbox.Changed,
@@ -2753,6 +3016,10 @@ class VNAApp(App):
             await self._update_results(freqs, sparams, output_path)
             self.log_message("Results display updated", "debug")
 
+            # Also refresh tools tab with new data
+            await self._refresh_tools_plot()
+            self._run_tools_computation()
+
             self.set_progress("Done", 100)
             self.sub_title = "Measurement complete"
 
@@ -2815,6 +3082,9 @@ class VNAApp(App):
 
             # Display results
             asyncio.create_task(self._update_results(freqs, sparams, file_path))
+            # Also refresh tools tab with imported data
+            asyncio.create_task(self._refresh_tools_plot())
+            self._run_tools_computation()
 
         except FileNotFoundError as e:
             self.log_message(str(e), "error")
@@ -3054,6 +3324,12 @@ class VNAApp(App):
             # Debounce: redraw only after 300ms of no resize events
             self._resize_timer = self.set_timer(0.3, self._redraw_plot)
 
+        # Debounce tools plot redraw
+        if self.last_measurement is not None:
+            if self._tools_resize_timer is not None:
+                self._tools_resize_timer.stop()
+            self._tools_resize_timer = self.set_timer(0.3, self._refresh_tools_plot)
+
         # Update output file path label
         if self.last_output_path is not None:
             if self._path_update_timer is not None:
@@ -3079,6 +3355,460 @@ class VNAApp(App):
                 self.last_measurement["sparams"],
                 self.last_measurement["output_path"],
             )
+
+    # ------------------------------------------------------------------ #
+    # Tools tab helpers
+    # ------------------------------------------------------------------ #
+
+    def _get_tools_trace(self) -> str:
+        """Return the currently selected trace from the Tools RadioSet."""
+        for param in ("S11", "S21", "S12", "S22"):
+            try:
+                rb = self.query_one(f"#tools_radio_{param.lower()}", RadioButton)
+                if rb.value:
+                    return param
+            except Exception:
+                pass
+        return "S11"
+
+    def _set_active_tool(self, tool_name: str) -> None:
+        """Toggle a tool on/off; update button variants and rebuild params."""
+        if self.settings.tools_active_tool == tool_name:
+            self.settings.tools_active_tool = ""
+        else:
+            self.settings.tools_active_tool = tool_name
+
+        active = self.settings.tools_active_tool
+        try:
+            self.query_one("#btn_tool_measure", Button).variant = (
+                "success" if active == "measure" else "default"
+            )
+            self.query_one("#btn_tool_distortion", Button).variant = (
+                "success" if active == "distortion" else "default"
+            )
+        except Exception:
+            pass
+
+        self.call_after_refresh(self._rebuild_tools_params)
+        if self.last_measurement is not None:
+            self.call_after_refresh(self._refresh_tools_plot)
+
+    async def _rebuild_tools_params(self) -> None:
+        """Rebuild the #tools_params_container based on the active tool."""
+        try:
+            container = self.query_one("#tools_params_container", Container)
+        except Exception:
+            return
+
+        await container.remove_children()
+
+        active = self.settings.tools_active_tool
+        freq_unit = (
+            self.last_measurement.get("freq_unit", "MHz")
+            if self.last_measurement
+            else "MHz"
+        )
+
+        if active in ("measure", "distortion"):
+            cursor1_row = Horizontal(classes="plot-controls")
+            cursor2_row = Horizontal(classes="plot-controls")
+            await container.mount(cursor1_row)
+            await container.mount(cursor2_row)
+            await cursor1_row.mount(
+                Label("Cursor 1:", classes="tools-cursor-1"),
+                Input(
+                    placeholder=f"Frequency ({freq_unit})",
+                    id="input_tools_cursor1",
+                ),
+            )
+            await cursor2_row.mount(
+                Label("Cursor 2:", classes="tools-cursor-2"),
+                Input(
+                    placeholder=f"Frequency ({freq_unit})",
+                    id="input_tools_cursor2",
+                ),
+            )
+        else:
+            await container.mount(
+                Static(
+                    "[dim]Activate a tool below to see options.[/dim]",
+                    id="tools_params_placeholder",
+                    markup=True,
+                )
+            )
+
+    async def _delayed_redraw_tools_plot(self) -> None:
+        """Delayed tools-tab redraw to allow container sizing to settle."""
+        if self.last_measurement is not None:
+            await self._refresh_tools_plot()
+
+    async def _refresh_tools_plot(self) -> None:
+        """Render the tools-tab plot for the selected single trace with cursor markers."""
+        if self.last_measurement is None:
+            return
+
+        try:
+            container = self.query_one("#tools_plot_container", Container)
+        except Exception:
+            return
+
+        await container.remove_children()
+
+        freqs = self.last_measurement["freqs"]
+        sparams = self.last_measurement["sparams"]
+        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+        multiplier = unit_multipliers.get(freq_unit, 1e6)
+
+        trace = self._get_tools_trace()
+
+        try:
+            plot_type = self.query_one("#select_tools_plot_type", Select).value
+        except Exception:
+            plot_type = "magnitude"
+
+        if trace not in sparams:
+            await container.mount(
+                Static(
+                    f"[yellow]Trace {trace} not available in current measurement.[/yellow]",
+                    markup=True,
+                )
+            )
+            return
+
+        mag, phase = sparams[trace]
+        if plot_type == "magnitude":
+            data = mag
+            y_label = "Magnitude (dB)"
+            plot_title = f"{trace} Magnitude"
+        elif plot_type == "phase":
+            data = _unwrap_phase(phase)
+            y_label = "Phase (°)"
+            plot_title = f"{trace} Phase (Unwrapped)"
+        else:
+            data = phase
+            y_label = "Phase (°)"
+            plot_title = f"{trace} Phase (Raw)"
+
+        auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
+            data, outlier_percentile=1.0, safety_margin=0.05
+        )
+        freq_mhz = freqs / 1e6
+        plot_colors = _get_plot_colors(self.get_css_variables())
+        trace_color_rgb = plot_colors["traces_rgb"].get(trace, (255, 255, 255))
+        trace_color_hex = plot_colors["traces"].get(trace, "#ffffff")
+
+        cursor1_hz = self._tools_cursor1_hz
+        cursor2_hz = self._tools_cursor2_hz
+        active_tool = self.settings.tools_active_tool
+        marker_symbol = self.settings.cursor_marker_style
+
+        cursor1_rgb = (255, 165, 0)
+        cursor2_rgb = (0, 215, 255)
+        cursor1_hex = "#ffa500"
+        cursor2_hex = "#00d7ff"
+
+        # Map Unicode marker to matplotlib marker code
+        mpl_markers = {"▼": "v", "✕": "x", "○": "o"}
+        mpl_marker = mpl_markers.get(marker_symbol, "v")
+
+        plot_backend = self.settings.plot_backend
+
+        if plot_backend == "terminal":
+            from textual_plotext import PlotextPlot
+
+            pw = PlotextPlot()
+            await container.mount(pw)
+            plt_term = pw.plt
+            plt_term.clf()
+
+            plt_term.plot(
+                freq_mhz.tolist(),
+                data.tolist(),
+                label=trace,
+                marker="braille",
+                color=trace_color_rgb,
+            )
+            plt_term.ylim(auto_y_min, auto_y_max)
+
+            if active_tool in ("measure", "distortion"):
+                if cursor1_hz is not None:
+                    v1 = float(np.interp(cursor1_hz, freqs, data))
+                    c1_mhz = cursor1_hz / multiplier * (multiplier / 1e6)
+                    plt_term.plot(
+                        freq_mhz.tolist(),
+                        [v1] * len(freq_mhz),
+                        marker="·",
+                        color=cursor1_rgb,
+                    )
+                    plt_term.vline(c1_mhz, color=cursor1_rgb)
+                    plt_term.scatter(
+                        [c1_mhz], [v1], marker=marker_symbol, color=cursor1_rgb
+                    )
+
+                if cursor2_hz is not None:
+                    v2 = float(np.interp(cursor2_hz, freqs, data))
+                    c2_mhz = cursor2_hz / multiplier * (multiplier / 1e6)
+                    plt_term.plot(
+                        freq_mhz.tolist(),
+                        [v2] * len(freq_mhz),
+                        marker="·",
+                        color=cursor2_rgb,
+                    )
+                    plt_term.vline(c2_mhz, color=cursor2_rgb)
+                    plt_term.scatter(
+                        [c2_mhz], [v2], marker=marker_symbol, color=cursor2_rgb
+                    )
+
+                if (
+                    active_tool == "distortion"
+                    and cursor1_hz is not None
+                    and cursor2_hz is not None
+                ):
+                    v1 = float(np.interp(cursor1_hz, freqs, data))
+                    v2 = float(np.interp(cursor2_hz, freqs, data))
+                    x1 = cursor1_hz / 1e6
+                    x2 = cursor2_hz / 1e6
+                    if abs(x2 - x1) > 1e-12:
+                        slope = (v2 - v1) / (x2 - x1)
+                        line_y = [v1 + slope * (f - x1) for f in freq_mhz.tolist()]
+                        plt_term.plot(
+                            freq_mhz.tolist(),
+                            line_y,
+                            label="linear",
+                            marker=".",
+                            color=(150, 150, 150),
+                        )
+
+            plt_term.title(plot_title)
+            plt_term.xlabel(f"Frequency ({freq_unit})")
+            plt_term.ylabel(y_label)
+            plt_term.theme("clear")
+            pw.refresh()
+
+        else:
+            # Image backend — matplotlib
+            plot_file = self.plot_temp_dir / "tools_plot.png"
+            dpi = 150
+            fixed_width_px = 1920
+            fixed_height_px = 1080
+
+            fig, ax = plt.subplots(
+                figsize=(fixed_width_px / dpi, fixed_height_px / dpi), dpi=dpi
+            )
+            fg = plot_colors["fg"]
+            bg = plot_colors["bg"]
+            fig.patch.set_facecolor(bg)
+            ax.set_facecolor(bg)
+
+            ax.plot(freq_mhz, data, label=trace, color=trace_color_hex, linewidth=1.5)
+            ax.set_ylim(auto_y_min, auto_y_max)
+
+            if active_tool in ("measure", "distortion"):
+                if cursor1_hz is not None:
+                    v1 = float(np.interp(cursor1_hz, freqs, data))
+                    c1_mhz = cursor1_hz / 1e6
+                    ax.axhline(
+                        y=v1, color=cursor1_hex, linestyle=":", linewidth=1, alpha=0.6
+                    )
+                    ax.axvline(
+                        x=c1_mhz,
+                        color=cursor1_hex,
+                        linestyle="--",
+                        linewidth=1,
+                        alpha=0.8,
+                    )
+                    ax.plot(
+                        [c1_mhz],
+                        [v1],
+                        marker=mpl_marker,
+                        color=cursor1_hex,
+                        markersize=10,
+                        linestyle="none",
+                        zorder=5,
+                    )
+
+                if cursor2_hz is not None:
+                    v2 = float(np.interp(cursor2_hz, freqs, data))
+                    c2_mhz = cursor2_hz / 1e6
+                    ax.axhline(
+                        y=v2, color=cursor2_hex, linestyle=":", linewidth=1, alpha=0.6
+                    )
+                    ax.axvline(
+                        x=c2_mhz,
+                        color=cursor2_hex,
+                        linestyle="--",
+                        linewidth=1,
+                        alpha=0.8,
+                    )
+                    ax.plot(
+                        [c2_mhz],
+                        [v2],
+                        marker=mpl_marker,
+                        color=cursor2_hex,
+                        markersize=10,
+                        linestyle="none",
+                        zorder=5,
+                    )
+
+                if (
+                    active_tool == "distortion"
+                    and cursor1_hz is not None
+                    and cursor2_hz is not None
+                ):
+                    v1 = float(np.interp(cursor1_hz, freqs, data))
+                    v2 = float(np.interp(cursor2_hz, freqs, data))
+                    c1_mhz = cursor1_hz / 1e6
+                    c2_mhz = cursor2_hz / 1e6
+                    if abs(c2_mhz - c1_mhz) > 1e-12:
+                        try:
+                            ax.axline(
+                                (c1_mhz, v1),
+                                (c2_mhz, v2),
+                                color="#888888",
+                                linestyle=":",
+                                linewidth=1.2,
+                                label="linear",
+                            )
+                        except AttributeError:
+                            # matplotlib < 3.3 fallback
+                            slope = (v2 - v1) / (c2_mhz - c1_mhz)
+                            xmin, xmax = freq_mhz[0], freq_mhz[-1]
+                            ax.plot(
+                                [xmin, xmax],
+                                [
+                                    v1 + slope * (xmin - c1_mhz),
+                                    v1 + slope * (xmax - c1_mhz),
+                                ],
+                                color="#888888",
+                                linestyle=":",
+                                linewidth=1.2,
+                                label="linear",
+                            )
+
+            ax.set_xlabel(f"Frequency ({freq_unit})", color=fg)
+            ax.set_ylabel(y_label, color=fg)
+            ax.set_title(plot_title, color=fg)
+            ax.tick_params(colors=fg)
+            ax.grid(True, alpha=0.2, color=plot_colors["grid"])
+            legend = ax.legend(edgecolor=plot_colors["grid"])
+            for text in legend.get_texts():
+                text.set_color(fg)
+            for spine in ax.spines.values():
+                spine.set_edgecolor(plot_colors["grid"])
+            plt.tight_layout()
+            plt.savefig(
+                plot_file, dpi=dpi, facecolor=bg, edgecolor="none", bbox_inches="tight"
+            )
+            plt.close(fig)
+
+            if plot_file.exists() and TEXTUAL_IMAGE_AVAILABLE:
+                try:
+                    img_widget = ImageWidget(str(plot_file))
+                    container_w = container.content_size.width
+                    if container_w and container_w > 10:
+                        display_w = max(40, container_w - 4)
+                        aspect = (fixed_width_px / 8) / (fixed_height_px / 16)
+                        img_widget.styles.width = display_w
+                        img_widget.styles.height = max(10, int(display_w / aspect))
+                    else:
+                        img_widget.styles.width = 120
+                        img_widget.styles.height = 60
+                    await container.mount(img_widget)
+                except Exception as e:
+                    await container.mount(
+                        Static(f"[red]Image display error: {e}[/red]", markup=True)
+                    )
+            elif not TEXTUAL_IMAGE_AVAILABLE:
+                await container.mount(
+                    Static(
+                        f"[dim]Plot saved to: {plot_file}[/dim]",
+                        markup=True,
+                    )
+                )
+            else:
+                await container.mount(
+                    Static("[red]Could not generate tools plot.[/red]", markup=True)
+                )
+
+    def _run_tools_computation(self) -> None:
+        """Run the active tool and update the #tools_results_display."""
+        active = self.settings.tools_active_tool
+        try:
+            display = self.query_one("#tools_results_display", Static)
+        except Exception:
+            return
+
+        if active == "" or self.last_measurement is None:
+            display.update("[dim]No tool active.[/dim]")
+            return
+
+        freqs = self.last_measurement["freqs"]
+        sparams = self.last_measurement["sparams"]
+        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+        multiplier = unit_multipliers.get(freq_unit, 1e6)
+
+        trace = self._get_tools_trace()
+        try:
+            plot_type = self.query_one("#select_tools_plot_type", Select).value
+        except Exception:
+            plot_type = "magnitude"
+
+        if active == "measure":
+            result = MeasureTool().compute(
+                freqs,
+                sparams,
+                trace,
+                plot_type,
+                self._tools_cursor1_hz,
+                self._tools_cursor2_hz,
+            )
+            if result.cursor1_value is None and result.cursor2_value is None:
+                display.update("[dim]Enter cursor frequencies above.[/dim]")
+                return
+            t = Table(box=None, padding=(0, 1, 0, 0), show_header=True, expand=False)
+            t.add_column("", style="dim", no_wrap=True)
+            t.add_column(f"Freq ({freq_unit})", justify="right", no_wrap=True)
+            t.add_column(result.unit_label, justify="right", no_wrap=True)
+            if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
+                f1 = result.cursor1_freq_hz / multiplier
+                t.add_row(
+                    "[#ffa500]Cursor 1[/#ffa500]",
+                    f"[#ffa500]{f1:.4f}[/#ffa500]",
+                    f"[#ffa500]{result.cursor1_value:.4f}[/#ffa500]",
+                )
+            if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
+                f2 = result.cursor2_freq_hz / multiplier
+                t.add_row(
+                    "[#00d7ff]Cursor 2[/#00d7ff]",
+                    f"[#00d7ff]{f2:.4f}[/#00d7ff]",
+                    f"[#00d7ff]{result.cursor2_value:.4f}[/#00d7ff]",
+                )
+            if result.delta_value is not None:
+                freq_delta = (
+                    abs(result.cursor2_freq_hz - result.cursor1_freq_hz) / multiplier
+                )
+                t.add_row("Δ", f"{freq_delta:.4f}", f"{result.delta_value:.4f}")
+            display.update(t)
+
+        elif active == "distortion":
+            result = DistortionTool().compute(
+                freqs,
+                sparams,
+                trace,
+                plot_type,
+                self._tools_cursor1_hz,
+                self._tools_cursor2_hz,
+            )
+            if result.delta_value is None:
+                display.update("[dim]Enter both cursor frequencies above.[/dim]")
+                return
+            t = Table(box=None, padding=(0, 1, 0, 0), show_header=False, expand=False)
+            t.add_column("", style="dim", no_wrap=True)
+            t.add_column(result.unit_label, justify="right", no_wrap=True)
+            t.add_row("Linear distortion", f"[bold]{result.delta_value:.4f}[/bold]")
+            display.update(t)
 
     def _update_output_path_label(self) -> None:
         """Update the output path label with intelligent truncation based on available width."""
@@ -3156,22 +3886,60 @@ class VNAApp(App):
             self.last_measurement["output_path"],
         )
 
-    @on(Select.Changed, "#select_plot_backend")
-    async def on_plot_backend_change(self, event: Select.Changed) -> None:
-        """Handle plot backend selection change."""
-        # Update plot type options based on backend
-        self._update_plot_type_options()
+    # ------------------------------------------------------------------ #
+    # Tools tab event handlers
+    # ------------------------------------------------------------------ #
 
-        # Redraw plot if measurement exists
+    @on(Button.Pressed, "#btn_tool_measure")
+    def handle_tool_measure_pressed(self) -> None:
+        """Toggle the Measure cursor tool."""
+        self._set_active_tool("measure")
+
+    @on(Button.Pressed, "#btn_tool_distortion")
+    def handle_tool_distortion_pressed(self) -> None:
+        """Toggle the Distortion tool."""
+        self._set_active_tool("distortion")
+
+    @on(Input.Changed, "#input_tools_cursor1, #input_tools_cursor2")
+    async def handle_tools_cursor_change(self, event: Input.Changed) -> None:
+        """Parse cursor frequency inputs, then refresh plot and results."""
         if self.last_measurement is None:
             return
 
-        # Redraw plot with new backend
-        await self._update_results(
-            self.last_measurement["freqs"],
-            self.last_measurement["sparams"],
-            self.last_measurement["output_path"],
-        )
+        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+        multiplier = unit_multipliers.get(freq_unit, 1e6)
+
+        def _parse(widget_id: str) -> float | None:
+            try:
+                val = self.query_one(widget_id, Input).value.strip()
+                return float(val) * multiplier if val else None
+            except Exception:
+                return None
+
+        self._tools_cursor1_hz = _parse("#input_tools_cursor1")
+        self._tools_cursor2_hz = _parse("#input_tools_cursor2")
+
+        await self._refresh_tools_plot()
+        self._run_tools_computation()
+
+    @on(RadioSet.Changed, "#tools_trace_radioset")
+    async def handle_tools_trace_changed(self, event: RadioSet.Changed) -> None:
+        """Update tools plot and results when the trace selection changes."""
+        if self.last_measurement is None:
+            return
+        await self._refresh_tools_plot()
+        self._run_tools_computation()
+
+    @on(Select.Changed, "#select_tools_plot_type")
+    async def on_tools_plot_type_change(self, event: Select.Changed) -> None:
+        """Redraw tools plot when the plot type is changed."""
+        if self.last_measurement is None:
+            return
+        await self._refresh_tools_plot()
+        self._run_tools_computation()
+
+    # ------------------------------------------------------------------ #
 
     async def _update_results(self, freqs, sparams, output_path):
         """Update results tab with measurement data using native Textual widgets."""
@@ -3282,7 +4050,7 @@ class VNAApp(App):
         if plot_params:
             # Get plot settings from UI
             plot_type = self.query_one("#select_plot_type", Select).value
-            plot_backend = self.query_one("#select_plot_backend", Select).value
+            plot_backend = self.settings.plot_backend
 
             # Determine plot title
             if plot_type == "magnitude":
