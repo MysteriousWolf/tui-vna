@@ -2200,12 +2200,11 @@ class VNAApp(App):
                                     options=[
                                         ("Magnitude", "magnitude"),
                                         ("Phase", "phase"),
-                                        ("Phase Raw", "phase_raw"),
                                     ],
                                     value=(
                                         self.settings.tools_plot_type
                                         if self.settings.tools_plot_type
-                                        in ("magnitude", "phase", "phase_raw")
+                                        in ("magnitude", "phase")
                                         else "magnitude"
                                     ),
                                     id="select_tools_plot_type",
@@ -3536,18 +3535,30 @@ class VNAApp(App):
                 if cursor1_hz is not None:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
                     c1_mhz = cursor1_hz / multiplier * (multiplier / 1e6)
+                    plt_term.plot(
+                        freq_mhz.tolist(),
+                        [v1] * len(freq_mhz),
+                        marker="·",
+                        color=cursor1_rgb,
+                    )
+                    plt_term.vline(c1_mhz, color=cursor1_rgb)
                     plt_term.scatter(
                         [c1_mhz], [v1], marker=marker_symbol, color=cursor1_rgb
                     )
-                    plt_term.vline(c1_mhz, color=cursor1_rgb)
 
                 if cursor2_hz is not None:
                     v2 = float(np.interp(cursor2_hz, freqs, data))
                     c2_mhz = cursor2_hz / multiplier * (multiplier / 1e6)
+                    plt_term.plot(
+                        freq_mhz.tolist(),
+                        [v2] * len(freq_mhz),
+                        marker="·",
+                        color=cursor2_rgb,
+                    )
+                    plt_term.vline(c2_mhz, color=cursor2_rgb)
                     plt_term.scatter(
                         [c2_mhz], [v2], marker=marker_symbol, color=cursor2_rgb
                     )
-                    plt_term.vline(c2_mhz, color=cursor2_rgb)
 
                 if (
                     active_tool == "distortion"
@@ -3597,6 +3608,9 @@ class VNAApp(App):
                 if cursor1_hz is not None:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
                     c1_mhz = cursor1_hz / 1e6
+                    ax.axhline(
+                        y=v1, color=cursor1_hex, linestyle=":", linewidth=1, alpha=0.6
+                    )
                     ax.axvline(
                         x=c1_mhz,
                         color=cursor1_hex,
@@ -3611,11 +3625,15 @@ class VNAApp(App):
                         color=cursor1_hex,
                         markersize=10,
                         linestyle="none",
+                        zorder=5,
                     )
 
                 if cursor2_hz is not None:
                     v2 = float(np.interp(cursor2_hz, freqs, data))
                     c2_mhz = cursor2_hz / 1e6
+                    ax.axhline(
+                        y=v2, color=cursor2_hex, linestyle=":", linewidth=1, alpha=0.6
+                    )
                     ax.axvline(
                         x=c2_mhz,
                         color=cursor2_hex,
@@ -3630,6 +3648,7 @@ class VNAApp(App):
                         color=cursor2_hex,
                         markersize=10,
                         linestyle="none",
+                        zorder=5,
                     )
 
                 if (
@@ -3767,7 +3786,10 @@ class VNAApp(App):
                     f"[#00d7ff]{result.cursor2_value:.4f}[/#00d7ff]",
                 )
             if result.delta_value is not None:
-                t.add_row("Δ", "", f"{result.delta_value:.4f}")
+                freq_delta = (
+                    abs(result.cursor2_freq_hz - result.cursor1_freq_hz) / multiplier
+                )
+                t.add_row("Δ", f"{freq_delta:.4f}", f"{result.delta_value:.4f}")
             display.update(t)
 
         elif active == "distortion":
