@@ -6,6 +6,7 @@ import asyncio
 import os
 import platform
 import queue
+import re
 import subprocess
 import sys
 import tkinter as tk
@@ -962,6 +963,128 @@ class UpdateNotificationScreen(ModalScreen):
         self.dismiss()
 
 
+# ---------------------------------------------------------------------------
+# Help viewer helpers
+# ---------------------------------------------------------------------------
+
+_LATEX_SYMBOLS = {
+    r"\Delta": "Δ",
+    r"\delta": "δ",
+    r"\alpha": "α",
+    r"\beta": "β",
+    r"\gamma": "γ",
+    r"\theta": "θ",
+    r"\lambda": "λ",
+    r"\mu": "μ",
+    r"\sigma": "σ",
+    r"\omega": "Ω",
+    r"\pi": "π",
+    r"\cdot": "·",
+    r"\times": "×",
+    r"\div": "÷",
+    r"\leq": "≤",
+    r"\geq": "≥",
+    r"\neq": "≠",
+    r"\approx": "≈",
+    r"\infty": "∞",
+    r"\pm": "±",
+}
+
+_SUBSCRIPT_MAP = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+_SUPERSCRIPT_MAP = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def _latex_to_unicode(expr: str) -> str:
+    """Convert a LaTeX math expression to a Unicode string."""
+    for latex, uni in _LATEX_SYMBOLS.items():
+        expr = expr.replace(latex, uni)
+    # Subscripts: x_{12} or x_1
+    expr = re.sub(
+        r"_\{([0-9]+)\}", lambda m: m.group(1).translate(_SUBSCRIPT_MAP), expr
+    )
+    expr = re.sub(r"_([0-9])", lambda m: m.group(1).translate(_SUBSCRIPT_MAP), expr)
+    # Superscripts: x^{12} or x^2
+    expr = re.sub(
+        r"\^\{([0-9]+)\}", lambda m: m.group(1).translate(_SUPERSCRIPT_MAP), expr
+    )
+    expr = re.sub(r"\^([0-9])", lambda m: m.group(1).translate(_SUPERSCRIPT_MAP), expr)
+    # Strip remaining braces
+    expr = expr.replace("{", "").replace("}", "")
+    return expr.strip()
+
+
+def _preprocess_latex_markdown(text: str) -> str:
+    """Pre-process markdown, converting LaTeX math blocks to Unicode for TUI display."""
+
+    def replace_display(m: re.Match) -> str:
+        return f"\n```\n{_latex_to_unicode(m.group(1))}\n```\n"
+
+    def replace_inline(m: re.Match) -> str:
+        return f"`{_latex_to_unicode(m.group(1))}`"
+
+    text = re.sub(r"\$\$(.*?)\$\$", replace_display, text, flags=re.DOTALL)
+    text = re.sub(r"\$([^$\n]+?)\$", replace_inline, text)
+    return text
+
+
+class HelpScreen(ModalScreen):
+    """Help viewer modal with LaTeX-enhanced markdown support."""
+
+    DEFAULT_CSS = """
+    HelpScreen {
+        align: center middle;
+    }
+    #help-dialog {
+        width: 90%;
+        height: 90%;
+        background: $surface;
+        border: thick $primary;
+        padding: 1 2;
+    }
+    #help-title {
+        text-style: bold;
+        color: $primary;
+        width: 1fr;
+    }
+    #help-body {
+        height: 1fr;
+        border: solid $panel;
+        padding: 0 1;
+        margin: 0;
+    }
+    #help-body Markdown {
+        margin: 0;
+        padding: 0;
+    }
+    #help-body Markdown > * {
+        margin-top: 0;
+    }
+    #help-footer {
+        height: auto;
+        align-horizontal: right;
+    }
+    """
+
+    def __init__(self, title: str, content: str) -> None:
+        super().__init__()
+        self._title = title
+        self._content = _preprocess_latex_markdown(content)
+
+    def compose(self) -> ComposeResult:
+        """Compose the help modal layout."""
+        with Vertical(id="help-dialog"):
+            yield Label(self._title, id="help-title")
+            with VerticalScroll(id="help-body"):
+                yield Markdown(self._content)
+            with Horizontal(id="help-footer"):
+                yield Button("Close", variant="primary", id="btn-help-close")
+
+    @on(Button.Pressed, "#btn-help-close")
+    def close_help(self) -> None:
+        """Dismiss the help modal."""
+        self.dismiss()
+
+
 def _update_screen(release_info) -> UpdateNotificationScreen:
     """Build an UpdateNotificationScreen for a new-release notification."""
     rel = release_info
@@ -1769,6 +1892,7 @@ class VNAApp(App):
 
     #tools_results_container {
         align: center middle;
+        link-background-hover: $primary-darken-2;
     }
 
     #tools_params_placeholder {
@@ -1789,7 +1913,7 @@ class VNAApp(App):
     }
 
     .tools-cursor-2 {
-        color: #00d7ff;
+        color: $accent;
     }
 
     #tools_trace_radioset {
@@ -2232,7 +2356,7 @@ class VNAApp(App):
                         with Container(
                             id="tools_results_container", classes="panel"
                         ) as panel:
-                            panel.border_title = "Tool Results"
+                            panel.border_title = "Tool Results [@click='app.show_tool_help'][on $primary] ? [/]"
                             yield Static(
                                 "[dim]No tool active.[/dim]",
                                 id="tools_results_display",
@@ -2775,6 +2899,24 @@ class VNAApp(App):
         else:
             btn.label = "📡\nConnect"
             btn.variant = "primary"
+
+    def action_show_tool_help(self) -> None:
+        """Open the help viewer for the currently active tool."""
+        active = self.settings.tools_active_tool
+        help_map = {
+            "cursor": ("cursor.md", "Cursor Tool Help"),
+            "distortion": ("distortion.md", "Distortion Tool Help"),
+        }
+        if active not in help_map:
+            self.notify("Activate a tool to see its help.", timeout=2)
+            return
+        filename, title = help_map[active]
+        help_file = Path(__file__).parent / "help" / filename
+        try:
+            content = help_file.read_text(encoding="utf-8")
+        except OSError:
+            content = "_Help file not found._"
+        self.push_screen(HelpScreen(title, content))
 
     def action_copy_log(self) -> None:
         """Copy visible log entries as plain text to the system clipboard."""
@@ -3393,13 +3535,8 @@ class VNAApp(App):
                 pass
         return "S11"
 
-    def _set_active_tool(self, tool_name: str) -> None:
-        """Toggle a tool on/off; update button variants and rebuild params."""
-        if self.settings.tools_active_tool == tool_name:
-            self.settings.tools_active_tool = ""
-        else:
-            self.settings.tools_active_tool = tool_name
-
+    def _apply_tool_ui(self) -> None:
+        """Sync button variants and params to the current tools_active_tool value."""
         active = self.settings.tools_active_tool
         try:
             self.query_one("#btn_tool_measure", Button).variant = (
@@ -3410,8 +3547,15 @@ class VNAApp(App):
             )
         except Exception:
             pass
-
         self.call_after_refresh(self._rebuild_tools_params)
+
+    def _set_active_tool(self, tool_name: str) -> None:
+        """Toggle a tool on/off; update button variants and rebuild params."""
+        if self.settings.tools_active_tool == tool_name:
+            self.settings.tools_active_tool = ""
+        else:
+            self.settings.tools_active_tool = tool_name
+        self._apply_tool_ui()
         if self.last_measurement is not None:
             self.call_after_refresh(self._refresh_tools_plot)
 
