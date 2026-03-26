@@ -62,7 +62,7 @@ class AppSettings:
     # Tools tab settings
     tools_plot_type: str = "magnitude"  # "magnitude" | "phase" | "phase_raw"
     tools_trace: str = "S11"  # "S11" | "S21" | "S12" | "S22"
-    tools_active_tool: str = ""  # "" | "measure" | "distortion"
+    tools_active_tool: str = ""  # "" | "cursor" | "distortion"
     cursor_marker_style: str = "▼"  # "▼" | "✕" | "○"
 
     def __post_init__(self):

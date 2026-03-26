@@ -1569,17 +1569,17 @@ class VNAApp(App):
         dock: bottom;
         width: 100%;
         height: auto;
-        margin: 0 1 1 1;
-        padding: 0 1;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
+        margin: 0;
+        padding: 0;
+        border: none;
     }
 
     #action_bar {
         width: 100%;
         height: auto;
         align: right middle;
+        background: $boost;
+        padding: 0 1 1 1;
     }
 
     #progress_container {
@@ -1640,6 +1640,9 @@ class VNAApp(App):
         width: auto;
         min-width: 16;
         margin: 0 0 0 1;
+        height: 2;
+        border: none;
+        padding: 0 2;
     }
 
     .spacer {
@@ -1651,7 +1654,7 @@ class VNAApp(App):
         border: solid $primary;
         border-title-color: $accent;
         border-title-style: bold;
-        margin: 1 0;
+        margin: 1 0 0 0;
     }
 
 
@@ -1662,6 +1665,12 @@ class VNAApp(App):
 
     TabbedContent {
         height: 100%;
+    }
+
+    #footer_separator {
+        dock: bottom;
+        height: 1;
+        background: $secondary;
     }
 
     .log-info {
@@ -1715,7 +1724,7 @@ class VNAApp(App):
         padding: 0;
     }
 
-    #tools_plot_placeholder {
+    #tools_plot_placeholder, #results_plot_placeholder {
         padding: 1 1;
         content-align: center middle;
         width: 100%;
@@ -1727,9 +1736,19 @@ class VNAApp(App):
         margin: 0;
     }
 
-    #tools_tool_panel {
+    #tools_tool_panel, #output_file_container {
         dock: bottom;
         margin-bottom: 0;
+        height: 3;
+        border: none;
+        padding-bottom: 1;
+    }
+
+
+    #tools_tool_panel Button, #output_file_container Button {
+        height: 2;
+        border: none;
+        padding: 0 2;
     }
 
     #tools_tool_panel .button-group {
@@ -1857,7 +1876,7 @@ class VNAApp(App):
 
         with TabbedContent(id="content"):
             # Measurement Tab
-            with TabPane("Measurement", id="tab_measure"):
+            with TabPane("Setup", id="tab_measure"):
                 with VerticalScroll():
                     # Connection Settings
                     with Container(classes="panel") as panel:
@@ -2027,43 +2046,46 @@ class VNAApp(App):
                             )
                             yield Static("", classes="col-check")
 
-            # Log Tab
-            with TabPane("Log", id="tab_log"):
-                # Log filters
-                with Container(classes="panel") as panel:
-                    panel.border_title = "Filter"
-                    with Horizontal(classes="filter-row"):
-                        yield Checkbox("↑ TX", id="check_log_tx", value=True)
-                        yield Checkbox("↓ RX", id="check_log_rx", value=True)
-                        yield Checkbox("i Info", id="check_log_info", value=True)
-                        yield Checkbox("⋯ Busy", id="check_log_progress", value=True)
-                        yield Checkbox("✓ Good", id="check_log_success", value=True)
-                        yield Checkbox("✗ Bad", id="check_log_error", value=True)
-                        yield Static("", classes="filter-spacer")
-                        yield Checkbox(
-                            "• Debug",
-                            id="check_log_debug",
-                            value=False,
-                            classes="secondary-filter",
+            # Measurement Tab
+            with TabPane("Measurement", id="tab_results"):
+                # Output File panel — docked to bottom
+                with Container(id="output_file_container", classes="panel") as panel:
+                    panel.border_title = "Output"
+                    with Horizontal(classes="plot-controls"):
+                        yield Static(
+                            "No file loaded", id="output_file_label", markup=True
                         )
-                        yield Checkbox(
-                            "~ Poll",
-                            id="check_log_poll",
-                            value=False,
-                            classes="secondary-filter",
+                        yield Static(classes="spacer")
+                        yield Button(
+                            "📂\nShow",
+                            id="btn_open_output",
+                            variant="primary",
+                            disabled=True,
                         )
-                log_area = RichLog(
-                    id="log_content", markup=True, highlight=False, wrap=False
-                )
-                log_area.border_title = "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
-                yield log_area
-
-            # Results Tab
-            with TabPane("Results", id="tab_results"):
+                        yield Button(
+                            "◐\nPNG",
+                            id="btn_export_png",
+                            variant="success",
+                            disabled=True,
+                        )
+                        yield Button(
+                            "◇\nSVG",
+                            id="btn_export_svg",
+                            variant="success",
+                            disabled=True,
+                        )
                 with VerticalScroll():
-                    # Plot parameter selection
-                    with Container(classes="panel") as panel:
+                    # Plot container (results/graph)
+                    with Container(id="results_container", classes="panel") as panel:
                         panel.border_title = "Plot"
+                        yield Static(
+                            "[dim]No measurements yet.[/dim]",
+                            id="results_plot_placeholder",
+                            markup=True,
+                        )
+                    # Options panel (plot parameter selection)
+                    with Container(classes="panel") as panel:
+                        panel.border_title = "Options"
                         with Horizontal(classes="plot-controls"):
                             yield Label("Type:")
                             yield Select(
@@ -2131,38 +2153,6 @@ class VNAApp(App):
                                 id="btn_apply_limits",
                                 variant="primary",
                             )
-                    # Results container
-                    with Container(id="results_container", classes="panel") as panel:
-                        panel.border_title = "Results"
-                        yield Static("No measurements yet.", markup=True)
-                    # Output File panel
-                    with Container(
-                        id="output_file_container", classes="panel"
-                    ) as panel:
-                        panel.border_title = "Output File"
-                        with Horizontal(classes="plot-controls"):
-                            yield Static(
-                                "No file loaded", id="output_file_label", markup=True
-                            )
-                            yield Static(classes="spacer")
-                            yield Button(
-                                "📂 Show",
-                                id="btn_open_output",
-                                variant="primary",
-                                disabled=True,
-                            )
-                            yield Button(
-                                "◐ PNG",
-                                id="btn_export_png",
-                                variant="success",
-                                disabled=True,
-                            )
-                            yield Button(
-                                "◇ SVG",
-                                id="btn_export_svg",
-                                variant="success",
-                                disabled=True,
-                            )
 
             # Tools Tab
             with TabPane("Tools", id="tab_tools"):
@@ -2171,14 +2161,14 @@ class VNAApp(App):
                     panel.border_title = "Tool"
                     with Horizontal(classes="button-group"):
                         yield Button(
-                            "⊙ Measure",
+                            "⊙\nCursor",
                             id="btn_tool_measure",
-                            variant="default",
+                            variant="primary",
                         )
                         yield Button(
-                            "⌇ Distortion",
+                            "⌇\nDistortion",
                             id="btn_tool_distortion",
-                            variant="default",
+                            variant="primary",
                         )
                 with VerticalScroll():
                     # Plot frame
@@ -2249,25 +2239,57 @@ class VNAApp(App):
                                 markup=True,
                             )
 
+            # Log Tab
+            with TabPane("Log", id="tab_log"):
+                # Log filters
+                with Container(classes="panel") as panel:
+                    panel.border_title = "Filter"
+                    with Horizontal(classes="filter-row"):
+                        yield Checkbox("↑ TX", id="check_log_tx", value=True)
+                        yield Checkbox("↓ RX", id="check_log_rx", value=True)
+                        yield Checkbox("i Info", id="check_log_info", value=True)
+                        yield Checkbox("⋯ Busy", id="check_log_progress", value=True)
+                        yield Checkbox("✓ Good", id="check_log_success", value=True)
+                        yield Checkbox("✗ Bad", id="check_log_error", value=True)
+                        yield Static("", classes="filter-spacer")
+                        yield Checkbox(
+                            "• Debug",
+                            id="check_log_debug",
+                            value=False,
+                            classes="secondary-filter",
+                        )
+                        yield Checkbox(
+                            "~ Poll",
+                            id="check_log_poll",
+                            value=False,
+                            classes="secondary-filter",
+                        )
+                log_area = RichLog(
+                    id="log_content", markup=True, highlight=False, wrap=False
+                )
+                log_area.border_title = "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
+                yield log_area
+
+        yield Static("", id="footer_separator")
+
         # Controls panel with progress bar (left) and buttons (right)
-        with Container(id="controls_panel") as controls:
-            controls.border_title = "Controls"
+        with Container(id="controls_panel"):
             with Horizontal(id="action_bar"):
                 with Vertical(id="progress_container"):
                     yield Label("Disconnected", id="progress_label")
                     yield ProgressBar(id="progress_bar")
-                yield Button("📡 Connect", id="btn_connect", variant="primary")
+                yield Button("📡\nConnect", id="btn_connect", variant="primary")
                 yield Button(
-                    "🔍 Read Parameters",
+                    "🔍\nRead Parameters",
                     id="btn_read_params",
                     variant="default",
                     disabled=True,
                 )
                 yield Button(
-                    "📊 Measure", id="btn_measure", variant="success", disabled=True
+                    "📊\nMeasure", id="btn_measure", variant="success", disabled=True
                 )
                 yield Button(
-                    "📁 Import File",
+                    "📁\nImport File",
                     id="btn_import_results",
                     variant="warning",
                 )
@@ -2748,10 +2770,10 @@ class VNAApp(App):
         """Update connect button label based on connection state."""
         btn = self.query_one("#btn_connect", Button)
         if self.connected:
-            btn.label = "🔌 Disconnect"
+            btn.label = "🔌\nDisconnect"
             btn.variant = "error"
         else:
-            btn.label = "📡 Connect"
+            btn.label = "📡\nConnect"
             btn.variant = "primary"
 
     def action_copy_log(self) -> None:
@@ -3381,10 +3403,10 @@ class VNAApp(App):
         active = self.settings.tools_active_tool
         try:
             self.query_one("#btn_tool_measure", Button).variant = (
-                "success" if active == "measure" else "default"
+                "success" if active == "cursor" else "primary"
             )
             self.query_one("#btn_tool_distortion", Button).variant = (
-                "success" if active == "distortion" else "default"
+                "success" if active == "distortion" else "primary"
             )
         except Exception:
             pass
@@ -3409,7 +3431,7 @@ class VNAApp(App):
             else "MHz"
         )
 
-        if active in ("measure", "distortion"):
+        if active in ("cursor", "distortion"):
             cursor1_row = Horizontal(classes="plot-controls")
             cursor2_row = Horizontal(classes="plot-controls")
             await container.mount(cursor1_row)
@@ -3531,7 +3553,7 @@ class VNAApp(App):
             )
             plt_term.ylim(auto_y_min, auto_y_max)
 
-            if active_tool in ("measure", "distortion"):
+            if active_tool in ("cursor", "distortion"):
                 if cursor1_hz is not None:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
                     c1_mhz = cursor1_hz / multiplier * (multiplier / 1e6)
@@ -3604,7 +3626,7 @@ class VNAApp(App):
             ax.plot(freq_mhz, data, label=trace, color=trace_color_hex, linewidth=1.5)
             ax.set_ylim(auto_y_min, auto_y_max)
 
-            if active_tool in ("measure", "distortion"):
+            if active_tool in ("cursor", "distortion"):
                 if cursor1_hz is not None:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
                     c1_mhz = cursor1_hz / 1e6
@@ -3755,7 +3777,7 @@ class VNAApp(App):
         except Exception:
             plot_type = "magnitude"
 
-        if active == "measure":
+        if active == "cursor":
             result = MeasureTool().compute(
                 freqs,
                 sparams,
@@ -3892,8 +3914,8 @@ class VNAApp(App):
 
     @on(Button.Pressed, "#btn_tool_measure")
     def handle_tool_measure_pressed(self) -> None:
-        """Toggle the Measure cursor tool."""
-        self._set_active_tool("measure")
+        """Toggle the Cursor tool."""
+        self._set_active_tool("cursor")
 
     @on(Button.Pressed, "#btn_tool_distortion")
     def handle_tool_distortion_pressed(self) -> None:
