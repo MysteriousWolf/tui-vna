@@ -21,7 +21,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
 from rich.markup import escape as rich_escape
-from rich.table import Table
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -53,6 +52,7 @@ from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
 from .tools import DistortionTool, MeasureTool
+from .tools.distortion import COMPONENT_NAMES as _DISTORTION_COMPONENT_NAMES
 from .utils import TouchstoneExporter
 from .utils.update_checker import (
     fetch_test_update_data,
@@ -108,6 +108,32 @@ SPARAM_FALLBACK_COLORS = {
 }
 TRACE_COLOR_DEFAULT = "#ffffff"
 
+# Fixed hue-wheel palette for distortion overlays — guaranteed distinct regardless of theme.
+DISTORTION_OVERLAY_COLORS: list[str] = [
+    "#888888",  # n=0 constant  (~0° sat, neutral gray)
+    "#cc8800",  # n=1 linear    (~45°,  amber)
+    "#22aa44",  # n=2 parabolic (~135°, green)
+    "#cc2233",  # n=3 cubic     (~350°, red)
+    "#00aacc",  # n=4 quartic   (~190°, cyan)
+    "#7733cc",  # n=5 quintic   (~275°, violet)
+]
+_DISTORTION_OVERLAY_STYLES: list = [
+    "-",
+    "--",
+    "-.",
+    ":",
+    (0, (5, 2)),
+    (0, (3, 1, 1, 1)),
+]
+_DISTORTION_OVERLAY_LABELS: list[str] = [
+    "constant",
+    "linear",
+    "parabolic",
+    "cubic",
+    "quartic",
+    "quintic",
+]
+
 
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     """Convert a hex color string to an (R, G, B) tuple."""
@@ -150,6 +176,29 @@ def _get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
         except (ValueError, IndexError):
             traces_rgb[param] = (255, 255, 255)
 
+    def _resolve_color(
+        theme_color: str | None, fallback: str
+    ) -> tuple[str, tuple[int, int, int]]:
+        """Return (hex, rgb) using theme_color if it's a valid hex, else fallback."""
+        if theme_color:
+            try:
+                return theme_color, _hex_to_rgb(theme_color)
+            except (ValueError, IndexError):
+                pass
+        return fallback, _hex_to_rgb(fallback)
+
+    # Distortion overlay colors are fixed — guaranteed distinct across the hue wheel.
+    distortion_overlays = list(DISTORTION_OVERLAY_COLORS)
+    distortion_overlays_rgb = [_hex_to_rgb(h) for h in DISTORTION_OVERLAY_COLORS]
+
+    # Cursor colors: cursor1 = warning, cursor2 = primary (matches CSS .tools-cursor-1/2)
+    cursor1_hex, cursor1_rgb = _resolve_color(
+        theme_vars.get("warning") if theme_vars else None, "#ffa500"
+    )
+    cursor2_hex, cursor2_rgb = _resolve_color(
+        theme_vars.get("primary") if theme_vars else None, "#00d7ff"
+    )
+
     return {
         "traces": traces,
         "traces_rgb": traces_rgb,
@@ -158,6 +207,12 @@ def _get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
         "surface": surface,
         "grid": grid,
         "default_trace": TRACE_COLOR_DEFAULT,
+        "distortion_overlays": distortion_overlays,
+        "distortion_overlays_rgb": distortion_overlays_rgb,
+        "cursor1": cursor1_hex,
+        "cursor1_rgb": cursor1_rgb,
+        "cursor2": cursor2_hex,
+        "cursor2_rgb": cursor2_rgb,
     }
 
 
@@ -2023,7 +2078,17 @@ class VNAApp(App):
         margin: 0;
     }
 
-    #tools_tool_panel, #output_file_container {
+    #tools_scroll {
+        height: 1fr;
+    }
+
+    #tools_tool_panel {
+        height: 3;
+        border: none;
+        margin-bottom: 0;
+    }
+
+    #output_file_container {
         dock: bottom;
         margin-bottom: 0;
         height: 3;
@@ -2056,7 +2121,6 @@ class VNAApp(App):
 
     #tools_results_container {
         align: center middle;
-        link-background-hover: $primary-darken-2;
     }
 
     #tools_params_placeholder {
@@ -2070,6 +2134,10 @@ class VNAApp(App):
         width: auto;
         height: auto;
         content-align: center middle;
+        link-style: none;
+        link-style-hover: none;
+        link-color-hover: $background;
+        link-background-hover: $foreground;
     }
 
     .tools-cursor-1 {
@@ -2078,6 +2146,25 @@ class VNAApp(App):
 
     .tools-cursor-2 {
         color: $primary;
+    }
+
+    .distortion-comp-row {
+        height: 3;
+        border: none;
+        background: transparent;
+        margin: 0;
+        padding: 0;
+        layout: horizontal;
+        align: center middle;
+    }
+
+    .distortion-comp-row Checkbox {
+        height: 1;
+        border: none;
+        background: transparent;
+        padding: 0 1;
+        width: auto;
+        content-align: left middle;
     }
 
     #tools_trace_radioset {
@@ -2149,6 +2236,7 @@ class VNAApp(App):
         self._tools_cursor1_hz: float | None = None
         self._tools_cursor2_hz: float | None = None
         self._tools_resize_timer = None
+        self._tools_input_timer = None  # Timer for debouncing cursor input changes
 
         # Create temporary directory for plot images
         self.plot_temp_dir = Path("/tmp/tui-vna-plots")
@@ -2444,21 +2532,7 @@ class VNAApp(App):
 
             # Tools Tab
             with TabPane("Tools", id="tab_tools"):
-                # Tool selector — docked to bottom of the tab
-                with Container(id="tools_tool_panel", classes="panel") as panel:
-                    panel.border_title = "Tool"
-                    with Horizontal(classes="button-group"):
-                        yield Button(
-                            "⊙\nCursor",
-                            id="btn_tool_measure",
-                            variant="primary",
-                        )
-                        yield Button(
-                            "⌇\nDistortion",
-                            id="btn_tool_distortion",
-                            variant="primary",
-                        )
-                with VerticalScroll():
+                with VerticalScroll(id="tools_scroll"):
                     # Plot frame
                     with Container(id="tools_plot_container", classes="panel") as panel:
                         panel.border_title = "Plot"
@@ -2526,6 +2600,21 @@ class VNAApp(App):
                                 id="tools_results_display",
                                 markup=True,
                             )
+
+                # Tool selector — below the scroll area
+                with Container(id="tools_tool_panel", classes="panel") as panel:
+                    panel.border_title = "Tool"
+                    with Horizontal(classes="button-group"):
+                        yield Button(
+                            "⊙\nCursor",
+                            id="btn_tool_measure",
+                            variant="primary",
+                        )
+                        yield Button(
+                            "⌇\nDistortion",
+                            id="btn_tool_distortion",
+                            variant="primary",
+                        )
 
             # Log Tab
             with TabPane("Log", id="tab_log"):
@@ -3081,6 +3170,11 @@ class VNAApp(App):
         except OSError:
             content = "_Help file not found._"
         self.push_screen(HelpScreen(title, content))
+
+    def action_copy_cell_value(self, value: str) -> None:
+        """Copy a distortion table cell value to the system clipboard."""
+        self.copy_to_clipboard(value)
+        self.notify(f"Copied: {value}", timeout=1.5)
 
     def action_copy_log(self) -> None:
         """Copy visible log entries as plain text to the system clipboard."""
@@ -3723,6 +3817,19 @@ class VNAApp(App):
         if self.last_measurement is not None:
             self.call_after_refresh(self._refresh_tools_plot)
 
+    def _get_distortion_comp_enabled(self) -> list[bool]:
+        """Return a 6-element list of which Legendre component overlays are enabled."""
+        defaults = [False, True, True, False, False, False]
+        result = list(defaults)
+        for n in range(6):
+            try:
+                result[n] = self.query_one(
+                    f"#input_distortion_comp_{n}", Checkbox
+                ).value
+            except Exception:
+                pass
+        return result
+
     async def _rebuild_tools_params(self) -> None:
         """Rebuild the #tools_params_container based on the active tool."""
         try:
@@ -3740,6 +3847,18 @@ class VNAApp(App):
         )
 
         if active in ("cursor", "distortion"):
+            unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+            mult = unit_multipliers.get(freq_unit, 1e6)
+            c1_val = (
+                str(round(self._tools_cursor1_hz / mult, 6))
+                if self._tools_cursor1_hz is not None
+                else ""
+            )
+            c2_val = (
+                str(round(self._tools_cursor2_hz / mult, 6))
+                if self._tools_cursor2_hz is not None
+                else ""
+            )
             cursor1_row = Horizontal(classes="plot-controls")
             cursor2_row = Horizontal(classes="plot-controls")
             await container.mount(cursor1_row)
@@ -3747,6 +3866,7 @@ class VNAApp(App):
             await cursor1_row.mount(
                 Label("Cursor 1:", classes="tools-cursor-1"),
                 Input(
+                    value=c1_val,
                     placeholder=f"Frequency ({freq_unit})",
                     id="input_tools_cursor1",
                 ),
@@ -3754,10 +3874,23 @@ class VNAApp(App):
             await cursor2_row.mount(
                 Label("Cursor 2:", classes="tools-cursor-2"),
                 Input(
+                    value=c2_val,
                     placeholder=f"Frequency ({freq_unit})",
                     id="input_tools_cursor2",
                 ),
             )
+            if active == "distortion":
+                comp_row = Horizontal(classes="distortion-comp-row")
+                await container.mount(comp_row)
+                for n in range(6):
+                    await comp_row.mount(
+                        Checkbox(
+                            _DISTORTION_COMPONENT_NAMES[n],
+                            value=(n in (1, 2)),
+                            id=f"input_distortion_comp_{n}",
+                            classes="distortion-comp-check",
+                        )
+                    )
         else:
             await container.mount(
                 Static(
@@ -3772,6 +3905,11 @@ class VNAApp(App):
         if self.last_measurement is not None:
             await self._refresh_tools_plot()
 
+    async def _delayed_tools_refresh(self) -> None:
+        """Debounced handler: refresh tools plot then run computation."""
+        await self._refresh_tools_plot()
+        self._run_tools_computation()
+
     async def _refresh_tools_plot(self) -> None:
         """Render the tools-tab plot for the selected single trace with cursor markers."""
         if self.last_measurement is None:
@@ -3781,8 +3919,6 @@ class VNAApp(App):
             container = self.query_one("#tools_plot_container", Container)
         except Exception:
             return
-
-        await container.remove_children()
 
         freqs = self.last_measurement["freqs"]
         sparams = self.last_measurement["sparams"]
@@ -3798,6 +3934,7 @@ class VNAApp(App):
             plot_type = "magnitude"
 
         if trace not in sparams:
+            await container.remove_children()
             await container.mount(
                 Static(
                     f"[yellow]Trace {trace} not available in current measurement.[/yellow]",
@@ -3833,10 +3970,10 @@ class VNAApp(App):
         active_tool = self.settings.tools_active_tool
         marker_symbol = self.settings.cursor_marker_style
 
-        cursor1_rgb = (255, 165, 0)
-        cursor2_rgb = (0, 215, 255)
-        cursor1_hex = "#ffa500"
-        cursor2_hex = "#00d7ff"
+        cursor1_hex = plot_colors["cursor1"]
+        cursor2_hex = plot_colors["cursor2"]
+        cursor1_rgb = plot_colors["cursor1_rgb"]
+        cursor2_rgb = plot_colors["cursor2_rgb"]
 
         # Map Unicode marker to matplotlib marker code
         mpl_markers = {"▼": "v", "✕": "x", "○": "o"}
@@ -3847,8 +3984,17 @@ class VNAApp(App):
         if plot_backend == "terminal":
             from textual_plotext import PlotextPlot
 
-            pw = PlotextPlot()
-            await container.mount(pw)
+            # Reuse an existing PlotextPlot to avoid a blank-container flash
+            existing = container.query(PlotextPlot)
+            if existing:
+                pw = existing.first()
+                for child in list(container.children):
+                    if child is not pw:
+                        await child.remove()
+            else:
+                await container.remove_children()
+                pw = PlotextPlot()
+                await container.mount(pw)
             plt_term = pw.plt
             plt_term.clf()
 
@@ -3895,20 +4041,30 @@ class VNAApp(App):
                     and cursor1_hz is not None
                     and cursor2_hz is not None
                 ):
-                    v1 = float(np.interp(cursor1_hz, freqs, data))
-                    v2 = float(np.interp(cursor2_hz, freqs, data))
-                    x1 = cursor1_hz / 1e6
-                    x2 = cursor2_hz / 1e6
-                    if abs(x2 - x1) > 1e-12:
-                        slope = (v2 - v1) / (x2 - x1)
-                        line_y = [v1 + slope * (f - x1) for f in freq_mhz.tolist()]
-                        plt_term.plot(
-                            freq_mhz.tolist(),
-                            line_y,
-                            label="linear",
-                            marker=".",
-                            color=(150, 150, 150),
+                    _dist = DistortionTool().compute(
+                        freqs, sparams, trace, plot_type, cursor1_hz, cursor2_hz
+                    )
+                    if _dist.extra:
+                        _ex = _dist.extra
+                        _coeffs = _ex["coeffs"]
+                        _x = np.array(_ex["x_norm"])
+                        _f_band = (
+                            np.array(_ex["f_band_hz"]) / multiplier * (multiplier / 1e6)
                         )
+                        _comp_enabled = self._get_distortion_comp_enabled()
+                        _ov_rgb = plot_colors["distortion_overlays_rgb"]
+                        for _n in range(6):
+                            if not _comp_enabled[_n]:
+                                continue
+                            _cum = np.zeros(_n + 1)
+                            _cum[:] = _coeffs[: _n + 1]
+                            _cum_y = np.polynomial.legendre.legval(_x, _cum).tolist()
+                            plt_term.plot(
+                                _f_band.tolist(),
+                                _cum_y,
+                                marker=".",
+                                color=_ov_rgb[_n],
+                            )
 
             plt_term.title(plot_title)
             plt_term.xlabel(f"Frequency ({freq_unit})")
@@ -3927,9 +4083,8 @@ class VNAApp(App):
                 figsize=(fixed_width_px / dpi, fixed_height_px / dpi), dpi=dpi
             )
             fg = plot_colors["fg"]
-            bg = plot_colors["bg"]
-            fig.patch.set_facecolor(bg)
-            ax.set_facecolor(bg)
+            fig.patch.set_alpha(0.0)
+            ax.set_facecolor("none")
 
             ax.plot(freq_mhz, data, label=trace, color=trace_color_hex, linewidth=1.5)
             ax.set_ylim(auto_y_min, auto_y_max)
@@ -3986,49 +4141,69 @@ class VNAApp(App):
                     and cursor1_hz is not None
                     and cursor2_hz is not None
                 ):
-                    v1 = float(np.interp(cursor1_hz, freqs, data))
-                    v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c1_mhz = cursor1_hz / 1e6
-                    c2_mhz = cursor2_hz / 1e6
-                    if abs(c2_mhz - c1_mhz) > 1e-12:
-                        try:
-                            ax.axline(
-                                (c1_mhz, v1),
-                                (c2_mhz, v2),
-                                color="#888888",
-                                linestyle=":",
-                                linewidth=1.2,
-                                label="linear",
-                            )
-                        except AttributeError:
-                            # matplotlib < 3.3 fallback
-                            slope = (v2 - v1) / (c2_mhz - c1_mhz)
-                            xmin, xmax = freq_mhz[0], freq_mhz[-1]
+                    _dist = DistortionTool().compute(
+                        freqs, sparams, trace, plot_type, cursor1_hz, cursor2_hz
+                    )
+                    if _dist.extra:
+                        _ex = _dist.extra
+                        _coeffs = _ex["coeffs"]
+                        _x = np.array(_ex["x_norm"])
+                        _f_band_mhz = np.array(_ex["f_band_hz"]) / 1e6
+                        _c0 = _coeffs[0]
+                        _f_lo_mhz = min(cursor1_hz, cursor2_hz) / 1e6
+                        _f_hi_mhz = max(cursor1_hz, cursor2_hz) / 1e6
+                        # Shade the selected band
+                        ax.axvspan(
+                            _f_lo_mhz,
+                            _f_hi_mhz,
+                            alpha=0.08,
+                            color=fg,
+                            zorder=0,
+                        )
+                        _comp_enabled = self._get_distortion_comp_enabled()
+                        _ov_hex = plot_colors["distortion_overlays"]
+                        for _n in range(6):
+                            if not _comp_enabled[_n]:
+                                continue
+                            _cum = np.zeros(_n + 1)
+                            _cum[:] = _coeffs[: _n + 1]
+                            _cum_y = np.polynomial.legendre.legval(_x, _cum)
                             ax.plot(
-                                [xmin, xmax],
-                                [
-                                    v1 + slope * (xmin - c1_mhz),
-                                    v1 + slope * (xmax - c1_mhz),
-                                ],
-                                color="#888888",
-                                linestyle=":",
-                                linewidth=1.2,
-                                label="linear",
+                                _f_band_mhz,
+                                _cum_y,
+                                color=_ov_hex[_n],
+                                linestyle=_DISTORTION_OVERLAY_STYLES[_n],
+                                linewidth=1.5,
+                                label=_DISTORTION_OVERLAY_LABELS[_n],
+                                zorder=4,
                             )
 
-            ax.set_xlabel(f"Frequency ({freq_unit})", color=fg)
-            ax.set_ylabel(y_label, color=fg)
-            ax.set_title(plot_title, color=fg)
-            ax.tick_params(colors=fg)
-            ax.grid(True, alpha=0.2, color=plot_colors["grid"])
-            legend = ax.legend(edgecolor=plot_colors["grid"])
-            for text in legend.get_texts():
-                text.set_color(fg)
+            _font_family, _base_size = _get_terminal_font()
+            _base_size = _base_size or 10.0
+            ax.set_xlabel(f"Frequency ({freq_unit})", color=fg, fontsize=_base_size)
+            ax.set_ylabel(y_label, color=fg, fontsize=_base_size)
+            ax.set_title(plot_title, color=fg, fontsize=_base_size * 1.2, pad=15)
+            ax.tick_params(colors=fg, labelsize=_base_size * 0.85)
+            ax.grid(
+                True, alpha=0.2, color=plot_colors["grid"], linestyle="-", linewidth=0.5
+            )
+            legend = ax.legend(
+                edgecolor=plot_colors["grid"],
+                labelcolor=fg,
+                fontsize=_base_size * 0.9,
+            )
+            legend.get_frame().set_alpha(1.0)
+            legend.get_frame().set_facecolor("none")
             for spine in ax.spines.values():
                 spine.set_edgecolor(plot_colors["grid"])
+                spine.set_linewidth(1)
             plt.tight_layout()
             plt.savefig(
-                plot_file, dpi=dpi, facecolor=bg, edgecolor="none", bbox_inches="tight"
+                plot_file,
+                dpi=dpi,
+                facecolor="none",
+                edgecolor="none",
+                bbox_inches="tight",
             )
             plt.close(fig)
 
@@ -4044,12 +4219,17 @@ class VNAApp(App):
                     else:
                         img_widget.styles.width = 120
                         img_widget.styles.height = 60
+                    # Mount new widget first, then remove stale ones to avoid blank flash
                     await container.mount(img_widget)
+                    for child in list(container.children[:-1]):
+                        await child.remove()
                 except Exception as e:
+                    await container.remove_children()
                     await container.mount(
                         Static(f"[red]Image display error: {e}[/red]", markup=True)
                     )
             elif not TEXTUAL_IMAGE_AVAILABLE:
+                await container.remove_children()
                 await container.mount(
                     Static(
                         f"[dim]Plot saved to: {plot_file}[/dim]",
@@ -4057,6 +4237,7 @@ class VNAApp(App):
                     )
                 )
             else:
+                await container.remove_children()
                 await container.mount(
                     Static("[red]Could not generate tools plot.[/red]", markup=True)
                 )
@@ -4097,30 +4278,42 @@ class VNAApp(App):
             if result.cursor1_value is None and result.cursor2_value is None:
                 display.update("[dim]Enter cursor frequencies above.[/dim]")
                 return
-            t = Table(box=None, padding=(0, 1, 0, 0), show_header=True, expand=False)
-            t.add_column("", style="dim", no_wrap=True)
-            t.add_column(f"Freq ({freq_unit})", justify="right", no_wrap=True)
-            t.add_column(result.unit_label, justify="right", no_wrap=True)
+            _pc = _get_plot_colors(self.get_css_variables())
+            c1col = _pc["cursor1"]
+            c2col = _pc["cursor2"]
+            labelw, valw = 8, 9
+            hdr = (
+                f"[dim]{'':>{labelw}}  "
+                f"{'Freq ('+freq_unit+')':>{valw}}  "
+                f"{result.unit_label:>{valw}}[/dim]"
+            )
+            sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
+            lines = [hdr, sep]
             if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
-                f1 = result.cursor1_freq_hz / multiplier
-                t.add_row(
-                    "[#ffa500]Cursor 1[/#ffa500]",
-                    f"[#ffa500]{f1:.4f}[/#ffa500]",
-                    f"[#ffa500]{result.cursor1_value:.4f}[/#ffa500]",
+                f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
+                v1_raw = f"{result.cursor1_value:.4f}"
+                lines.append(
+                    f"[bold {c1col}]{'Cursor 1':>{labelw}}[/]  "
+                    f"[@click='app.copy_cell_value(\"{f1_raw}\")']{f1_raw:>{valw}}[/]  "
+                    f"[@click='app.copy_cell_value(\"{v1_raw}\")']{v1_raw:>{valw}}[/]"
                 )
             if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
-                f2 = result.cursor2_freq_hz / multiplier
-                t.add_row(
-                    "[#00d7ff]Cursor 2[/#00d7ff]",
-                    f"[#00d7ff]{f2:.4f}[/#00d7ff]",
-                    f"[#00d7ff]{result.cursor2_value:.4f}[/#00d7ff]",
+                f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
+                v2_raw = f"{result.cursor2_value:.4f}"
+                lines.append(
+                    f"[bold {c2col}]{'Cursor 2':>{labelw}}[/]  "
+                    f"[@click='app.copy_cell_value(\"{f2_raw}\")']{f2_raw:>{valw}}[/]  "
+                    f"[@click='app.copy_cell_value(\"{v2_raw}\")']{v2_raw:>{valw}}[/]"
                 )
             if result.delta_value is not None:
-                freq_delta = (
-                    abs(result.cursor2_freq_hz - result.cursor1_freq_hz) / multiplier
+                fd_raw = f"{abs(result.cursor2_freq_hz - result.cursor1_freq_hz) / multiplier:.4f}"
+                dv_raw = f"{result.delta_value:.4f}"
+                lines.append(
+                    f"[dim]{'Δ':>{labelw}}[/dim]  "
+                    f"[@click='app.copy_cell_value(\"{fd_raw}\")']{fd_raw:>{valw}}[/]  "
+                    f"[@click='app.copy_cell_value(\"{dv_raw}\")']{dv_raw:>{valw}}[/]"
                 )
-                t.add_row("Δ", f"{freq_delta:.4f}", f"{result.delta_value:.4f}")
-            display.update(t)
+            display.update("\n".join(lines))
 
         elif active == "distortion":
             result = DistortionTool().compute(
@@ -4131,14 +4324,42 @@ class VNAApp(App):
                 self._tools_cursor1_hz,
                 self._tools_cursor2_hz,
             )
-            if result.delta_value is None:
+            if not result.extra:
                 display.update("[dim]Enter both cursor frequencies above.[/dim]")
                 return
-            t = Table(box=None, padding=(0, 1, 0, 0), show_header=False, expand=False)
-            t.add_column("", style="dim", no_wrap=True)
-            t.add_column(result.unit_label, justify="right", no_wrap=True)
-            t.add_row("Linear distortion", f"[bold]{result.delta_value:.4f}[/bold]")
-            display.update(t)
+            ex = result.extra
+            coeffs = ex["coeffs"]
+            delta_y = ex["delta_y"]
+            unit = result.unit_label
+            _ov_hex = _get_plot_colors(self.get_css_variables())["distortion_overlays"]
+            _comp_enabled = self._get_distortion_comp_enabled()
+            nw, namew, valw = 1, 10, 9
+            hdr = (
+                f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
+                f"{'cₙ ('+unit+')':>{valw}}  {'Δyₙ ('+unit+')':>{valw}}[/dim]"
+            )
+            sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
+            lines = [hdr, sep]
+            for n, name in enumerate(_DISTORTION_COMPONENT_NAMES):
+                c_raw = f"{coeffs[n]:.4f}"
+                color = _ov_hex[n] if _comp_enabled[n] else None
+                name_cell = (
+                    f"[bold {color}]{name:<{namew}}[/]"
+                    if color
+                    else f"[dim]{name:<{namew}}[/dim]"
+                )
+                c_cell = (
+                    f"[@click='app.copy_cell_value(\"{c_raw}\")']{c_raw:>{valw}}[/]"
+                )
+                if n == 0:
+                    dy_cell = f"{'—':>{valw}}"
+                else:
+                    dy_raw = f"{delta_y[n]:.4f}"
+                    dy_cell = f"[@click='app.copy_cell_value(\"{dy_raw}\")']{dy_raw:>{valw}}[/]"
+                lines.append(
+                    f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}"
+                )
+            display.update("\n".join(lines))
 
     def _update_output_path_label(self) -> None:
         """Update the output path label with intelligent truncation based on available width."""
@@ -4231,8 +4452,8 @@ class VNAApp(App):
         self._set_active_tool("distortion")
 
     @on(Input.Changed, "#input_tools_cursor1, #input_tools_cursor2")
-    async def handle_tools_cursor_change(self, event: Input.Changed) -> None:
-        """Parse cursor frequency inputs, then refresh plot and results."""
+    def handle_tools_cursor_change(self, event: Input.Changed) -> None:
+        """Parse cursor frequency inputs, then debounce-refresh plot and results."""
         if self.last_measurement is None:
             return
 
@@ -4250,8 +4471,19 @@ class VNAApp(App):
         self._tools_cursor1_hz = _parse("#input_tools_cursor1")
         self._tools_cursor2_hz = _parse("#input_tools_cursor2")
 
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+        # Debounce: only redraw after 200 ms of no further input changes
+        if self._tools_input_timer is not None:
+            self._tools_input_timer.stop()
+        self._tools_input_timer = self.set_timer(0.2, self._delayed_tools_refresh)
+
+    @on(Checkbox.Changed, ".distortion-comp-check")
+    def handle_distortion_comp_change(self, event: Checkbox.Changed) -> None:
+        """Refresh tools plot when a distortion component overlay checkbox changes."""
+        if self.last_measurement is None:
+            return
+        if self._tools_input_timer is not None:
+            self._tools_input_timer.stop()
+        self._tools_input_timer = self.set_timer(0.2, self._delayed_tools_refresh)
 
     @on(RadioSet.Changed, "#tools_trace_radioset")
     async def handle_tools_trace_changed(self, event: RadioSet.Changed) -> None:
@@ -4545,8 +4777,8 @@ class VNAApp(App):
                 # Fixed high-resolution dimensions for quality
                 # Target: 1080p (1920x1080) at high DPI
                 # This gives good quality without excessive memory usage
-                render_scale = 2
-                dpi = 150 * render_scale  # 300 DPI
+                render_scale = 1
+                dpi = 150 * render_scale  # 150 DPI
 
                 # For Smith charts, use square dimensions
                 if plot_type == "smith":
