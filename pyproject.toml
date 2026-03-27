@@ -23,7 +23,7 @@ readme = "README.md"
 license = {text = "MIT"}
 
 [project.scripts]
-tina = "tina.main:main"
+tina = "tina._loader:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -6,6 +6,6 @@ while preserving its relative imports.
 """
 
 if __name__ == "__main__":
-    from tina.main import main
+    from tina._loader import main
 
     main()
