@@ -14,6 +14,7 @@ dependencies = [
     "matplotlib>=3.7.0",
     "scikit-rf>=0.30.0",
     "packaging>=21.0",
+    "pylatexenc>=2.10",
 ]
 authors = [
     {name = "tina", email = "tina@example.com"}
