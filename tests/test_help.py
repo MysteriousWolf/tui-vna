@@ -34,11 +34,11 @@ _MOCK_CSS_VARS = {"surface": "#1a1a1a", "foreground": "#ffffff"}
 def _bare_screen() -> HelpScreen:
     """
     Create a HelpScreen instance without running Textual widget initialization.
-    
+
     This allocates the object without invoking HelpScreen.__init__ and initializes
     _internal attributes used by tests: `_title` is set to "Test Help", `_raw_content`
     to an empty string, and `_temp_files` to an empty list.
-    
+
     Returns:
         HelpScreen: A prepared HelpScreen instance suitable for unit tests.
     """
@@ -53,13 +53,13 @@ def _bare_screen() -> HelpScreen:
 def _mock_app(screen: HelpScreen):
     """
     Temporarily patch the given HelpScreen's `app` property to return a mocked app.
-    
+
     Patches `type(screen).app` with a PropertyMock for the duration of the context and yields
     the mocked app whose `get_css_variables()` returns predefined `_MOCK_CSS_VARS`.
-    
+
     Parameters:
         screen (HelpScreen): The HelpScreen instance whose `app` property will be patched.
-    
+
     Yields:
         MagicMock: The mocked app object.
     """
@@ -188,7 +188,7 @@ class TestPixelGraphicsAvailable:
     def test_returns_false_when_auto_is_halfcell(self, monkeypatch):
         """
         Determine that pixel rendering is considered unavailable when the 'auto' renderer is a non-pixel renderer (e.g., halfcell/unicode).
-        
+
         Simulates TEXTUAL_IMAGE_AVAILABLE and mock renderer modules, and asserts _pixel_graphics_available() returns False.
         """
         import src.tina.main as main_mod

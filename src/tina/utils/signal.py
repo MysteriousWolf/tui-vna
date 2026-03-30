@@ -25,14 +25,14 @@ def calculate_plot_range_with_outlier_filtering(
 ) -> tuple[float, float]:
     """
     Compute a plotting range that ignores extreme low/high outliers and adds a safety margin.
-    
+
     Filters the input data by removing the lowest and highest `outlier_percentile` percentiles, uses those percentile values as the core min/max, and expands the range by `safety_margin` fraction of the filtered span. If `data` is empty, returns (0.0, 1.0). If the filtered span is zero, a nonzero span is derived from `min_val` (10% of |min_val|) or set to 1.0 when `min_val` is zero.
-    
+
     Parameters:
         data (np.ndarray): Values to compute the plot range from.
         outlier_percentile (float): Percentage removed from each tail when computing percentiles (e.g., 1.0 ignores the bottom and top 1%).
         safety_margin (float): Fraction of the filtered span to add to both ends of the range (e.g., 0.05 adds 5%).
-    
+
     Returns:
         tuple[float, float]: (min_value, max_value) expanded by the safety margin.
     """
@@ -59,10 +59,10 @@ def calculate_plot_range_with_outlier_filtering(
 def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     """
     Convert a 3- or 6-digit hexadecimal color string (optionally prefixed with '#') into an (R, G, B) integer tuple.
-    
+
     Parameters:
         hex_color (str): Hex color in either "RRGGBB" or shorthand "RGB" form, with or without a leading '#'.
-    
+
     Returns:
         tuple[int, int, int]: `(R, G, B)` where each component is an integer in the range 0–255.
     """

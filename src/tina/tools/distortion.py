@@ -32,12 +32,12 @@ _MIN_BAND_POINTS: int = MAX_ORDER + 2
 def _legendre_pp_range(n: int) -> float:
     """
     Peak-to-peak range of the Legendre polynomial P_n on the interval [-1, 1].
-    
+
     Computed numerically on a dense grid so it works for any non-negative integer order.
-    
+
     Parameters:
         n (int): Legendre polynomial order (0-based).
-    
+
     Returns:
         float: max(P_n(x)) - min(P_n(x)) for x in [-1, 1].
     """
