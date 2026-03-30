@@ -7,6 +7,7 @@ sys.modules when main.py's module-level imports run, making those lookups instan
 
 
 def main() -> None:
+    """Show a startup progress bar while pre-loading heavy dependencies, then launch the app."""
     import sys
 
     # Skip bar for --help/-h (output would be garbled) and --now (CLI mode)

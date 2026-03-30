@@ -1071,6 +1071,7 @@ def _preprocess_inline_latex(text: str) -> str:
         return re.sub(r"\$([^$\n]+?)\$", r"`\1`", text)
 
     def replace_inline(m: re.Match) -> str:
+        """Convert a matched inline LaTeX expression to plain text wrapped in backticks."""
         return f"`{_latex_converter.latex_to_text(m.group(1)).strip()}`"
 
     return re.sub(r"\$([^$\n]+?)\$", replace_inline, text)
@@ -1430,6 +1431,7 @@ class CursorMarkerProvider(Provider):
     """Command palette provider for selecting the cursor marker symbol."""
 
     async def discover(self) -> Hits:
+        """Yield all cursor marker options as command palette hits."""
         for label, value in _CURSOR_MARKER_OPTIONS:
             yield Hit(
                 1.0,
@@ -1439,6 +1441,7 @@ class CursorMarkerProvider(Provider):
             )
 
     async def search(self, query: str) -> Hits:
+        """Yield cursor marker options whose labels match the query string."""
         matcher = self.matcher(query)
         for label, value in _CURSOR_MARKER_OPTIONS:
             score = matcher.match(label)
