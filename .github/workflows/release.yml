@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 jobs:
   test:
@@ -172,6 +173,8 @@ jobs:
         id: ai_summary
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMITS: ${{ steps.changelog.outputs.changelog }}
+          RECAP_COMMITS: ${{ steps.changelog.outputs.recap }}
         run: |
           call_model() {
             local prompt="$1"
@@ -188,7 +191,6 @@ jobs:
 
           BASE_PROMPT="You are writing GitHub release notes for tina, a terminal-based VNA (Vector Network Analyzer) control application. Write a concise summary grouped by theme using bold markdown headers. Be specific about what changed. Skip CI, formatting, documentation-only, and internal tooling commits."
 
-          COMMITS='${{ steps.changelog.outputs.changelog }}'
           SUMMARY=$(call_model "${BASE_PROMPT}
 
 Commits since last release:
@@ -197,7 +199,6 @@ ${COMMITS}")
           echo "${SUMMARY}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          RECAP_COMMITS='${{ steps.changelog.outputs.recap }}'
           if [ -n "$RECAP_COMMITS" ]; then
             RECAP=$(call_model "${BASE_PROMPT}
 
@@ -212,13 +213,13 @@ ${RECAP_COMMITS}")
 
       - name: Compose release body
         id: release_body
+        env:
+          SUMMARY: ${{ steps.ai_summary.outputs.summary }}
+          RECAP: ${{ steps.ai_summary.outputs.recap }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+          PREV_TAG: ${{ steps.changelog.outputs.prev_tag }}
+          BASE_MINOR_TAG: ${{ steps.changelog.outputs.base_minor_tag }}
         run: |
-          SUMMARY='${{ steps.ai_summary.outputs.summary }}'
-          RECAP='${{ steps.ai_summary.outputs.recap }}'
-          CHANGELOG='${{ steps.changelog.outputs.changelog }}'
-          PREV_TAG='${{ steps.changelog.outputs.prev_tag }}'
-          BASE_MINOR_TAG='${{ steps.changelog.outputs.base_minor_tag }}'
-
           {
             echo "body<<EOF"
             if [ -n "$SUMMARY" ]; then
