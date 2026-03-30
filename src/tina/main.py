@@ -2688,11 +2688,12 @@ class VNAApp(App):
                                     options=[
                                         ("Magnitude", "magnitude"),
                                         ("Phase", "phase"),
+                                        ("Phase (raw)", "phase_raw"),
                                     ],
                                     value=(
                                         self.settings.tools_plot_type
                                         if self.settings.tools_plot_type
-                                        in ("magnitude", "phase")
+                                        in ("magnitude", "phase", "phase_raw")
                                         else "magnitude"
                                     ),
                                     id="select_tools_plot_type",
