@@ -2834,7 +2834,7 @@ class VNAApp(App):
 
     def _log_startup(self) -> None:
         """Log startup message after UI is ready."""
-        self.log_message("VNA Control ready. Connect to start.", "info")
+        self.log_message(f"tina v{__version__} ready. Connect to start.", "info")
         # Log detected terminal and font info
         font_info = self.terminal_font
         if self.terminal_font_size:
@@ -3426,7 +3426,11 @@ class VNAApp(App):
 
     def _update_title(self) -> None:
         """Reflect connection and debug mode state in the app title."""
-        base = "tina" if self.connected else "tina - Terminal UI Network Analyzer"
+        base = (
+            "tina"
+            if self.connected
+            else f"tina v{__version__} - Terminal UI Network Analyzer"
+        )
         self.title = f"{base} 🐛" if self._debug_scpi else base
 
     @on(Button.Pressed, "#btn_read_params")
