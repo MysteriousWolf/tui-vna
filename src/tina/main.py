@@ -3626,6 +3626,7 @@ class VNAApp(App):
             # Also refresh tools tab with new data
             await self._refresh_tools_plot()
             self._run_tools_computation()
+            self.call_after_refresh(self._rebuild_tools_params)
 
             self.set_progress("Done", 100)
             self.sub_title = "Measurement complete"
@@ -3692,6 +3693,7 @@ class VNAApp(App):
             # Also refresh tools tab with imported data
             asyncio.create_task(self._refresh_tools_plot())
             self._run_tools_computation()
+            self.call_after_refresh(self._rebuild_tools_params)
 
         except FileNotFoundError as e:
             self.log_message(str(e), "error")
