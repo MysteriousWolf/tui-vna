@@ -53,32 +53,20 @@ Never batch multiple functional units into a single commit.
 
 ### 4. Commit Message Convention
 
-Use [Conventional Commits](https://www.conventionalcommits.org/) with an
-imperative, present-tense subject line (≤ 72 chars):
+Plain imperative sentence, capital first word, no type prefix, ≤ 72 chars:
 
 ```
-<type>: <what changed>
+<Verb> <what changed>
 ```
-
-Common types for this project:
-
-| Type | When to use |
-|---|---|
-| `fix` | Bug fix, guard against bad state, correcting wrong behaviour |
-| `feat` | New user-visible capability (tool, widget, command, driver) |
-| `refactor` | Internal restructure with no behaviour change |
-| `style` | Formatting/lint only (black, ruff auto-fixes) |
-| `docs` | Docstrings, help pages, README |
-| `test` | Test additions or fixes |
-| `chore` | Dependency bumps, build config, CI |
 
 Examples:
 ```
-fix: guard cursor overlays against out-of-band frequencies
-fix: only debounce tools plot resize when Tools tab is active
-feat: add measurement refresh on theme change
-docs: add docstrings to reach 80% coverage threshold
-style: apply black and ruff auto-fixes
+Guard cursor overlays against out-of-band frequencies
+Only debounce tools plot resize when Tools tab is active
+Add measurement refresh on theme change
+Add docstrings to reach coverage threshold
+Fix lint issues
+Improve project structure
 ```
 
 ---
