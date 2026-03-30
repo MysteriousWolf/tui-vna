@@ -3,6 +3,7 @@ tina - Terminal UI Network Analyzer
 """
 
 import asyncio
+import importlib.resources
 import os
 import platform
 import queue
@@ -2682,6 +2683,8 @@ class VNAApp(App):
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
         # Initialize plot type dropdown based on backend
         self._update_plot_type_options()
+        # Apply active tool UI state at startup
+        self._apply_tool_ui()
         # Start worker thread
         self.worker.start()
         # Start message polling
@@ -3164,10 +3167,15 @@ class VNAApp(App):
             self.notify("Activate a tool to see its help.", timeout=2)
             return
         filename, title = help_map[active]
-        help_file = Path(__file__).parent / "help" / filename
         try:
-            content = help_file.read_text(encoding="utf-8")
-        except OSError:
+            # Use importlib.resources to load help files from installed package
+            if sys.version_info >= (3, 9):
+                help_files = importlib.resources.files("tina") / "help"
+                content = (help_files / filename).read_text(encoding="utf-8")
+            else:
+                # Fallback for Python 3.8
+                content = importlib.resources.read_text("tina.help", filename, encoding="utf-8")
+        except (OSError, FileNotFoundError, ModuleNotFoundError):
             content = "_Help file not found._"
         self.push_screen(HelpScreen(title, content))
 
@@ -3815,6 +3823,7 @@ class VNAApp(App):
             self.settings.tools_active_tool = tool_name
         self._apply_tool_ui()
         if self.last_measurement is not None:
+            self._run_tools_computation()
             self.call_after_refresh(self._refresh_tools_plot)
 
     def _get_distortion_comp_enabled(self) -> list[bool]:
@@ -3960,7 +3969,7 @@ class VNAApp(App):
         auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
             data, outlier_percentile=1.0, safety_margin=0.05
         )
-        freq_mhz = freqs / 1e6
+        freq_axis = freqs / multiplier
         plot_colors = _get_plot_colors(self.get_css_variables())
         trace_color_rgb = plot_colors["traces_rgb"].get(trace, (255, 255, 255))
         trace_color_hex = plot_colors["traces"].get(trace, "#ffffff")
@@ -3999,7 +4008,7 @@ class VNAApp(App):
             plt_term.clf()
 
             plt_term.plot(
-                freq_mhz.tolist(),
+                freq_axis.tolist(),
                 data.tolist(),
                 label=trace,
                 marker="braille",
@@ -4010,30 +4019,30 @@ class VNAApp(App):
             if active_tool in ("cursor", "distortion"):
                 if cursor1_hz is not None:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
-                    c1_mhz = cursor1_hz / multiplier * (multiplier / 1e6)
+                    c1_axis = cursor1_hz / multiplier
                     plt_term.plot(
-                        freq_mhz.tolist(),
-                        [v1] * len(freq_mhz),
+                        freq_axis.tolist(),
+                        [v1] * len(freq_axis),
                         marker="·",
                         color=cursor1_rgb,
                     )
-                    plt_term.vline(c1_mhz, color=cursor1_rgb)
+                    plt_term.vline(c1_axis, color=cursor1_rgb)
                     plt_term.scatter(
-                        [c1_mhz], [v1], marker=marker_symbol, color=cursor1_rgb
+                        [c1_axis], [v1], marker=marker_symbol, color=cursor1_rgb
                     )
 
                 if cursor2_hz is not None:
                     v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c2_mhz = cursor2_hz / multiplier * (multiplier / 1e6)
+                    c2_axis = cursor2_hz / multiplier
                     plt_term.plot(
-                        freq_mhz.tolist(),
-                        [v2] * len(freq_mhz),
+                        freq_axis.tolist(),
+                        [v2] * len(freq_axis),
                         marker="·",
                         color=cursor2_rgb,
                     )
-                    plt_term.vline(c2_mhz, color=cursor2_rgb)
+                    plt_term.vline(c2_axis, color=cursor2_rgb)
                     plt_term.scatter(
-                        [c2_mhz], [v2], marker=marker_symbol, color=cursor2_rgb
+                        [c2_axis], [v2], marker=marker_symbol, color=cursor2_rgb
                     )
 
                 if (
@@ -4048,9 +4057,7 @@ class VNAApp(App):
                         _ex = _dist.extra
                         _coeffs = _ex["coeffs"]
                         _x = np.array(_ex["x_norm"])
-                        _f_band = (
-                            np.array(_ex["f_band_hz"]) / multiplier * (multiplier / 1e6)
-                        )
+                        _f_band_axis = np.array(_ex["f_band_hz"]) / multiplier
                         _comp_enabled = self._get_distortion_comp_enabled()
                         _ov_rgb = plot_colors["distortion_overlays_rgb"]
                         for _n in range(6):
@@ -4060,7 +4067,7 @@ class VNAApp(App):
                             _cum[:] = _coeffs[: _n + 1]
                             _cum_y = np.polynomial.legendre.legval(_x, _cum).tolist()
                             plt_term.plot(
-                                _f_band.tolist(),
+                                _f_band_axis.tolist(),
                                 _cum_y,
                                 marker=".",
                                 color=_ov_rgb[_n],
@@ -4086,25 +4093,25 @@ class VNAApp(App):
             fig.patch.set_alpha(0.0)
             ax.set_facecolor("none")
 
-            ax.plot(freq_mhz, data, label=trace, color=trace_color_hex, linewidth=1.5)
+            ax.plot(freq_axis, data, label=trace, color=trace_color_hex, linewidth=1.5)
             ax.set_ylim(auto_y_min, auto_y_max)
 
             if active_tool in ("cursor", "distortion"):
                 if cursor1_hz is not None:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
-                    c1_mhz = cursor1_hz / 1e6
+                    c1_axis = cursor1_hz / multiplier
                     ax.axhline(
                         y=v1, color=cursor1_hex, linestyle=":", linewidth=1, alpha=0.6
                     )
                     ax.axvline(
-                        x=c1_mhz,
+                        x=c1_axis,
                         color=cursor1_hex,
                         linestyle="--",
                         linewidth=1,
                         alpha=0.8,
                     )
                     ax.plot(
-                        [c1_mhz],
+                        [c1_axis],
                         [v1],
                         marker=mpl_marker,
                         color=cursor1_hex,
@@ -4115,19 +4122,19 @@ class VNAApp(App):
 
                 if cursor2_hz is not None:
                     v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c2_mhz = cursor2_hz / 1e6
+                    c2_axis = cursor2_hz / multiplier
                     ax.axhline(
                         y=v2, color=cursor2_hex, linestyle=":", linewidth=1, alpha=0.6
                     )
                     ax.axvline(
-                        x=c2_mhz,
+                        x=c2_axis,
                         color=cursor2_hex,
                         linestyle="--",
                         linewidth=1,
                         alpha=0.8,
                     )
                     ax.plot(
-                        [c2_mhz],
+                        [c2_axis],
                         [v2],
                         marker=mpl_marker,
                         color=cursor2_hex,
@@ -4148,14 +4155,14 @@ class VNAApp(App):
                         _ex = _dist.extra
                         _coeffs = _ex["coeffs"]
                         _x = np.array(_ex["x_norm"])
-                        _f_band_mhz = np.array(_ex["f_band_hz"]) / 1e6
+                        _f_band_axis = np.array(_ex["f_band_hz"]) / multiplier
                         _c0 = _coeffs[0]
-                        _f_lo_mhz = min(cursor1_hz, cursor2_hz) / 1e6
-                        _f_hi_mhz = max(cursor1_hz, cursor2_hz) / 1e6
+                        _f_lo_axis = min(cursor1_hz, cursor2_hz) / multiplier
+                        _f_hi_axis = max(cursor1_hz, cursor2_hz) / multiplier
                         # Shade the selected band
                         ax.axvspan(
-                            _f_lo_mhz,
-                            _f_hi_mhz,
+                            _f_lo_axis,
+                            _f_hi_axis,
                             alpha=0.08,
                             color=fg,
                             zorder=0,
@@ -4169,7 +4176,7 @@ class VNAApp(App):
                             _cum[:] = _coeffs[: _n + 1]
                             _cum_y = np.polynomial.legendre.legval(_x, _cum)
                             ax.plot(
-                                _f_band_mhz,
+                                _f_band_axis,
                                 _cum_y,
                                 color=_ov_hex[_n],
                                 linestyle=_DISTORTION_OVERLAY_STYLES[_n],

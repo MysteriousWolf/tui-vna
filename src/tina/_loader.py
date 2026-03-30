@@ -46,9 +46,10 @@ def main() -> None:
 
         progress.update(task, description="matplotlib")
         import matplotlib as _mpl  # noqa: F401
-        import matplotlib.pyplot as _plt  # noqa: F401
 
         _mpl.use("Agg")
+        import matplotlib.pyplot as _plt  # noqa: F401
+
         progress.advance(task)
 
         progress.update(task, description="scikit-rf")
