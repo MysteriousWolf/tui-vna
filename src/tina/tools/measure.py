@@ -20,6 +20,7 @@ class MeasureTool(BaseTool):
         cursor1_hz: float | None,
         cursor2_hz: float | None,
     ) -> ToolResult:
+        """Read trace values at the cursor frequencies and return their difference."""
         unit_label = "dB" if plot_type == "magnitude" else "°"
 
         if trace not in sparams:
