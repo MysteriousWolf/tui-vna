@@ -229,7 +229,7 @@ ${RECAP_COMMITS}")
             if [ -n "$RECAP" ]; then
               echo "---"
               echo ""
-              echo "**Release series recap** (since ${BASE_MINOR_TAG}):** ${RECAP}"
+              echo "**Release series recap** (since ${BASE_MINOR_TAG}): ${RECAP}"
               echo ""
             fi
             echo "---"
