@@ -15,7 +15,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-DOCS = Path("docs")
+BASE_DIR = Path(__file__).resolve().parent.parent  # repo root
+DOCS = BASE_DIR / "docs"
 
 # ---------------------------------------------------------------------------
 # Sample S-parameter data — 4th-order Butterworth bandpass, 1.5 GHz centre
@@ -159,7 +160,7 @@ async def main() -> None:
             # ── 5. Distortion help popup ─────────────────────────────────────
             from tina.main import HelpScreen
 
-            help_content = Path("src/tina/help/distortion.md").read_text()
+            help_content = (BASE_DIR / "src/tina/help/distortion.md").read_text()
             await app.push_screen(HelpScreen("Distortion Tool Help", help_content))
             await _take(app, pilot, DOCS / "screenshot-help-distortion.svg")
             await pilot.press("escape")

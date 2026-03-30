@@ -41,6 +41,7 @@ def migrate_legacy_config() -> str | None:
 
     try:
         merged: dict = {}
+        parse_failed = False
 
         # Read old settings.json
         old_settings = old_dir / "settings.json"
@@ -51,7 +52,7 @@ def migrate_legacy_config() -> str | None:
                 if isinstance(data, dict):
                     merged.update(data)
             except (OSError, json.JSONDecodeError, ValueError):
-                pass
+                parse_failed = True
 
         # Read old update_state.json and fold into merged dict
         old_state = old_dir / "update_state.json"
@@ -67,7 +68,7 @@ def migrate_legacy_config() -> str | None:
                     if state.get("notified_prerelease"):
                         merged["notified_prerelease"] = state["notified_prerelease"]
             except (OSError, json.JSONDecodeError, ValueError):
-                pass
+                parse_failed = True
 
         # Import here to avoid circular imports at module level
         from .settings import AppSettings, SettingsManager
@@ -87,7 +88,8 @@ def migrate_legacy_config() -> str | None:
         # Migration must never crash the app
         return None
 
-    _try_remove(old_dir)
+    if not parse_failed:
+        _try_remove(old_dir)
     return f"Migrated settings from {old_dir} to {new_dir}"
 
 
