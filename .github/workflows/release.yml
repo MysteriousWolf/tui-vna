@@ -178,7 +178,7 @@ jobs:
         run: |
           call_model() {
             local prompt="$1"
-            curl -sf https://models.inference.ai.azure.com/chat/completions \
+            curl -sf --connect-timeout 10 --max-time 30 https://models.inference.ai.azure.com/chat/completions \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$(jq -n --arg p "$prompt" '{
