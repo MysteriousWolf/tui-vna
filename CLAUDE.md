@@ -82,11 +82,6 @@ Fix lint issues
 Improve project structure
 ```
 
-Always include the co-author trailer:
-```
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-```
-
 ---
 
 ## Toolchain
