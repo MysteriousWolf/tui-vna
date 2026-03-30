@@ -2,10 +2,11 @@
 """Capture startup and feature screenshots of TINA for README documentation.
 
 Generates:
-  docs/screenshot.svg           — startup / disconnected state
-  docs/screenshot-measurement.svg — Measurement tab with plotext plot
-  docs/screenshot-tools.svg     — Tools tab with distortion analysis
-  docs/screenshot-log.svg       — Log tab with sample entries
+  docs/screenshot.svg                  — startup / disconnected state
+  docs/screenshot-measurement.svg      — Measurement tab with plotext plot
+  docs/screenshot-tools.svg            — Tools tab with distortion analysis
+  docs/screenshot-help-distortion.svg  — Distortion help popup
+  docs/screenshot-log.svg              — Log tab with sample entries
 """
 
 import asyncio
@@ -134,17 +135,32 @@ async def main() -> None:
             await app._refresh_results_plot()
             await _take(app, pilot, DOCS / "screenshot-measurement.svg")
 
-            # ── 4. Tools tab — distortion ────────────────────────────────────
+            # ── 4. Tools tab — distortion with populated cursors ─────────────
             app.query_one(TabbedContent).active = "tab_tools"
             app.settings.tools_active_tool = "distortion"
             app.settings.tools_trace = "S21"
             await app._rebuild_tools_params()
+            # Set cursor Hz values for computation
             app._tools_cursor1_hz = CURSOR1_HZ
             app._tools_cursor2_hz = CURSOR2_HZ
+            # Populate the input widgets so the frequency range is visible
+            from textual.widgets import Input
+            app.query_one("#input_tools_cursor1", Input).value = "900"
+            app.query_one("#input_tools_cursor2", Input).value = "2100"
             await app._refresh_tools_plot()
+            app._run_tools_computation()
             await _take(app, pilot, DOCS / "screenshot-tools.svg")
 
-            # ── 5. Log tab ───────────────────────────────────────────────────
+            # ── 5. Distortion help popup ─────────────────────────────────────
+            from tina.main import HelpScreen
+            help_content = (
+                Path("src/tina/help/distortion.md").read_text()
+            )
+            await app.push_screen(HelpScreen("Distortion Tool Help", help_content))
+            await _take(app, pilot, DOCS / "screenshot-help-distortion.svg")
+            await pilot.press("escape")
+
+            # ── 6. Log tab ───────────────────────────────────────────────────
             app.query_one(TabbedContent).active = "tab_log"
             await _take(app, pilot, DOCS / "screenshot-log.svg")
 
