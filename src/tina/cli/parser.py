@@ -49,6 +49,11 @@ Examples:
         action="store_true",
         help="Show update notification popups with sample data (for testing UI layout)",
     )
+    dev_group.add_argument(
+        "--dev",
+        action="store_true",
+        help="Run in developer mode: suppresses post-update welcome popup and skips persisting version acknowledgement",
+    )
 
     # Connection parameters
     conn_group = parser.add_argument_group("connection settings")

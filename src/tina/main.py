@@ -2339,7 +2339,7 @@ class VNAApp(App):
 
     TITLE = "tina - Terminal UI Network Analyzer"
 
-    def __init__(self, test_updates: bool = False):
+    def __init__(self, test_updates: bool = False, dev_mode: bool = False):
         """
         Initialize application state, configuration, worker, timers, and temporary plot directory.
 
@@ -2347,10 +2347,12 @@ class VNAApp(App):
 
         Parameters:
             test_updates (bool): When True, enable test-mode update behavior used by the background update checker (shows test/welcome notifications).
+            dev_mode (bool): When True, suppress the post-update welcome popup and skip persisting the version acknowledgement to disk.
         """
         super().__init__()
 
         self._test_updates = test_updates
+        self._dev_mode = dev_mode
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load()
         self.worker = MeasurementWorker()
@@ -2859,16 +2861,20 @@ class VNAApp(App):
             return
 
         # --- Post-update welcome (shown once per version after upgrading) ---
+        # Skipped entirely in dev mode to avoid polluting the persistent state
+        # file with dev-build version numbers, which would suppress the popup
+        # for real users after a genuine update.
         last_ack = load_last_acknowledged_version()
-        if last_ack and last_ack != __version__:
-            changelog = await loop.run_in_executor(
-                None, get_changelogs_since, last_ack, __version__
-            )
-            await self.push_screen_wait(_welcome_screen(__version__, changelog))
-            save_last_acknowledged_version(__version__)
-        elif not last_ack:
-            # First run — just record the version silently, no welcome shown
-            save_last_acknowledged_version(__version__)
+        if not self._dev_mode:
+            if last_ack and last_ack != __version__:
+                changelog = await loop.run_in_executor(
+                    None, get_changelogs_since, last_ack, __version__
+                )
+                await self.push_screen_wait(_welcome_screen(__version__, changelog))
+                save_last_acknowledged_version(__version__)
+            elif not last_ack:
+                # First run — just record the version silently, no welcome shown
+                save_last_acknowledged_version(__version__)
 
         # --- Check for newer releases ---
         stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
@@ -5321,9 +5327,9 @@ class VNAApp(App):
         self.query_one("#btn_export_svg", Button).disabled = False
 
 
-def run_gui(test_updates: bool = False):
+def run_gui(test_updates: bool = False, dev_mode: bool = False):
     """Run GUI mode with proper imports."""
-    app = VNAApp(test_updates=test_updates)
+    app = VNAApp(test_updates=test_updates, dev_mode=dev_mode)
     app.run()
 
 
@@ -5339,7 +5345,7 @@ def main():
         return run_cli_measurement(args)
     else:
         # GUI mode
-        run_gui(test_updates=args.test_updates)
+        run_gui(test_updates=args.test_updates, dev_mode=args.dev)
         return 0
 
 

@@ -31,7 +31,7 @@
   },
   {
     "label": "run-app",
-    "command": "uv run tina",
+    "command": "uv run tina --dev",
     "use_new_terminal": true
   },
   {
