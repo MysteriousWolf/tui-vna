@@ -22,7 +22,7 @@ $$P_0(x) = 1, \quad P_1(x) = x, \quad P_2(x) = \frac{1}{2}(3x^2 - 1), \quad P_3(
 
 Coefficients $c_n$ via least-squares (`numpy.polynomial.legendre.legfit`).
 
-Orthogonality guarantees $c_n$ are independent of fit order $K$: adding higher terms does not change lower coefficients.
+In the continuous orthogonal basis (or when discrete sampling/weighting makes the basis orthogonal under the discrete inner product), $c_n$ are independent of fit order $K$: adding higher terms does not change lower coefficients. In practice, with discrete least-squares fitting, this property holds approximately, though lower-order coefficients may shift slightly when $K$ changes.
 
 ## Peak-to-Peak Distortion
 
@@ -55,7 +55,7 @@ Overlay individual $c_n\, P_n(x)$ components (offset by $c_0$) on the measuremen
 
 For phase, $c_1$ encodes constant group delay $\tau_0 = -c_1 / (\pi B)$. First phase distortion term is $c_2$.
 
-Derivative relationship: $\tau_g(f) = -\frac{1}{2\pi}\frac{d\phi}{df}$, so phase $c_n$ produces group delay $c_{n-1}$ (parabolic phase $\to$ linear GD distortion).
+Derivative relationship: For $\phi(f) = \sum c_n P_n(x)$ with $x$ the normalized frequency, $\tau_g(f) = -\frac{1}{2\pi}\frac{d\phi}{df} = -\frac{1}{2\pi}\frac{dx}{df}\sum c_n P_n'(x)$. Each $P_n'(x)$ expands as a linear combination of lower-order Legendre polynomials, so a single phase coefficient $c_n$ contributes to multiple group-delay coefficients. For example, $P_3'(x) = 5P_2(x) + P_0(x)$. The bandwidth scaling factor $dx/df$ (the normalization constant used to convert $f \to x$) must be included to compute the mixed coefficients correctly.
 
 ## Physical Unit Conversion
 
