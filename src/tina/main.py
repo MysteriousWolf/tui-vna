@@ -2891,8 +2891,9 @@ class VNAApp(App):
         elif pre:
             if self.settings.notified_prerelease != pre.version:
                 await self.push_screen_wait(_update_screen(pre))
-                self.settings.notified_prerelease = pre.version
-                self.settings_manager.save(self.settings)
+                if not self._dev_mode:
+                    self.settings.notified_prerelease = pre.version
+                    self.settings_manager.save(self.settings)
 
     def _update_plot_type_options(self) -> None:
         """Update plot type dropdown options based on selected backend."""

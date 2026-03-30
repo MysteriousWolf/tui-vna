@@ -60,10 +60,12 @@ def migrate_legacy_config() -> str | None:
                 with open(old_state, encoding="utf-8") as f:
                     state = json.load(f)
                 if isinstance(state, dict):
-                    merged["last_acknowledged_version"] = state.get(
-                        "last_acknowledged_version", ""
-                    )
-                    merged["notified_prerelease"] = state.get("notified_prerelease", "")
+                    if state.get("last_acknowledged_version"):
+                        merged["last_acknowledged_version"] = state[
+                            "last_acknowledged_version"
+                        ]
+                    if state.get("notified_prerelease"):
+                        merged["notified_prerelease"] = state["notified_prerelease"]
             except (OSError, json.JSONDecodeError, ValueError):
                 pass
 
