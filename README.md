@@ -55,15 +55,17 @@ For systems without Python/uv, download standalone executables from [GitHub Rele
 
 **Full version** (includes TUI):
 
-- **Windows**: `tina-windows-x86_64.exe`
-- **Linux**: `tina-linux-x86_64`
-- **macOS**: `tina-macos-x86_64`
+- **Windows**: `tina-v{VERSION}-windows-x86_64.exe`
+- **Linux**: `tina-v{VERSION}-linux-x86_64`
+- **macOS**: `tina-v{VERSION}-macos-x86_64`
 
 **Quick version** (CLI only, faster startup):
 
-- **Windows**: `tina-quick-windows-x86_64.exe`
-- **Linux**: `tina-quick-linux-x86_64`
-- **macOS**: `tina-quick-macos-x86_64`
+- **Windows**: `tina-quick-v{VERSION}-windows-x86_64.exe`
+- **Linux**: `tina-quick-v{VERSION}-linux-x86_64`
+- **macOS**: `tina-quick-v{VERSION}-macos-x86_64`
+
+Replace `v{VERSION}` with the release tag (e.g. `v0.2.1`). Pick the asset matching your platform from the Releases page.
 
 Quick variants are optimized for scripting and automation. Run the full version at least once to configure connection settings, then use quick version for fast measurements without parameters.
 
