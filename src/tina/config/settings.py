@@ -10,8 +10,10 @@ Settings are stored as YAML so the file is human-readable and comments
 are preserved across saves.
 """
 
+import warnings
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from typing import get_type_hints
 
 from platformdirs import user_config_dir
 from ruamel.yaml import YAML
@@ -100,8 +102,8 @@ class AppSettings:
 
     last_host: str = ""
     last_port: str = "inst0"
-    host_history: list = None
-    port_history: list = None
+    host_history: list[str] | None = None
+    port_history: list[str] | None = None
     last_acknowledged_version: str = ""
     notified_prerelease: str = ""
 
@@ -147,8 +149,6 @@ class SettingsManager:
 
             file_version = data.get("config_version")
             if file_version is not None and file_version != self.CONFIG_VERSION:
-                import warnings
-
                 warnings.warn(
                     f"settings.yaml config_version={file_version} does not match "
                     f"expected {self.CONFIG_VERSION}; loading with best-effort defaults",
@@ -157,6 +157,8 @@ class SettingsManager:
                 )
 
             valid = {f.name for f in fields(AppSettings)}
+            hints = get_type_hints(AppSettings)
+            primitives = (int, float, str, bool)
             filtered = {}
             for k, v in data.items():
                 if k not in valid:
@@ -168,7 +170,18 @@ class SettingsManager:
                         filtered[k] = [v]
                     # else: omit; __post_init__ will set to []
                 else:
-                    filtered[k] = v
+                    expected = hints.get(k)
+                    if (
+                        expected in primitives
+                        and v is not None
+                        and not isinstance(v, expected)
+                    ):
+                        try:
+                            filtered[k] = expected(v)
+                        except (TypeError, ValueError):
+                            pass  # omit bad value; dataclass default will be used
+                    else:
+                        filtered[k] = v
             self.settings = AppSettings(**filtered)
             self._load_failed = False
             self._merge_port_history()
@@ -192,31 +205,35 @@ class SettingsManager:
             backup = self.config_file.with_suffix(".yaml.bak")
             try:
                 self.config_file.replace(backup)
-            except OSError:
-                pass
+            except OSError as exc:
+                warnings.warn(
+                    f"Could not back up corrupt settings file: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
             self._load_failed = False
 
         data = {"config_version": self.CONFIG_VERSION, **asdict(self.settings)}
 
+        existing = None
         if self.config_file.exists():
             try:
                 with open(self.config_file, encoding="utf-8") as f:
-                    existing = _yaml.load(f)
-                if not isinstance(existing, dict):
-                    existing = CommentedMap()
+                    loaded = _yaml.load(f)
+                if isinstance(loaded, dict):
+                    existing = loaded
             except Exception:
-                existing = CommentedMap()
+                pass
 
-            # Update values in place so comments are preserved
-            for key, value in data.items():
-                existing[key] = value
+        if existing is None:
+            existing = _build_commented_map(data)
 
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                _yaml.dump(existing, f)
-        else:
-            cm = _build_commented_map(data)
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                _yaml.dump(cm, f)
+        # Update values in place so comments are preserved
+        for key, value in data.items():
+            existing[key] = value
+
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            _yaml.dump(existing, f)
 
     def _merge_port_history(self) -> None:
         """Merge default ports with history, ensuring defaults are always present."""
