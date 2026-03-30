@@ -129,8 +129,8 @@ class TestSettingsManager:
 
     def test_corrupted_config_returns_defaults(self, settings_manager):
         """Test that corrupted config returns defaults."""
-        # Write invalid JSON
-        settings_manager.config_file.write_text("{ invalid json }")
+        # Write invalid YAML
+        settings_manager.config_file.write_text("{ invalid yaml }")
 
         settings = settings_manager.load()
         assert isinstance(settings, AppSettings)

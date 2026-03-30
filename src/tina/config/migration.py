@@ -88,10 +88,7 @@ def migrate_legacy_config() -> str | None:
         return None
 
     _try_remove(old_dir)
-    return (
-        f"Migrated settings from ~/.config/{_OLD_APP_NAME} "
-        f"to ~/.config/{_NEW_APP_NAME}"
-    )
+    return f"Migrated settings from {old_dir} to {new_dir}"
 
 
 def _try_remove(path: Path) -> None:
