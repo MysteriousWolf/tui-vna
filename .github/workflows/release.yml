@@ -140,6 +140,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PREV_TAG=$(git tag --sort=-version:refname --merged "${GITHUB_REF_NAME}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          echo "prev_tag=${PREV_TAG}" >> $GITHUB_OUTPUT
 
           if [ -z "$PREV_TAG" ]; then
             echo "changelog=Initial release" >> $GITHUB_OUTPUT
@@ -151,9 +152,63 @@ jobs:
             echo "EOF" >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate AI release summary
+        id: ai_summary
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "summary=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          COMMITS='${{ steps.changelog.outputs.changelog }}'
+
+          RESPONSE=$(curl -sf https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$(jq -n --arg commits "$COMMITS" '{
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 1024,
+              messages: [{
+                role: "user",
+                content: ("Write a concise GitHub release summary for tina, a terminal-based VNA control application. Group notable changes by theme using bold markdown headers. Be specific. Skip internal tooling, CI, formatting, and documentation-only commits.\n\nCommits:\n" + $commits)
+              }]
+            }')") || true
+
+          SUMMARY=$(echo "$RESPONSE" | jq -r '.content[0].text // empty' 2>/dev/null || true)
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo "${SUMMARY}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Compose release body
+        id: release_body
+        run: |
+          SUMMARY='${{ steps.ai_summary.outputs.summary }}'
+          CHANGELOG='${{ steps.changelog.outputs.changelog }}'
+          PREV_TAG='${{ steps.changelog.outputs.prev_tag }}'
+
+          {
+            echo "body<<EOF"
+            if [ -n "$SUMMARY" ]; then
+              echo "$SUMMARY"
+              echo ""
+              echo "---"
+              echo ""
+            fi
+            echo "## Commits"
+            echo "$CHANGELOG"
+            if [ -n "$PREV_TAG" ]; then
+              echo ""
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}"
+            fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ steps.changelog.outputs.changelog }}
+          body: ${{ steps.release_body.outputs.body }}
           files: release-assets/*
           fail_on_unmatched_files: true
