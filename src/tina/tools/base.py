@@ -35,13 +35,19 @@ class BaseTool(ABC):
         cursor1_hz: float | None,
         cursor2_hz: float | None,
     ) -> ToolResult:
-        """Run the tool and return a ToolResult.
-
-        Args:
-            freqs:      Frequency array in Hz.
-            sparams:    {param: (mag_db, phase_deg)} dict.
-            trace:      S-parameter name, e.g. "S11".
-            plot_type:  "magnitude" | "phase" | "phase_raw".
-            cursor1_hz: Cursor-1 frequency in Hz (None = not set).
-            cursor2_hz: Cursor-2 frequency in Hz (None = not set).
+        """
+        Compute the tool's measurement result for the provided frequency sweep.
+        
+        Compute the measurement output for the given frequencies and S-parameter data using the specified trace and plot type. The `sparams` mapping should provide tuples or arrays of (magnitude in dB, phase in degrees) keyed by S-parameter name (e.g., "S11"). `plot_type` accepts "magnitude", "phase", or "phase_raw". `cursor1_hz` and `cursor2_hz`, if provided, are used to populate the corresponding cursor fields in the returned ToolResult.
+        
+        Parameters:
+            freqs (np.ndarray): Frequency array in Hz.
+            sparams (dict): Mapping from S-parameter name to (mag_db, phase_deg).
+            trace (str): S-parameter identifier to evaluate (e.g., "S11").
+            plot_type (str): One of "magnitude", "phase", or "phase_raw".
+            cursor1_hz (float | None): Cursor-1 frequency in Hz, or None if unset.
+            cursor2_hz (float | None): Cursor-2 frequency in Hz, or None if unset.
+        
+        Returns:
+            ToolResult: Result containing computed cursor values, delta (if applicable), unit label, and any extra metadata.
         """

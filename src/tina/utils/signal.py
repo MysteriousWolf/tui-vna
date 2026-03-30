@@ -23,17 +23,18 @@ def unwrap_phase(phase_deg: np.ndarray) -> np.ndarray:
 def calculate_plot_range_with_outlier_filtering(
     data: np.ndarray, outlier_percentile: float = 1.0, safety_margin: float = 0.05
 ) -> tuple[float, float]:
-    """Calculate plot range while filtering out outliers.
-
-    This prevents extreme outliers from compressing the useful data range.
-
-    Args:
-        data: Array of values to analyze
-        outlier_percentile: Percentage of outliers to ignore on each end (default 1%)
-        safety_margin: Additional margin beyond filtered range (default 5%)
-
+    """
+    Compute a plotting range that ignores extreme low/high outliers and adds a safety margin.
+    
+    Filters the input data by removing the lowest and highest `outlier_percentile` percentiles, uses those percentile values as the core min/max, and expands the range by `safety_margin` fraction of the filtered span. If `data` is empty, returns (0.0, 1.0). If the filtered span is zero, a nonzero span is derived from `min_val` (10% of |min_val|) or set to 1.0 when `min_val` is zero.
+    
+    Parameters:
+        data (np.ndarray): Values to compute the plot range from.
+        outlier_percentile (float): Percentage removed from each tail when computing percentiles (e.g., 1.0 ignores the bottom and top 1%).
+        safety_margin (float): Fraction of the filtered span to add to both ends of the range (e.g., 0.05 adds 5%).
+    
     Returns:
-        Tuple of (min_value, max_value) for plot range
+        tuple[float, float]: (min_value, max_value) expanded by the safety margin.
     """
     if len(data) == 0:
         return (0.0, 1.0)
@@ -56,7 +57,15 @@ def calculate_plot_range_with_outlier_filtering(
 
 
 def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert a hex color string to an (R, G, B) tuple."""
+    """
+    Convert a 3- or 6-digit hexadecimal color string (optionally prefixed with '#') into an (R, G, B) integer tuple.
+    
+    Parameters:
+        hex_color (str): Hex color in either "RRGGBB" or shorthand "RGB" form, with or without a leading '#'.
+    
+    Returns:
+        tuple[int, int, int]: `(R, G, B)` where each component is an integer in the range 0–255.
+    """
     h = hex_color.lstrip("#")
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
