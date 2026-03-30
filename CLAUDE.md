@@ -56,7 +56,7 @@ Never batch multiple functional units into a single commit.
 Capital imperative verb followed by a short description, no punctuation between
 them, ≤ 72 chars. The verb itself signals intent — no separate type keyword.
 
-```
+```text
 <Verb> <description>
 ```
 
@@ -73,7 +73,7 @@ Common verbs and when to use them:
 | `Remove` | Deleting something |
 
 Examples:
-```
+```text
 Fix cursor overlays rendering outside sweep range
 Add measurement refresh on theme change
 Improve tools plot resize debounce with tab visibility check
