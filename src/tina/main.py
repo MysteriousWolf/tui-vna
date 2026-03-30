@@ -3169,12 +3169,8 @@ class VNAApp(App):
         filename, title = help_map[active]
         try:
             # Use importlib.resources to load help files from installed package
-            if sys.version_info >= (3, 9):
-                help_files = importlib.resources.files("tina") / "help"
-                content = (help_files / filename).read_text(encoding="utf-8")
-            else:
-                # Fallback for Python 3.8
-                content = importlib.resources.read_text("tina.help", filename, encoding="utf-8")
+            help_files = importlib.resources.files("tina") / "help"
+            content = (help_files / filename).read_text(encoding="utf-8")
         except (OSError, FileNotFoundError, ModuleNotFoundError):
             content = "_Help file not found._"
         self.push_screen(HelpScreen(title, content))
