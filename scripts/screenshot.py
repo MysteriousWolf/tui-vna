@@ -117,7 +117,11 @@ async def main() -> None:
     DOCS.mkdir(exist_ok=True)
     demo = _demo_settings()
 
-    with patch.object(SettingsManager, "load", return_value=demo):
+    with (
+        patch.object(SettingsManager, "load", return_value=demo),
+        patch.object(SettingsManager, "save"),
+        patch.object(VNAApp, "_check_for_updates"),
+    ):
         app = VNAApp(dev_mode=True)
         async with app.run_test(headless=True, size=(200, 52)) as pilot:
             await pilot.pause(0.5)
@@ -137,8 +141,8 @@ async def main() -> None:
 
             # ── 4. Tools tab — distortion with populated cursors ─────────────
             app.query_one(TabbedContent).active = "tab_tools"
-            app.settings.tools_active_tool = "distortion"
             app.settings.tools_trace = "S21"
+            app._set_active_tool("distortion")
             await app._rebuild_tools_params()
             # Set cursor Hz values for computation
             app._tools_cursor1_hz = CURSOR1_HZ
