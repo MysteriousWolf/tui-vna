@@ -130,6 +130,7 @@ class SettingsManager:
         self.config_dir = Path(user_config_dir(self.APP_NAME))
         self.config_file = self.config_dir / self.CONFIG_FILE
         self.settings = AppSettings()
+        self._load_failed = False
 
     def load(self) -> AppSettings:
         """Load settings from disk, returning defaults if the file is absent or corrupt."""
@@ -156,12 +157,25 @@ class SettingsManager:
                 )
 
             valid = {f.name for f in fields(AppSettings)}
-            filtered = {k: v for k, v in data.items() if k in valid}
+            filtered = {}
+            for k, v in data.items():
+                if k not in valid:
+                    continue
+                if k in ("host_history", "port_history"):
+                    if isinstance(v, list):
+                        filtered[k] = [str(x) for x in v if x is not None]
+                    elif isinstance(v, str) and v:
+                        filtered[k] = [v]
+                    # else: omit; __post_init__ will set to []
+                else:
+                    filtered[k] = v
             self.settings = AppSettings(**filtered)
+            self._load_failed = False
             self._merge_port_history()
             return self.settings
 
         except Exception:
+            self._load_failed = True
             self.settings = AppSettings()
             self.settings.port_history = self.DEFAULT_PORTS.copy()
             return self.settings
@@ -173,6 +187,14 @@ class SettingsManager:
 
         self._merge_port_history()
         self.config_dir.mkdir(parents=True, exist_ok=True)
+
+        if self._load_failed and self.config_file.exists():
+            backup = self.config_file.with_suffix(".yaml.bak")
+            try:
+                self.config_file.replace(backup)
+            except OSError:
+                pass
+            self._load_failed = False
 
         data = {"config_version": self.CONFIG_VERSION, **asdict(self.settings)}
 
