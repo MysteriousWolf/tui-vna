@@ -30,6 +30,10 @@ def _build_commented_map(data: dict) -> CommentedMap:
         "Settings file — edit the User settings section freely.\n"
     )
     cm.yaml_set_comment_before_after_key(
+        "config_version",
+        before="\nDo not modify config_version — it is used for future format migrations.\n",
+    )
+    cm.yaml_set_comment_before_after_key(
         "plot_backend",
         before=(
             "\n"
@@ -114,6 +118,7 @@ class SettingsManager:
 
     APP_NAME = "tina"
     CONFIG_FILE = "settings.yaml"
+    CONFIG_VERSION = 1
 
     # Sane port defaults for VISA instruments
     DEFAULT_PORTS = ["inst0", "inst1", "inst2", "inst3", "hislip0", "gpib0,16"]
@@ -139,6 +144,17 @@ class SettingsManager:
             if not isinstance(data, dict):
                 raise ValueError("Unexpected YAML structure")
 
+            file_version = data.get("config_version")
+            if file_version is not None and file_version != self.CONFIG_VERSION:
+                import warnings
+
+                warnings.warn(
+                    f"settings.yaml config_version={file_version} does not match "
+                    f"expected {self.CONFIG_VERSION}; loading with best-effort defaults",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
             valid = {f.name for f in fields(AppSettings)}
             filtered = {k: v for k, v in data.items() if k in valid}
             self.settings = AppSettings(**filtered)
@@ -158,7 +174,7 @@ class SettingsManager:
         self._merge_port_history()
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
-        data = asdict(self.settings)
+        data = {"config_version": self.CONFIG_VERSION, **asdict(self.settings)}
 
         if self.config_file.exists():
             try:
