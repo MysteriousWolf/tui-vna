@@ -59,10 +59,6 @@ from .utils.update_checker import (
     fetch_test_update_data,
     get_changelogs_since,
     get_update_info,
-    load_last_acknowledged_version,
-    load_notified_prerelease,
-    save_last_acknowledged_version,
-    save_notified_prerelease,
 )
 from .worker import (
     LogMessage,
@@ -2339,7 +2335,12 @@ class VNAApp(App):
 
     TITLE = "tina - Terminal UI Network Analyzer"
 
-    def __init__(self, test_updates: bool = False, dev_mode: bool = False):
+    def __init__(
+        self,
+        test_updates: bool = False,
+        dev_mode: bool = False,
+        migration_message: str | None = None,
+    ):
         """
         Initialize application state, configuration, worker, timers, and temporary plot directory.
 
@@ -2348,11 +2349,13 @@ class VNAApp(App):
         Parameters:
             test_updates (bool): When True, enable test-mode update behavior used by the background update checker (shows test/welcome notifications).
             dev_mode (bool): When True, suppress the post-update welcome popup and skip persisting the version acknowledgement to disk.
+            migration_message (str | None): If set, logged at startup to inform the user that legacy settings were migrated.
         """
         super().__init__()
 
         self._test_updates = test_updates
         self._dev_mode = dev_mode
+        self._migration_message = migration_message
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load()
         self.worker = MeasurementWorker()
@@ -2837,6 +2840,8 @@ class VNAApp(App):
     def _log_startup(self) -> None:
         """Log startup message after UI is ready."""
         self.log_message(f"tina v{__version__} ready. Connect to start.", "info")
+        if self._migration_message:
+            self.log_message(self._migration_message, "info")
         # Log detected terminal and font info
         font_info = self.terminal_font
         if self.terminal_font_size:
@@ -2864,17 +2869,19 @@ class VNAApp(App):
         # Skipped entirely in dev mode to avoid polluting the persistent state
         # file with dev-build version numbers, which would suppress the popup
         # for real users after a genuine update.
-        last_ack = load_last_acknowledged_version()
+        last_ack = self.settings.last_acknowledged_version
         if not self._dev_mode:
             if last_ack and last_ack != __version__:
                 changelog = await loop.run_in_executor(
                     None, get_changelogs_since, last_ack, __version__
                 )
                 await self.push_screen_wait(_welcome_screen(__version__, changelog))
-                save_last_acknowledged_version(__version__)
+                self.settings.last_acknowledged_version = __version__
+                self.settings_manager.save(self.settings)
             elif not last_ack:
                 # First run — just record the version silently, no welcome shown
-                save_last_acknowledged_version(__version__)
+                self.settings.last_acknowledged_version = __version__
+                self.settings_manager.save(self.settings)
 
         # --- Check for newer releases ---
         stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
@@ -2882,10 +2889,10 @@ class VNAApp(App):
         if stable:
             await self.push_screen_wait(_update_screen(stable))
         elif pre:
-            notified = load_notified_prerelease()
-            if notified != pre.version:
+            if self.settings.notified_prerelease != pre.version:
                 await self.push_screen_wait(_update_screen(pre))
-                save_notified_prerelease(pre.version)
+                self.settings.notified_prerelease = pre.version
+                self.settings_manager.save(self.settings)
 
     def _update_plot_type_options(self) -> None:
         """Update plot type dropdown options based on selected backend."""
@@ -5329,7 +5336,14 @@ class VNAApp(App):
 
 def run_gui(test_updates: bool = False, dev_mode: bool = False):
     """Run GUI mode with proper imports."""
-    app = VNAApp(test_updates=test_updates, dev_mode=dev_mode)
+    from .config.migration import migrate_legacy_config
+
+    migration_message = migrate_legacy_config()
+    app = VNAApp(
+        test_updates=test_updates,
+        dev_mode=dev_mode,
+        migration_message=migration_message,
+    )
     app.run()
 
 

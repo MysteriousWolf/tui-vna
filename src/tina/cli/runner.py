@@ -30,6 +30,10 @@ def create_vna_config(settings: AppSettings) -> VNAConfig:
 def run_cli_measurement(args: argparse.Namespace) -> int:
     """Run measurement in CLI mode."""
     try:
+        from ..config.migration import migrate_legacy_config
+
+        migrate_legacy_config()
+
         # Load settings
         settings_manager = SettingsManager()
         settings = settings_manager.load()
