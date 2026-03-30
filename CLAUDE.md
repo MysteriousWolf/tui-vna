@@ -53,17 +53,30 @@ Never batch multiple functional units into a single commit.
 
 ### 4. Commit Message Convention
 
-Plain imperative sentence, capital first word, no type prefix, ≤ 72 chars:
+Capital imperative verb followed by a short description, no punctuation between
+them, ≤ 72 chars. The verb itself signals intent — no separate type keyword.
 
 ```
-<Verb> <what changed>
+<Verb> <description>
 ```
+
+Common verbs and when to use them:
+
+| Verb | When to use |
+|---|---|
+| `Fix` | Bug fix, wrong behaviour, crash |
+| `Add` | New capability, file, dependency |
+| `Implement` | Larger new feature built from scratch |
+| `Improve` | Enhancement to something that already works |
+| `Address` | Response to review comments |
+| `Bump` | Version or dependency update |
+| `Remove` | Deleting something |
 
 Examples:
 ```
-Guard cursor overlays against out-of-band frequencies
-Only debounce tools plot resize when Tools tab is active
+Fix cursor overlays rendering outside sweep range
 Add measurement refresh on theme change
+Improve tools plot resize debounce with tab visibility check
 Add docstrings to reach coverage threshold
 Fix lint issues
 Improve project structure
