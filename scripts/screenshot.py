@@ -145,6 +145,7 @@ async def main() -> None:
             app._tools_cursor2_hz = CURSOR2_HZ
             # Populate the input widgets so the frequency range is visible
             from textual.widgets import Input
+
             app.query_one("#input_tools_cursor1", Input).value = "900"
             app.query_one("#input_tools_cursor2", Input).value = "2100"
             await app._refresh_tools_plot()
@@ -153,9 +154,8 @@ async def main() -> None:
 
             # ── 5. Distortion help popup ─────────────────────────────────────
             from tina.main import HelpScreen
-            help_content = (
-                Path("src/tina/help/distortion.md").read_text()
-            )
+
+            help_content = Path("src/tina/help/distortion.md").read_text()
             await app.push_screen(HelpScreen("Distortion Tool Help", help_content))
             await _take(app, pilot, DOCS / "screenshot-help-distortion.svg")
             await pilot.press("escape")
