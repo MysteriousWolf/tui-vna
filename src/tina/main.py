@@ -1,5 +1,5 @@
 """
-tina - Terminal UI Network Analyzer
+TINA - Terminal UI Network Analyzer
 """
 
 import asyncio
@@ -1830,7 +1830,7 @@ class StatusFooter(Footer):
 
 
 class VNAApp(App):
-    """tina - Terminal uI Network Analyzer"""
+    """TINA - Terminal UI Network Analyzer"""
 
     # Maps log level names to their filter checkbox widget IDs.
     # Both primary and secondary levels are listed here; composite levels
@@ -2333,7 +2333,7 @@ class VNAApp(App):
         Binding("ctrl+d", "toggle_debug_scpi", "SCPI Debug", show=False),
     ]
 
-    TITLE = "tina - Terminal UI Network Analyzer"
+    TITLE = "TINA - Terminal UI Network Analyzer"
 
     def __init__(
         self,
@@ -2839,7 +2839,7 @@ class VNAApp(App):
 
     def _log_startup(self) -> None:
         """Log startup message after UI is ready."""
-        self.log_message(f"tina v{__version__} ready. Connect to start.", "info")
+        self.log_message(f"TINA v{__version__} ready. Connect to start.", "info")
         if self._migration_message:
             self.log_message(self._migration_message, "info")
         # Log detected terminal and font info
@@ -3441,9 +3441,9 @@ class VNAApp(App):
     def _update_title(self) -> None:
         """Reflect connection and debug mode state in the app title."""
         base = (
-            "tina"
+            "TINA"
             if self.connected
-            else f"tina v{__version__} - Terminal UI Network Analyzer"
+            else f"TINA v{__version__} - Terminal UI Network Analyzer"
         )
         self.title = f"{base} 🐛" if self._debug_scpi else base
 

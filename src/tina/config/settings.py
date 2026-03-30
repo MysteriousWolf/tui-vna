@@ -26,7 +26,7 @@ def _build_commented_map(data: dict) -> CommentedMap:
     """Wrap *data* in a CommentedMap with human-readable section headers."""
     cm = CommentedMap(data)
     cm.yaml_set_start_comment(
-        "tina - Terminal UI Network Analyzer\n"
+        "TINA - Terminal UI Network Analyzer\n"
         "Settings file — edit the User settings section freely.\n"
     )
     cm.yaml_set_comment_before_after_key(

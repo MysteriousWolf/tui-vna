@@ -1,4 +1,4 @@
-# tina - Terminal user Interface Network Analyzer
+# TINA - Terminal UI Network Analyzer
 
 Terminal-based VNA control with **dynamic driver discovery**.
 
