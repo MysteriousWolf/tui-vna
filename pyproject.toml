@@ -1,6 +1,6 @@
 [project]
 name = "tui-vna"
-version = "0.1.5"
+version = "0.2.0"
 description = "tina - Terminal UI Network Analyzer"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
     "matplotlib>=3.7.0",
     "scikit-rf>=0.30.0",
     "packaging>=21.0",
+    "pylatexenc>=2.10",
 ]
 authors = [
     {name = "tina", email = "tina@example.com"}
@@ -22,7 +23,7 @@ readme = "README.md"
 license = {text = "MIT"}
 
 [project.scripts]
-tina = "tina.main:main"
+tina = "tina._loader:main"
 
 [build-system]
 requires = ["hatchling"]
