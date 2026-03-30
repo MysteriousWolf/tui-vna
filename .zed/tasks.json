@@ -38,5 +38,10 @@
     "label": "run-app-test-updates",
     "command": "uv run tina --test-updates",
     "use_new_terminal": true
+  },
+  {
+    "label": "screenshot",
+    "command": "uv run python scripts/screenshot.py",
+    "use_new_terminal": true
   }
 ]
