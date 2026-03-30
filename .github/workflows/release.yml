@@ -191,21 +191,15 @@ jobs:
 
           BASE_PROMPT="You are writing GitHub release notes for tina, a terminal-based VNA (Vector Network Analyzer) control application. Write a concise summary grouped by theme using bold markdown headers. Be specific about what changed. Skip CI, formatting, documentation-only, and internal tooling commits."
 
-          SUMMARY=$(call_model "${BASE_PROMPT}
-
-Commits since last release:
-${COMMITS}")
+          SUMMARY_PROMPT=$(printf '%s\n\nCommits since last release:\n%s' "$BASE_PROMPT" "$COMMITS")
+          SUMMARY=$(call_model "$SUMMARY_PROMPT")
           echo "summary<<EOF" >> $GITHUB_OUTPUT
           echo "${SUMMARY}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
           if [ -n "$RECAP_COMMITS" ]; then
-            RECAP=$(call_model "${BASE_PROMPT}
-
-Write a brief one-paragraph recap (no headers) summarising all changes in this minor release series so far.
-
-All commits in this minor release series:
-${RECAP_COMMITS}")
+            RECAP_PROMPT=$(printf '%s\n\nWrite a brief one-paragraph recap (no headers) summarising all changes in this minor release series so far.\n\nAll commits in this minor release series:\n%s' "$BASE_PROMPT" "$RECAP_COMMITS")
+            RECAP=$(call_model "$RECAP_PROMPT")
             echo "recap<<EOF" >> $GITHUB_OUTPUT
             echo "${RECAP}" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
