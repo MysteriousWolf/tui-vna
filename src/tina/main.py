@@ -1418,6 +1418,7 @@ class PlotBackendProvider(Provider):
                 app.last_measurement["sparams"],
                 app.last_measurement["output_path"],
             )
+            app.call_after_refresh(app._refresh_tools_plot)
 
 
 _CURSOR_MARKER_OPTIONS = [
@@ -2783,6 +2784,7 @@ class VNAApp(App):
         self._refresh_log_display()
         if self.last_measurement is not None:
             self.call_after_refresh(self._refresh_tools_plot)
+            self.call_after_refresh(self._refresh_results_plot)
 
     def on_unmount(self) -> None:
         """Called when app is shutting down."""
@@ -3744,6 +3746,13 @@ class VNAApp(App):
         except Exception as e:
             self.log_message(f"Failed to open file location: {e}", "error")
 
+    def _is_tools_tab_active(self) -> bool:
+        """Return True if the Tools tab is currently the active tab."""
+        try:
+            return self.query_one(TabbedContent).active == "tab_tools"
+        except Exception:
+            return False
+
     def on_resize(self, event) -> None:
         """Handle window resize - redraw plot if measurement exists."""
         if self.last_measurement is not None:
@@ -3753,8 +3762,8 @@ class VNAApp(App):
             # Debounce: redraw only after 300ms of no resize events
             self._resize_timer = self.set_timer(0.3, self._redraw_plot)
 
-        # Debounce tools plot redraw
-        if self.last_measurement is not None:
+        # Debounce tools plot redraw — only when Tools tab is visible
+        if self.last_measurement is not None and self._is_tools_tab_active():
             if self._tools_resize_timer is not None:
                 self._tools_resize_timer.stop()
             self._tools_resize_timer = self.set_timer(0.3, self._refresh_tools_plot)
@@ -3918,6 +3927,16 @@ class VNAApp(App):
         await self._refresh_tools_plot()
         self._run_tools_computation()
 
+    async def _refresh_results_plot(self) -> None:
+        """Re-render the Measurement tab plot from cached data (e.g. after a theme change)."""
+        if self.last_measurement is None:
+            return
+        await self._update_results(
+            self.last_measurement["freqs"],
+            self.last_measurement["sparams"],
+            self.last_measurement["output_path"],
+        )
+
     async def _refresh_tools_plot(self) -> None:
         """Render the tools-tab plot for the selected single trace with cursor markers."""
         if self.last_measurement is None:
@@ -4016,7 +4035,8 @@ class VNAApp(App):
             plt_term.ylim(auto_y_min, auto_y_max)
 
             if active_tool in ("cursor", "distortion"):
-                if cursor1_hz is not None:
+                freq_min, freq_max = freqs[0], freqs[-1]
+                if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
                     c1_axis = cursor1_hz / multiplier
                     plt_term.plot(
@@ -4030,7 +4050,7 @@ class VNAApp(App):
                         [c1_axis], [v1], marker=marker_symbol, color=cursor1_rgb
                     )
 
-                if cursor2_hz is not None:
+                if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max:
                     v2 = float(np.interp(cursor2_hz, freqs, data))
                     c2_axis = cursor2_hz / multiplier
                     plt_term.plot(
@@ -4096,7 +4116,8 @@ class VNAApp(App):
             ax.set_ylim(auto_y_min, auto_y_max)
 
             if active_tool in ("cursor", "distortion"):
-                if cursor1_hz is not None:
+                freq_min, freq_max = freqs[0], freqs[-1]
+                if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max:
                     v1 = float(np.interp(cursor1_hz, freqs, data))
                     c1_axis = cursor1_hz / multiplier
                     ax.axhline(
@@ -4119,7 +4140,7 @@ class VNAApp(App):
                         zorder=5,
                     )
 
-                if cursor2_hz is not None:
+                if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max:
                     v2 = float(np.interp(cursor2_hz, freqs, data))
                     c2_axis = cursor2_hz / multiplier
                     ax.axhline(

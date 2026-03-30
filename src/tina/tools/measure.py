@@ -37,8 +37,17 @@ class MeasureTool(BaseTool):
         def _interp(freq_hz: float) -> float:
             return float(np.interp(freq_hz, freqs, data))
 
-        v1 = _interp(cursor1_hz) if cursor1_hz is not None else None
-        v2 = _interp(cursor2_hz) if cursor2_hz is not None else None
+        freq_min, freq_max = freqs[0], freqs[-1]
+        v1 = (
+            _interp(cursor1_hz)
+            if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max
+            else None
+        )
+        v2 = (
+            _interp(cursor2_hz)
+            if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max
+            else None
+        )
         delta = (v2 - v1) if (v1 is not None and v2 is not None) else None
 
         return ToolResult(
