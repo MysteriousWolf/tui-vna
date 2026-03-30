@@ -23,11 +23,11 @@ from src.tina.tools.distortion import (
 def _make_sparams(freqs: np.ndarray, mag_db: np.ndarray) -> dict:
     """
     Create a minimal S-parameters dictionary containing S21 magnitude and a zero phase array.
-    
+
     Parameters:
         freqs (np.ndarray): Frequency values (not used by this helper; present for API compatibility).
         mag_db (np.ndarray): S21 magnitude values in dB.
-    
+
     Returns:
         dict: A dictionary with key "S21" mapping to a tuple (magnitude_array, phase_array),
               where `phase_array` is an array of zeros with the same shape as `mag_db`.
@@ -40,7 +40,7 @@ def _make_sparams(freqs: np.ndarray, mag_db: np.ndarray) -> dict:
 def flat_band():
     """
     Create a flat 0 dB S21 response over a 100 MHz band centered at 1.0 GHz.
-    
+
     Returns:
         tuple: (freqs, sparams) where
             freqs (ndarray): Frequency array in Hz (201 points from 0.9e9 to 1.1e9).
@@ -55,9 +55,9 @@ def flat_band():
 def linear_band():
     """
     Generate a synthetic S-parameter input representing a linear magnitude tilt across the band.
-    
+
     Frequencies span 0.9 GHz to 1.1 GHz (201 points); magnitude is a linear ramp from -0.5 dB to +0.5 dB (equivalently 1 dB per 100 MHz). Phase values are all zero.
-    
+
     Returns:
         freqs (ndarray): Frequency array in Hz.
         sparams (dict): Minimal S-parameter dictionary containing only 'S21' with keys 'mag_db' (dB) and 'phase_deg' (degrees).
@@ -72,9 +72,9 @@ def linear_band():
 def parabolic_band():
     """
     Create a synthetic S21 dataset representing a pure parabolic (Legendre P₂) magnitude response across 0.9–1.1 GHz.
-    
+
     The magnitude follows P₂(x) = (3*x**2 - 1)/2 where x is the frequency normalized to the band center and half-bandwidth (so x in [-1, 1]).
-    
+
     Returns:
         tuple: (freqs, sparams) where
             freqs (ndarray): Frequencies in Hz (linspace from 0.9e9 to 1.1e9, 201 points).
