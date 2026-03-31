@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -964,7 +965,7 @@ class UpdateNotificationScreen(ModalScreen):
         align: center middle;
     }
     #notif-dialog {
-        width: 70;
+        width: 90;
         height: auto;
         background: $surface;
         border: thick $primary;
@@ -1011,6 +1012,9 @@ class UpdateNotificationScreen(ModalScreen):
         height: auto;
         align-horizontal: right;
     }
+    UpdateNotificationScreen #btn-notif-github {
+        margin-right: 1;
+    }
     """
 
     def __init__(
@@ -1022,6 +1026,7 @@ class UpdateNotificationScreen(ModalScreen):
         badge: str | None = None,
         badge_class: str | None = None,
         welcome: bool = False,
+        release_url: str | None = None,
     ) -> None:
         """Initialise the notification screen with title, markdown body, and button config."""
         super().__init__()
@@ -1031,6 +1036,7 @@ class UpdateNotificationScreen(ModalScreen):
         self._button_variant = button_variant
         self._badge = badge
         self._badge_class = badge_class
+        self._release_url = release_url
         if welcome:
             self.add_class("--welcome")
 
@@ -1048,11 +1054,23 @@ class UpdateNotificationScreen(ModalScreen):
             with VerticalScroll(id="notif-body"):
                 yield Markdown(self._body)
             with Horizontal(id="notif-footer"):
+                if self._release_url:
+                    yield Button(
+                        "View on GitHub",
+                        variant="default",
+                        id="btn-notif-github",
+                    )
                 yield Button(
                     self._button_label,
                     variant=self._button_variant,
                     id="btn-notif-dismiss",
                 )
+
+    @on(Button.Pressed, "#btn-notif-github")
+    def open_github_release(self) -> None:
+        """Open the release page in the system browser."""
+        if self._release_url:
+            webbrowser.open(self._release_url)
 
     @on(Button.Pressed, "#btn-notif-dismiss")
     def dismiss_notification(self) -> None:
@@ -1398,17 +1416,20 @@ def _update_screen(release_info) -> UpdateNotificationScreen:
         button_label="Dismiss",
         badge=badge,
         badge_class=badge_class,
+        release_url=rel.html_url or None,
     )
 
 
 def _welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
     """Build an UpdateNotificationScreen for the post-update welcome."""
+    release_url = f"https://github.com/MysteriousWolf/tui-vna/releases/tag/v{version}"
     return UpdateNotificationScreen(
         title=f"Thanks for updating to v{version}!",
         body=changelog,
         button_label="Got it!",
         button_variant="success",
         welcome=True,
+        release_url=release_url,
     )
 
 
