@@ -1014,11 +1014,9 @@ class UpdateNotificationScreen(ModalScreen):
     UpdateNotificationScreen #notif-footer {
         height: auto;
         margin-top: 1;
-        align-horizontal: right;
     }
     UpdateNotificationScreen #notif-footer Button {
-        width: auto;
-        margin-left: 1;
+        width: 1fr;
     }
     """
 
