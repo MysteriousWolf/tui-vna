@@ -164,6 +164,7 @@ async def main() -> None:
             await app.push_screen(HelpScreen("Distortion Tool Help", help_content))
             await _take(app, pilot, DOCS / "screenshot-help-distortion.svg")
             await pilot.press("escape")
+            await pilot.pause(0.5)
 
             # ── 6. Log tab ───────────────────────────────────────────────────
             app.query_one(TabbedContent).active = "tab_log"
