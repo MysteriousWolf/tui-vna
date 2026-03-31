@@ -1012,11 +1012,23 @@ class UpdateNotificationScreen(ModalScreen):
         height: auto;
     }
     UpdateNotificationScreen #notif-footer {
+        width: 100%;
         height: auto;
-        margin-top: 1;
+        margin-top: 0;
+        align: right middle;
     }
-    UpdateNotificationScreen #notif-footer Button {
-        width: 1fr;
+    UpdateNotificationScreen .notif-btn {
+        height: 3;
+        min-width: 0;
+    }
+    #btn-notif-github {
+        max-width: 25;
+    }
+    #btn-notif-dismiss {
+        max-width: 15;
+    }
+    UpdateNotificationScreen #footer-spacer {
+        width: 1;
     }
     """
 
@@ -1056,14 +1068,17 @@ class UpdateNotificationScreen(ModalScreen):
                 yield Markdown(self._body)
             with Horizontal(id="notif-footer"):
                 yield Button(
-                    "View on GitHub",
-                    variant="primary",
-                    id="btn-notif-github",
-                )
-                yield Button(
                     self._button_label,
                     variant=self._button_variant,
                     id="btn-notif-dismiss",
+                    classes="notif-btn",
+                )
+                yield Static(id="footer-spacer")
+                yield Button(
+                    "View on GitHub",
+                    variant="primary",
+                    id="btn-notif-github",
+                    classes="notif-btn",
                 )
 
     @on(Button.Pressed, "#btn-notif-github")
@@ -4587,7 +4602,7 @@ class VNAApp(App):
             labelw, valw = 8, 9
             hdr = (
                 f"[dim]{'':>{labelw}}  "
-                f"{'Freq ('+freq_unit+')':>{valw}}  "
+                f"{'Freq (' + freq_unit + ')':>{valw}}  "
                 f"{result.unit_label:>{valw}}[/dim]"
             )
             sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
@@ -4639,7 +4654,7 @@ class VNAApp(App):
             nw, namew, valw = 1, 10, 9
             hdr = (
                 f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
-                f"{'cₙ ('+unit+')':>{valw}}  {'Δyₙ ('+unit+')':>{valw}}[/dim]"
+                f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
             )
             sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
             lines = [hdr, sep]
