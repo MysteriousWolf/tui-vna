@@ -76,10 +76,13 @@ def migrate_legacy_config() -> str | None:
         valid = {f.name for f in fields(AppSettings)}
         filtered = {k: v for k, v in merged.items() if k in valid}
 
+        if not filtered:
+            return None
+
         try:
             settings = AppSettings(**filtered)
         except (TypeError, ValueError):
-            settings = AppSettings()
+            return None
 
         sm = SettingsManager()
         sm.save(settings)
