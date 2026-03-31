@@ -171,15 +171,25 @@ class SettingsManager:
                     # else: omit; __post_init__ will set to []
                 else:
                     expected = hints.get(k)
-                    if (
-                        expected in primitives
-                        and v is not None
-                        and not isinstance(v, expected)
-                    ):
-                        try:
-                            filtered[k] = expected(v)
-                        except (TypeError, ValueError):
-                            pass  # omit bad value; dataclass default will be used
+                    if v is None:
+                        continue  # preserve dataclass default
+                    if expected in primitives:
+                        if expected is bool and isinstance(v, str):
+                            normalized = v.strip().lower()
+                            if normalized in ("true", "1"):
+                                filtered[k] = True
+                            elif normalized in ("false", "0"):
+                                filtered[k] = False
+                            # else: omit bad value; dataclass default will be used
+                        elif expected is int and isinstance(v, bool):
+                            filtered[k] = int(v)
+                        elif not isinstance(v, expected):
+                            try:
+                                filtered[k] = expected(v)
+                            except (TypeError, ValueError):
+                                pass  # omit bad value; dataclass default will be used
+                        else:
+                            filtered[k] = v
                     else:
                         filtered[k] = v
             self.settings = AppSettings(**filtered)
