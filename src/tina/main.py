@@ -1032,6 +1032,10 @@ class UpdateNotificationScreen(ModalScreen):
     }
     """
 
+    BINDINGS = [
+        ("escape", "close", "Close"),
+    ]
+
     def __init__(
         self,
         title: str,
@@ -1085,6 +1089,10 @@ class UpdateNotificationScreen(ModalScreen):
     def open_github_release(self) -> None:
         """Open the latest releases page in the system browser."""
         webbrowser.open("https://github.com/MysteriousWolf/tui-vna/releases/latest")
+
+    def action_close(self) -> None:
+        """Close the notification modal (via Escape key or action binding)."""
+        self.dismiss()
 
     @on(Button.Pressed, "#btn-notif-dismiss")
     def dismiss_notification(self) -> None:
@@ -1206,6 +1214,10 @@ class HelpScreen(ModalScreen):
         align-horizontal: right;
     }
     """
+
+    BINDINGS = [
+        ("escape", "close", "Close"),
+    ]
 
     def __init__(self, title: str, content: str) -> None:
         """
@@ -1395,6 +1407,10 @@ class HelpScreen(ModalScreen):
                 f.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def action_close(self) -> None:
+        """Close the help modal (via Escape key or action binding)."""
+        self.dismiss()
 
     @on(Button.Pressed, "#btn-help-close")
     def close_help(self) -> None:
