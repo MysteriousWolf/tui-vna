@@ -9,10 +9,6 @@ from tina.utils.update_checker import (
     _format_fake_version_section,
     fetch_test_update_data,
     get_changelogs_since,
-    load_last_acknowledged_version,
-    load_notified_prerelease,
-    save_last_acknowledged_version,
-    save_notified_prerelease,
 )
 
 # ---------------------------------------------------------------------------
@@ -30,56 +26,6 @@ def _make_release(
         "draft": draft,
         "html_url": f"https://github.com/example/repo/releases/tag/{tag}",
     }
-
-
-# ---------------------------------------------------------------------------
-# State helpers
-# ---------------------------------------------------------------------------
-
-
-class TestStateIO:
-    def test_load_returns_empty_dict_when_no_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "tina.utils.update_checker._STATE_FILE", tmp_path / "missing.json"
-        )
-        assert load_notified_prerelease() == ""
-        assert load_last_acknowledged_version() == ""
-
-    def test_save_and_load_notified_prerelease(self, tmp_path, monkeypatch):
-        state_file = tmp_path / "update_state.json"
-        monkeypatch.setattr("tina.utils.update_checker._STATE_FILE", state_file)
-        monkeypatch.setattr("tina.utils.update_checker._CONFIG_DIR", tmp_path)
-
-        save_notified_prerelease("1.2.3b1")
-        assert load_notified_prerelease() == "1.2.3b1"
-
-    def test_save_and_load_last_acknowledged_version(self, tmp_path, monkeypatch):
-        state_file = tmp_path / "update_state.json"
-        monkeypatch.setattr("tina.utils.update_checker._STATE_FILE", state_file)
-        monkeypatch.setattr("tina.utils.update_checker._CONFIG_DIR", tmp_path)
-
-        save_last_acknowledged_version("0.2.0")
-        assert load_last_acknowledged_version() == "0.2.0"
-
-    def test_saves_preserve_other_keys(self, tmp_path, monkeypatch):
-        state_file = tmp_path / "update_state.json"
-        monkeypatch.setattr("tina.utils.update_checker._STATE_FILE", state_file)
-        monkeypatch.setattr("tina.utils.update_checker._CONFIG_DIR", tmp_path)
-
-        save_notified_prerelease("1.0.0b1")
-        save_last_acknowledged_version("0.9.0")
-
-        # Both keys should coexist
-        assert load_notified_prerelease() == "1.0.0b1"
-        assert load_last_acknowledged_version() == "0.9.0"
-
-    def test_load_tolerates_corrupt_file(self, tmp_path, monkeypatch):
-        state_file = tmp_path / "update_state.json"
-        state_file.write_text("{not valid json{{")
-        monkeypatch.setattr("tina.utils.update_checker._STATE_FILE", state_file)
-
-        assert load_notified_prerelease() == ""
-        assert load_last_acknowledged_version() == ""
 
 
 # ---------------------------------------------------------------------------

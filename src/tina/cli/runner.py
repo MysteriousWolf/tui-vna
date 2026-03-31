@@ -3,6 +3,7 @@
 import argparse
 import os
 
+from ..config.migration import migrate_legacy_config
 from ..config.settings import AppSettings, SettingsManager
 from ..drivers import HPE5071B as VNA
 from ..drivers import VNAConfig
@@ -30,6 +31,10 @@ def create_vna_config(settings: AppSettings) -> VNAConfig:
 def run_cli_measurement(args: argparse.Namespace) -> int:
     """Run measurement in CLI mode."""
     try:
+        migration_msg = migrate_legacy_config()
+        if migration_msg:
+            print(migration_msg)
+
         # Load settings
         settings_manager = SettingsManager()
         settings = settings_manager.load()

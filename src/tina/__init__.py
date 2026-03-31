@@ -1,6 +1,6 @@
 """tina - Terminal UI Network Analyzer"""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .config.settings import AppSettings, SettingsManager
 from .drivers import HPE5071B as VNA

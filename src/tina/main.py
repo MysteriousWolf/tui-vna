@@ -1,5 +1,5 @@
 """
-tina - Terminal UI Network Analyzer
+TINA - Terminal UI Network Analyzer
 """
 
 import asyncio
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -59,10 +60,6 @@ from .utils.update_checker import (
     fetch_test_update_data,
     get_changelogs_since,
     get_update_info,
-    load_last_acknowledged_version,
-    load_notified_prerelease,
-    save_last_acknowledged_version,
-    save_notified_prerelease,
 )
 from .worker import (
     LogMessage,
@@ -968,7 +965,7 @@ class UpdateNotificationScreen(ModalScreen):
         align: center middle;
     }
     #notif-dialog {
-        width: 70;
+        width: 90;
         height: auto;
         background: $surface;
         border: thick $primary;
@@ -1011,9 +1008,27 @@ class UpdateNotificationScreen(ModalScreen):
     UpdateNotificationScreen #notif-body Markdown > * {
         margin-top: 0;
     }
-    UpdateNotificationScreen #notif-footer {
+    UpdateNotificationScreen #notif-header {
         height: auto;
-        align-horizontal: right;
+    }
+    UpdateNotificationScreen #notif-footer {
+        width: 100%;
+        height: auto;
+        margin-top: 0;
+        align: right middle;
+    }
+    UpdateNotificationScreen .notif-btn {
+        height: 3;
+        min-width: 0;
+    }
+    #btn-notif-github {
+        max-width: 25;
+    }
+    #btn-notif-dismiss {
+        max-width: 15;
+    }
+    UpdateNotificationScreen #footer-spacer {
+        width: 1;
     }
     """
 
@@ -1041,7 +1056,7 @@ class UpdateNotificationScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         """Compose the modal layout: title row, scrollable body, and dismiss button."""
         with Vertical(id="notif-dialog"):
-            with Horizontal():
+            with Horizontal(id="notif-header"):
                 yield Label(self._title, id="notif-title")
                 if self._badge:
                     yield Label(
@@ -1056,7 +1071,20 @@ class UpdateNotificationScreen(ModalScreen):
                     self._button_label,
                     variant=self._button_variant,
                     id="btn-notif-dismiss",
+                    classes="notif-btn",
                 )
+                yield Static(id="footer-spacer")
+                yield Button(
+                    "View on GitHub",
+                    variant="primary",
+                    id="btn-notif-github",
+                    classes="notif-btn",
+                )
+
+    @on(Button.Pressed, "#btn-notif-github")
+    def open_github_release(self) -> None:
+        """Open the latest releases page in the system browser."""
+        webbrowser.open("https://github.com/MysteriousWolf/tui-vna/releases/latest")
 
     @on(Button.Pressed, "#btn-notif-dismiss")
     def dismiss_notification(self) -> None:
@@ -1834,7 +1862,7 @@ class StatusFooter(Footer):
 
 
 class VNAApp(App):
-    """tina - Terminal uI Network Analyzer"""
+    """TINA - Terminal UI Network Analyzer"""
 
     # Maps log level names to their filter checkbox widget IDs.
     # Both primary and secondary levels are listed here; composite levels
@@ -2337,9 +2365,14 @@ class VNAApp(App):
         Binding("ctrl+d", "toggle_debug_scpi", "SCPI Debug", show=False),
     ]
 
-    TITLE = "tina - Terminal UI Network Analyzer"
+    TITLE = "TINA - Terminal UI Network Analyzer"
 
-    def __init__(self, test_updates: bool = False):
+    def __init__(
+        self,
+        test_updates: bool = False,
+        dev_mode: bool = False,
+        migration_message: str | None = None,
+    ):
         """
         Initialize application state, configuration, worker, timers, and temporary plot directory.
 
@@ -2347,10 +2380,14 @@ class VNAApp(App):
 
         Parameters:
             test_updates (bool): When True, enable test-mode update behavior used by the background update checker (shows test/welcome notifications).
+            dev_mode (bool): When True, suppress the post-update welcome popup and skip persisting the version acknowledgement to disk.
+            migration_message (str | None): If set, logged at startup to inform the user that legacy settings were migrated.
         """
         super().__init__()
 
         self._test_updates = test_updates
+        self._dev_mode = dev_mode
+        self._migration_message = migration_message
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load()
         self.worker = MeasurementWorker()
@@ -2834,7 +2871,9 @@ class VNAApp(App):
 
     def _log_startup(self) -> None:
         """Log startup message after UI is ready."""
-        self.log_message("VNA Control ready. Connect to start.", "info")
+        self.log_message(f"TINA v{__version__} ready. Connect to start.", "info")
+        if self._migration_message:
+            self.log_message(self._migration_message, "info")
         # Log detected terminal and font info
         font_info = self.terminal_font
         if self.terminal_font_size:
@@ -2859,16 +2898,22 @@ class VNAApp(App):
             return
 
         # --- Post-update welcome (shown once per version after upgrading) ---
-        last_ack = load_last_acknowledged_version()
-        if last_ack and last_ack != __version__:
-            changelog = await loop.run_in_executor(
-                None, get_changelogs_since, last_ack, __version__
-            )
-            await self.push_screen_wait(_welcome_screen(__version__, changelog))
-            save_last_acknowledged_version(__version__)
-        elif not last_ack:
-            # First run — just record the version silently, no welcome shown
-            save_last_acknowledged_version(__version__)
+        # Skipped entirely in dev mode to avoid polluting the persistent state
+        # file with dev-build version numbers, which would suppress the popup
+        # for real users after a genuine update.
+        last_ack = self.settings.last_acknowledged_version
+        if not self._dev_mode:
+            if last_ack and last_ack != __version__:
+                changelog = await loop.run_in_executor(
+                    None, get_changelogs_since, last_ack, __version__
+                )
+                await self.push_screen_wait(_welcome_screen(__version__, changelog))
+                self.settings.last_acknowledged_version = __version__
+                self.settings_manager.save(self.settings)
+            elif not last_ack:
+                # First run — just record the version silently, no welcome shown
+                self.settings.last_acknowledged_version = __version__
+                self.settings_manager.save(self.settings)
 
         # --- Check for newer releases ---
         stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
@@ -2876,10 +2921,11 @@ class VNAApp(App):
         if stable:
             await self.push_screen_wait(_update_screen(stable))
         elif pre:
-            notified = load_notified_prerelease()
-            if notified != pre.version:
+            if self.settings.notified_prerelease != pre.version:
                 await self.push_screen_wait(_update_screen(pre))
-                save_notified_prerelease(pre.version)
+                if not self._dev_mode:
+                    self.settings.notified_prerelease = pre.version
+                    self.settings_manager.save(self.settings)
 
     def _update_plot_type_options(self) -> None:
         """Update plot type dropdown options based on selected backend."""
@@ -3426,7 +3472,11 @@ class VNAApp(App):
 
     def _update_title(self) -> None:
         """Reflect connection and debug mode state in the app title."""
-        base = "tina" if self.connected else "tina - Terminal UI Network Analyzer"
+        base = (
+            "TINA"
+            if self.connected
+            else f"TINA v{__version__} - Terminal UI Network Analyzer"
+        )
         self.title = f"{base} 🐛" if self._debug_scpi else base
 
     @on(Button.Pressed, "#btn_read_params")
@@ -4552,7 +4602,7 @@ class VNAApp(App):
             labelw, valw = 8, 9
             hdr = (
                 f"[dim]{'':>{labelw}}  "
-                f"{'Freq ('+freq_unit+')':>{valw}}  "
+                f"{'Freq (' + freq_unit + ')':>{valw}}  "
                 f"{result.unit_label:>{valw}}[/dim]"
             )
             sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
@@ -4604,7 +4654,7 @@ class VNAApp(App):
             nw, namew, valw = 1, 10, 9
             hdr = (
                 f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
-                f"{'cₙ ('+unit+')':>{valw}}  {'Δyₙ ('+unit+')':>{valw}}[/dim]"
+                f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
             )
             sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
             lines = [hdr, sep]
@@ -5317,9 +5367,16 @@ class VNAApp(App):
         self.query_one("#btn_export_svg", Button).disabled = False
 
 
-def run_gui(test_updates: bool = False):
+def run_gui(test_updates: bool = False, dev_mode: bool = False):
     """Run GUI mode with proper imports."""
-    app = VNAApp(test_updates=test_updates)
+    from .config.migration import migrate_legacy_config
+
+    migration_message = migrate_legacy_config()
+    app = VNAApp(
+        test_updates=test_updates,
+        dev_mode=dev_mode,
+        migration_message=migration_message,
+    )
     app.run()
 
 
@@ -5335,7 +5392,7 @@ def main():
         return run_cli_measurement(args)
     else:
         # GUI mode
-        run_gui(test_updates=args.test_updates)
+        run_gui(test_updates=args.test_updates, dev_mode=args.dev)
         return 0
 
 

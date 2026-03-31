@@ -42,10 +42,10 @@ uv pip install --group lint
 # Run black
 echo -e "\n${YELLOW}Running black (code formatter)...${NC}"
 if [ "$FIX" = true ]; then
-    uv run black src/ tests/
+    uv run black src/ tests/ scripts/
     echo -e "${GREEN}✓ Code formatted${NC}"
 elif [ "$CHECK_ONLY" = true ]; then
-    if uv run black --check src/ tests/; then
+    if uv run black --check src/ tests/ scripts/; then
         echo -e "${GREEN}✓ Code formatting is correct${NC}"
     else
         echo -e "${RED}✗ Code formatting issues found${NC}"
@@ -53,7 +53,7 @@ elif [ "$CHECK_ONLY" = true ]; then
         exit 1
     fi
 else
-    if uv run black --check --diff src/ tests/; then
+    if uv run black --check --diff src/ tests/ scripts/; then
         echo -e "${GREEN}✓ Code formatting is correct${NC}"
     else
         echo -e "${RED}✗ Code formatting issues found${NC}"
@@ -65,10 +65,10 @@ fi
 # Run ruff
 echo -e "\n${YELLOW}Running ruff (linter)...${NC}"
 if [ "$FIX" = true ]; then
-    uv run ruff check --fix src/ tests/
+    uv run ruff check --fix src/ tests/ scripts/
     echo -e "${GREEN}✓ Linting issues fixed${NC}"
 else
-    if uv run ruff check src/ tests/; then
+    if uv run ruff check src/ tests/ scripts/; then
         echo -e "${GREEN}✓ No linting issues${NC}"
     else
         echo -e "${RED}✗ Linting issues found${NC}"

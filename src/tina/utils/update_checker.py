@@ -2,16 +2,12 @@
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from packaging.version import Version
-from platformdirs import user_config_dir
 
 GITHUB_RELEASES_URL = "https://api.github.com/repos/MysteriousWolf/tui-vna/releases"
-_CONFIG_DIR = Path(user_config_dir("hp-e5071b"))
-_STATE_FILE = _CONFIG_DIR / "update_state.json"
 
 
 @dataclass
@@ -22,53 +18,6 @@ class ReleaseInfo:
     is_prerelease: bool
     changelog: str
     html_url: str
-
-
-# --- State helpers -----------------------------------------------------------
-
-
-def _load_state() -> dict:
-    """Load the persistent update state from disk, returning {} on any error."""
-    try:
-        with open(_STATE_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError, ValueError):
-        return {}
-
-
-def _save_state(state: dict) -> None:
-    """Persist the update state dict to disk, silently ignoring write errors."""
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except OSError:
-        pass
-
-
-def load_notified_prerelease() -> str:
-    """Return the pre-release version string the user was last notified about."""
-    return _load_state().get("notified_prerelease", "")
-
-
-def save_notified_prerelease(version: str) -> None:
-    """Persist the pre-release version the user has been notified about."""
-    state = _load_state()
-    state["notified_prerelease"] = version
-    _save_state(state)
-
-
-def load_last_acknowledged_version() -> str:
-    """Return the version the user last acknowledged (post-update welcome)."""
-    return _load_state().get("last_acknowledged_version", "")
-
-
-def save_last_acknowledged_version(version: str) -> None:
-    """Persist the version the user acknowledged after updating."""
-    state = _load_state()
-    state["last_acknowledged_version"] = version
-    _save_state(state)
 
 
 # --- Test data ---------------------------------------------------------------
