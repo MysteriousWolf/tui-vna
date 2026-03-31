@@ -141,7 +141,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PREV_TAG=$(git tag --sort=-version:refname --merged "${GITHUB_REF_NAME}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
-          echo "prev_tag=${PREV_TAG}" >> $GITHUB_OUTPUT
+          echo "prev_tag=${PREV_TAG}" >> "${GITHUB_OUTPUT}"
 
           # Find the base minor tag (e.g. v0.2.0 for v0.2.3) for the recap section
           MAJOR_MINOR=$(echo "${GITHUB_REF_NAME}" | grep -oE '^v[0-9]+\.[0-9]+')
@@ -150,23 +150,23 @@ jobs:
           if [ "$BASE_MINOR_TAG" = "${GITHUB_REF_NAME}" ] || [ "$BASE_MINOR_TAG" = "$PREV_TAG" ]; then
             BASE_MINOR_TAG=""
           fi
-          echo "base_minor_tag=${BASE_MINOR_TAG}" >> $GITHUB_OUTPUT
+          echo "base_minor_tag=${BASE_MINOR_TAG}" >> "${GITHUB_OUTPUT}"
 
           if [ -z "$PREV_TAG" ]; then
-            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+            echo "changelog=Initial release" >> "${GITHUB_OUTPUT}"
           else
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "changelog<<EOF" >> "${GITHUB_OUTPUT}"
             gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}" \
-              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> "${GITHUB_OUTPUT}"
+            echo "EOF" >> "${GITHUB_OUTPUT}"
           fi
 
           # Recap: all commits since the base minor tag (only for patch releases)
           if [ -n "$BASE_MINOR_TAG" ]; then
-            echo "recap<<EOF" >> $GITHUB_OUTPUT
+            echo "recap<<EOF" >> "${GITHUB_OUTPUT}"
             gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_MINOR_TAG}...${GITHUB_REF_NAME}" \
-              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> "${GITHUB_OUTPUT}"
+            echo "EOF" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Generate AI release summary
@@ -193,16 +193,16 @@ jobs:
 
           SUMMARY_PROMPT=$(printf '%s\n\nCommits since last release:\n%s' "$BASE_PROMPT" "$COMMITS")
           SUMMARY=$(call_model "$SUMMARY_PROMPT")
-          echo "summary<<EOF" >> $GITHUB_OUTPUT
-          echo "${SUMMARY}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "summary<<EOF" >> "${GITHUB_OUTPUT}"
+          echo "${SUMMARY}" >> "${GITHUB_OUTPUT}"
+          echo "EOF" >> "${GITHUB_OUTPUT}"
 
           if [ -n "$RECAP_COMMITS" ]; then
             RECAP_PROMPT=$(printf '%s\n\nWrite a brief one-paragraph recap (no headers) summarising all changes in this minor release series so far.\n\nAll commits in this minor release series:\n%s' "$BASE_PROMPT" "$RECAP_COMMITS")
             RECAP=$(call_model "$RECAP_PROMPT")
-            echo "recap<<EOF" >> $GITHUB_OUTPUT
-            echo "${RECAP}" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "recap<<EOF" >> "${GITHUB_OUTPUT}"
+            echo "${RECAP}" >> "${GITHUB_OUTPUT}"
+            echo "EOF" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Compose release body
@@ -235,7 +235,7 @@ jobs:
               echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}"
             fi
             echo "EOF"
-          } >> $GITHUB_OUTPUT
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
