@@ -1008,12 +1008,17 @@ class UpdateNotificationScreen(ModalScreen):
     UpdateNotificationScreen #notif-body Markdown > * {
         margin-top: 0;
     }
+    UpdateNotificationScreen #notif-header {
+        height: auto;
+    }
     UpdateNotificationScreen #notif-footer {
         height: auto;
+        margin-top: 1;
         align-horizontal: right;
     }
-    UpdateNotificationScreen #btn-notif-github {
-        margin-right: 1;
+    UpdateNotificationScreen #notif-footer Button {
+        width: auto;
+        margin-left: 1;
     }
     """
 
@@ -1041,7 +1046,7 @@ class UpdateNotificationScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         """Compose the modal layout: title row, scrollable body, and dismiss button."""
         with Vertical(id="notif-dialog"):
-            with Horizontal():
+            with Horizontal(id="notif-header"):
                 yield Label(self._title, id="notif-title")
                 if self._badge:
                     yield Label(
