@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 jobs:
   test:
@@ -140,20 +141,105 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PREV_TAG=$(git tag --sort=-version:refname --merged "${GITHUB_REF_NAME}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          echo "prev_tag=${PREV_TAG}" >> "${GITHUB_OUTPUT}"
+
+          # Find the base minor tag (e.g. v0.2.0 for v0.2.3) for the recap section
+          MAJOR_MINOR=$(echo "${GITHUB_REF_NAME}" | grep -oE '^v[0-9]+\.[0-9]+')
+          BASE_MINOR_TAG=$(git tag --sort=version:refname | grep -E "^${MAJOR_MINOR}\\.0$" | tail -1)
+          # Only useful if it differs from both the current tag and prev tag
+          if [ "$BASE_MINOR_TAG" = "${GITHUB_REF_NAME}" ] || [ "$BASE_MINOR_TAG" = "$PREV_TAG" ]; then
+            BASE_MINOR_TAG=""
+          fi
+          echo "base_minor_tag=${BASE_MINOR_TAG}" >> "${GITHUB_OUTPUT}"
 
           if [ -z "$PREV_TAG" ]; then
-            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+            echo "changelog=Initial release" >> "${GITHUB_OUTPUT}"
           else
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "changelog<<EOF" >> "${GITHUB_OUTPUT}"
             gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}" \
-              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> "${GITHUB_OUTPUT}"
+            echo "EOF" >> "${GITHUB_OUTPUT}"
           fi
+
+          # Recap: all commits since the base minor tag (only for patch releases)
+          if [ -n "$BASE_MINOR_TAG" ]; then
+            echo "recap<<EOF" >> "${GITHUB_OUTPUT}"
+            gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_MINOR_TAG}...${GITHUB_REF_NAME}" \
+              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> "${GITHUB_OUTPUT}"
+            echo "EOF" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Generate AI release summary
+        id: ai_summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMITS: ${{ steps.changelog.outputs.changelog }}
+          RECAP_COMMITS: ${{ steps.changelog.outputs.recap }}
+        run: |
+          call_model() {
+            local prompt="$1"
+            curl -sf --connect-timeout 10 --max-time 30 https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg p "$prompt" '{
+                model: "gpt-4o-mini",
+                max_tokens: 512,
+                messages: [{"role": "user", "content": $p}]
+              }')" 2>/dev/null \
+            | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
+          }
+
+          BASE_PROMPT="You are writing GitHub release notes for tina, a terminal-based VNA (Vector Network Analyzer) control application. Write a concise summary grouped by theme using bold markdown headers. Be specific about what changed. Skip CI, formatting, documentation-only, and internal tooling commits."
+
+          SUMMARY_PROMPT=$(printf '%s\n\nCommits since last release:\n%s' "$BASE_PROMPT" "$COMMITS")
+          SUMMARY=$(call_model "$SUMMARY_PROMPT")
+          echo "summary<<EOF" >> "${GITHUB_OUTPUT}"
+          echo "${SUMMARY}" >> "${GITHUB_OUTPUT}"
+          echo "EOF" >> "${GITHUB_OUTPUT}"
+
+          if [ -n "$RECAP_COMMITS" ]; then
+            RECAP_PROMPT=$(printf '%s\n\nWrite a brief one-paragraph recap (no headers) summarising all changes in this minor release series so far.\n\nAll commits in this minor release series:\n%s' "$BASE_PROMPT" "$RECAP_COMMITS")
+            RECAP=$(call_model "$RECAP_PROMPT")
+            echo "recap<<EOF" >> "${GITHUB_OUTPUT}"
+            echo "${RECAP}" >> "${GITHUB_OUTPUT}"
+            echo "EOF" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Compose release body
+        id: release_body
+        env:
+          SUMMARY: ${{ steps.ai_summary.outputs.summary }}
+          RECAP: ${{ steps.ai_summary.outputs.recap }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+          PREV_TAG: ${{ steps.changelog.outputs.prev_tag }}
+          BASE_MINOR_TAG: ${{ steps.changelog.outputs.base_minor_tag }}
+        run: |
+          {
+            echo "body<<EOF"
+            if [ -n "$SUMMARY" ]; then
+              echo "$SUMMARY"
+              echo ""
+            fi
+            if [ -n "$RECAP" ]; then
+              echo "---"
+              echo ""
+              echo "**Release series recap** (since ${BASE_MINOR_TAG}): ${RECAP}"
+              echo ""
+            fi
+            echo "---"
+            echo ""
+            echo "## Commits"
+            echo "$CHANGELOG"
+            if [ -n "$PREV_TAG" ]; then
+              echo ""
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ steps.changelog.outputs.changelog }}
+          body: ${{ steps.release_body.outputs.body }}
           files: release-assets/*
           fail_on_unmatched_files: true

@@ -1,13 +1,38 @@
-# tina - Terminal user Interface Network Analyzer
+# TINA - Terminal UI Network Analyzer
 
 Terminal-based VNA control with **dynamic driver discovery**.
 
-## Features
+![TINA startup screen](docs/screenshot.svg)
 
-- 🔌 Plugin architecture - add VNA support by dropping a driver file
-- 🎯 Clean TUI with real-time plotting and S2P export
-- ⚡ Automatic driver detection from `*IDN?` response
-- 🖥️ CLI mode: `tina --now` for quick measurements
+## Overview
+
+TINA is a TUI application for controlling Vector Network Analyzers over LAN/GPIB. It handles the full measurement workflow — connection, configuration, measurement, export, and analysis — entirely from the terminal.
+
+### Measurement tab
+
+Configure the VNA, trigger measurements, and view S-parameter plots in real time. Supports magnitude, phase, and Smith chart views with adjustable frequency and amplitude axis limits. Results are exported as Touchstone `.s2p` files with configurable output folder and filename.
+
+![Measurement tab](docs/screenshot-measurement.svg)
+
+### Tools tab
+
+Analyse the last measurement without reconnecting. Two tools are available:
+
+**Cursor** — place two frequency markers on any S-parameter trace and read off values and the delta between them.
+
+**Distortion** — fit a Legendre polynomial series to the selected trace over a user-defined frequency window and decompose the response into flatness (P₀), tilt (P₁), bow (P₂), and higher-order distortion components. Each component reports its peak-to-peak contribution in dB.
+
+![Tools tab — distortion analysis](docs/screenshot-tools.svg)
+
+The built-in help popup explains the math behind each tool.
+
+![Distortion tool help](docs/screenshot-help-distortion.svg)
+
+### Log tab
+
+Full session log with per-level filtering. Tracks every SCPI exchange, connection event, measurement step, and file export. Useful for diagnosing instrument communication issues.
+
+![Log tab](docs/screenshot-log.svg)
 
 ## Installation
 
@@ -30,15 +55,17 @@ For systems without Python/uv, download standalone executables from [GitHub Rele
 
 **Full version** (includes TUI):
 
-- **Windows**: `tina-windows-x86_64.exe`
-- **Linux**: `tina-linux-x86_64`
-- **macOS**: `tina-macos-x86_64`
+- **Windows**: `tina-v{VERSION}-windows-x86_64.exe`
+- **Linux**: `tina-v{VERSION}-linux-x86_64`
+- **macOS**: `tina-v{VERSION}-macos-x86_64`
 
 **Quick version** (CLI only, faster startup):
 
-- **Windows**: `tina-quick-windows-x86_64.exe`
-- **Linux**: `tina-quick-linux-x86_64`
-- **macOS**: `tina-quick-macos-x86_64`
+- **Windows**: `tina-quick-v{VERSION}-windows-x86_64.exe`
+- **Linux**: `tina-quick-v{VERSION}-linux-x86_64`
+- **macOS**: `tina-quick-v{VERSION}-macos-x86_64`
+
+Replace `v{VERSION}` with the release tag (e.g. `v0.2.1`). Pick the asset matching your platform from the Releases page.
 
 Quick variants are optimized for scripting and automation. Run the full version at least once to configure connection settings, then use quick version for fast measurements without parameters.
 

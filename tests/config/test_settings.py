@@ -1,9 +1,9 @@
 """Tests for settings persistence and management."""
 
-import json
 from unittest.mock import patch
 
 import pytest
+from ruamel.yaml import YAML
 
 from tina.config.settings import AppSettings, SettingsManager
 
@@ -104,7 +104,7 @@ class TestSettingsManager:
         assert settings_manager.config_file.exists()
 
         with open(settings_manager.config_file) as f:
-            data = json.load(f)
+            data = YAML().load(f)
 
         assert data["last_host"] == "192.168.1.100"
 
@@ -129,12 +129,25 @@ class TestSettingsManager:
 
     def test_corrupted_config_returns_defaults(self, settings_manager):
         """Test that corrupted config returns defaults."""
-        # Write invalid JSON
-        settings_manager.config_file.write_text("{ invalid json }")
+        # Write unparseable YAML (triggers the exception path in load())
+        malformed = "[unclosed"
+        settings_manager.config_file.write_text(malformed)
 
         settings = settings_manager.load()
         assert isinstance(settings, AppSettings)
         assert settings.last_host == ""
+
+        # Save should back up the corrupt file before writing defaults
+        settings_manager.save()
+        config_dir = settings_manager.config_file.parent
+        backups = [
+            f
+            for f in config_dir.iterdir()
+            if f.name.startswith(settings_manager.config_file.name)
+            and f != settings_manager.config_file
+        ]
+        assert len(backups) == 1
+        assert malformed in backups[0].read_text()
 
     def test_merge_port_history_adds_defaults(self, settings_manager):
         """Test that default ports are always present."""

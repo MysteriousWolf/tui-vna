@@ -1,7 +1,7 @@
 [project]
 name = "tui-vna"
-version = "0.2.0"
-description = "tina - Terminal UI Network Analyzer"
+version = "0.2.1"
+description = "TINA - Terminal UI Network Analyzer"
 requires-python = ">=3.10"
 dependencies = [
     "pyvisa>=1.14.0",
@@ -14,7 +14,9 @@ dependencies = [
     "matplotlib>=3.7.0",
     "scikit-rf>=0.30.0",
     "packaging>=21.0",
+    "platformdirs>=3.0.0",
     "pylatexenc>=2.10",
+    "ruamel.yaml>=0.18.0",
 ]
 authors = [
     {name = "tina", email = "tina@example.com"}
