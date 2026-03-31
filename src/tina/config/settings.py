@@ -215,13 +215,14 @@ class SettingsManager:
             backup = self.config_file.with_suffix(".yaml.bak")
             try:
                 self.config_file.replace(backup)
+                self._load_failed = False
             except OSError as exc:
                 warnings.warn(
                     f"Could not back up corrupt settings file: {exc}",
                     UserWarning,
                     stacklevel=2,
                 )
-            self._load_failed = False
+                return
 
         data = {"config_version": self.CONFIG_VERSION, **asdict(self.settings)}
 
@@ -232,8 +233,20 @@ class SettingsManager:
                     loaded = _yaml.load(f)
                 if isinstance(loaded, dict):
                     existing = loaded
-            except Exception:
-                pass
+                else:
+                    warnings.warn(
+                        "settings.yaml has unexpected structure; skipping save",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    return
+            except Exception as exc:
+                warnings.warn(
+                    f"Could not read settings.yaml: {exc}; skipping save",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return
 
         if existing is None:
             existing = _build_commented_map(data)
