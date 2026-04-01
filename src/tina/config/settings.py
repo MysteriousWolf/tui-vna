@@ -89,6 +89,14 @@ class AppSettings:
     filename_prefix: str = "measurement"
     use_custom_filename: bool = False
     custom_filename: str = ""
+    filename_template: str = "measurement_{date}_{time}"
+    folder_template: str = "measurement"
+    filename_template_history: list[str] | None = None
+    folder_template_history: list[str] | None = None
+    export_bundle_s2p: bool = True
+    export_bundle_csv: bool = False
+    export_bundle_png: bool = True
+    export_bundle_svg: bool = False
     export_s11: bool = True
     export_s21: bool = True
     export_s12: bool = True
@@ -113,6 +121,10 @@ class AppSettings:
             self.host_history = []
         if self.port_history is None:
             self.port_history = []
+        if self.filename_template_history is None:
+            self.filename_template_history = [self.filename_template]
+        if self.folder_template_history is None:
+            self.folder_template_history = [self.folder_template]
 
 
 class SettingsManager:
@@ -126,6 +138,7 @@ class SettingsManager:
     DEFAULT_PORTS = ["inst0", "inst1", "inst2", "inst3", "hislip0", "gpib0,16"]
     MAX_PORT_HISTORY = 10
     MAX_HOST_HISTORY = 10
+    MAX_TEMPLATE_HISTORY = 20
 
     def __init__(self):
         """Initialize settings manager."""
@@ -163,12 +176,17 @@ class SettingsManager:
             for k, v in data.items():
                 if k not in valid:
                     continue
-                if k in ("host_history", "port_history"):
+                if k in (
+                    "host_history",
+                    "port_history",
+                    "filename_template_history",
+                    "folder_template_history",
+                ):
                     if isinstance(v, list):
                         filtered[k] = [str(x) for x in v if x is not None]
                     elif isinstance(v, str) and v:
                         filtered[k] = [v]
-                    # else: omit; __post_init__ will set to []
+                    # else: omit; __post_init__ will set defaults
                 else:
                     expected = hints.get(k)
                     if v is None:
@@ -209,6 +227,14 @@ class SettingsManager:
             self.settings = settings
 
         self._merge_port_history()
+        self._normalize_template_history(
+            "filename_template_history",
+            self.settings.filename_template,
+        )
+        self._normalize_template_history(
+            "folder_template_history",
+            self.settings.folder_template,
+        )
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         if self._load_failed and self.config_file.exists():
@@ -328,3 +354,45 @@ class SettingsManager:
     def get_host_options(self) -> list[tuple[str, str]]:
         """Get host options for the dropdown as (value, label) tuples."""
         return [(host, host) for host in self.settings.host_history]
+
+    def _normalize_template_history(self, field_name: str, current_value: str) -> None:
+        """Normalize a template-history field into MRU order with the current value first."""
+        raw_history = getattr(self.settings, field_name) or []
+        normalized: list[str] = []
+
+        current = current_value.strip()
+        if current:
+            normalized.append(current)
+
+        for item in raw_history:
+            candidate = str(item).strip()
+            if candidate and candidate not in normalized:
+                normalized.append(candidate)
+
+        setattr(self.settings, field_name, normalized[: self.MAX_TEMPLATE_HISTORY])
+
+    def touch_template_history(self, field_name: str, value: str) -> None:
+        """Move a template value to the top of the selected MRU history."""
+        normalized = value.strip()
+        if not normalized:
+            return
+
+        history = list(getattr(self.settings, field_name) or [])
+        if normalized in history:
+            history.remove(normalized)
+        history.insert(0, normalized)
+        setattr(self.settings, field_name, history[: self.MAX_TEMPLATE_HISTORY])
+
+    def get_filename_template_options(self) -> list[tuple[str, str]]:
+        """Get filename template history entries as dropdown options."""
+        return [
+            (template, template)
+            for template in (self.settings.filename_template_history or [])
+        ]
+
+    def get_folder_template_options(self) -> list[tuple[str, str]]:
+        """Get folder template history entries as dropdown options."""
+        return [
+            (template, template)
+            for template in (self.settings.folder_template_history or [])
+        ]
