@@ -53,6 +53,13 @@ matplotlib.use("Agg")
 from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
+from .export import (
+    DEFAULT_TEMPLATE_TAGS,
+    PATH_INVALID_CHARS,
+    build_export_template_context,
+    render_template,
+    validate_template,
+)
 from .tools import DistortionTool, MeasureTool
 from .tools.distortion import COMPONENT_NAMES as _DISTORTION_COMPONENT_NAMES
 from .utils import TouchstoneExporter
@@ -1974,6 +1981,14 @@ class VNAApp(App):
         width: 1fr;
     }
 
+    Input.template-warning {
+        border: tall $warning;
+    }
+
+    Input.template-error {
+        border: tall $error;
+    }
+
     .param-row .col-check {
         width: 17;
     }
@@ -2420,6 +2435,8 @@ class VNAApp(App):
         self._poll_timer = None  # Timer for status bar polling
         self._status_poll_in_flight = False  # True while a STATUS_POLL is outstanding
         self._debug_scpi = self.settings.debug_scpi
+        self._filename_template_validation = None
+        self._folder_template_validation = None
 
         # Tools tab state
         self._tools_cursor1_hz: float | None = None
@@ -2555,16 +2572,16 @@ class VNAApp(App):
                     with Container(classes="panel") as panel:
                         panel.border_title = "Output"
                         with Horizontal(classes="param-row"):
-                            yield Label("Prefix:", classes="col-label")
+                            yield Label("File tmpl:", classes="col-label")
                             yield Input(
                                 value=self.settings.filename_prefix,
-                                placeholder="measurement",
+                                placeholder="measurement_{date}_{time}",
                                 id="input_filename_prefix",
                                 classes="col-input",
                             )
                             yield Static("", classes="col-check")
                         with Horizontal(classes="param-row"):
-                            yield Label("Folder:", classes="col-label")
+                            yield Label("Folder tmpl:", classes="col-label")
                             yield Input(
                                 value=self.settings.output_folder,
                                 placeholder="measurement",
@@ -2576,7 +2593,7 @@ class VNAApp(App):
                             yield Label("Filename:", classes="col-label")
                             yield Input(
                                 value=self.settings.custom_filename,
-                                placeholder="(auto-generated)",
+                                placeholder="(template preview / legacy override)",
                                 id="input_custom_filename",
                                 classes="col-input",
                                 disabled=not self.settings.use_custom_filename,
@@ -2872,9 +2889,10 @@ class VNAApp(App):
         self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
+        self.call_after_refresh(self._refresh_export_template_validation)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
-        # Initialize plot type dropdown based on backend
+        # Initialize plot-type options based on backend
         self._update_plot_type_options()
         # Apply active tool UI state at startup
         self._apply_tool_ui()
@@ -3042,9 +3060,11 @@ class VNAApp(App):
             self.settings.output_folder = self.query_one(
                 "#input_output_folder", Input
             ).value
+            self.settings.folder_template = self.settings.output_folder
             self.settings.filename_prefix = self.query_one(
                 "#input_filename_prefix", Input
             ).value
+            self.settings.filename_template = self.settings.filename_prefix
             self.settings.use_custom_filename = self.query_one(
                 "#check_custom_filename", Checkbox
             ).value
@@ -3063,6 +3083,15 @@ class VNAApp(App):
             self.settings.export_s22 = self.query_one(
                 "#check_export_s22", Checkbox
             ).value
+            self.settings.export_bundle_s2p = True
+            self.settings_manager.touch_template_history(
+                "filename_template_history",
+                self.settings.filename_template,
+            )
+            self.settings_manager.touch_template_history(
+                "folder_template_history",
+                self.settings.folder_template,
+            )
 
             # Plot settings
             self.settings.plot_s11 = self.query_one("#check_plot_s11", Checkbox).value
@@ -3085,6 +3114,89 @@ class VNAApp(App):
         except Exception:
             # Silently fail during shutdown to avoid errors
             pass
+
+    def _build_export_template_context(self) -> dict[str, object]:
+        """Build export-template context from current setup state."""
+        start_freq = float(self.query_one("#input_start_freq", Input).value or "1.0")
+        stop_freq = float(self.query_one("#input_stop_freq", Input).value or "1100.0")
+        sweep_points = int(self.query_one("#input_points", Input).value or "601")
+        averaging_count = int(self.query_one("#input_avg_count", Input).value or "16")
+        span = stop_freq - start_freq
+
+        return build_export_template_context(
+            date_time=datetime.now(),
+            host=self.query_one("#input_host", Input).value.strip(),
+            vendor=getattr(self.worker, "vendor", ""),
+            model=getattr(self.worker, "model", ""),
+            start=f"{start_freq:.6g}",
+            stop=f"{stop_freq:.6g}",
+            span=f"{span:.6g}",
+            pts=sweep_points,
+            avg=averaging_count,
+            ifbw="",
+            cal=False,
+        )
+
+    def _validate_export_template(self, template: str, *, allow_path_separators: bool):
+        """Validate one export template, optionally permitting folder separators."""
+        invalid_chars = set(PATH_INVALID_CHARS)
+        if allow_path_separators:
+            invalid_chars.discard("/")
+            invalid_chars.discard("\\")
+
+        return validate_template(
+            template,
+            allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
+            invalid_path_chars=invalid_chars,
+        )
+
+    def _apply_template_input_state(
+        self, input_id: str, validation, *, kind: str
+    ) -> None:
+        """Apply warning/error classes and tooltip-like hints to a template input."""
+        widget = self.query_one(input_id, Input)
+        widget.remove_class("template-warning", "template-error")
+
+        messages: list[str] = []
+        if validation.has_warnings:
+            widget.add_class("template-warning")
+            messages.append(
+                f"Unknown {kind} tags: {', '.join(validation.unknown_tags)}"
+            )
+        if validation.has_errors:
+            widget.add_class("template-error")
+            messages.append(
+                "Invalid path characters: " + ", ".join(validation.invalid_characters)
+            )
+
+        widget.tooltip = "\n".join(messages) if messages else None
+
+    def _refresh_export_template_validation(self) -> None:
+        """Validate current filename and folder templates and refresh input styling."""
+        filename_template = self.query_one(
+            "#input_filename_prefix", Input
+        ).value.strip()
+        folder_template = self.query_one("#input_output_folder", Input).value.strip()
+
+        self._filename_template_validation = self._validate_export_template(
+            filename_template or self.settings.filename_template,
+            allow_path_separators=False,
+        )
+        self._folder_template_validation = self._validate_export_template(
+            folder_template or self.settings.folder_template,
+            allow_path_separators=True,
+        )
+
+        self._apply_template_input_state(
+            "#input_filename_prefix",
+            self._filename_template_validation,
+            kind="filename template",
+        )
+        self._apply_template_input_state(
+            "#input_output_folder",
+            self._folder_template_validation,
+            kind="folder template",
+        )
 
     def _start_message_polling(self):
         """Start polling worker thread for messages."""
@@ -3215,6 +3327,12 @@ class VNAApp(App):
         """Enable/disable custom filename input based on checkbox."""
         custom_input = self.query_one("#input_custom_filename", Input)
         custom_input.disabled = not event.value
+
+    @on(Input.Changed, "#input_filename_prefix, #input_output_folder")
+    def on_export_template_change(self, event: Input.Changed) -> None:
+        """Refresh export-template validation when the template inputs change."""
+        del event
+        self._refresh_export_template_validation()
 
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
@@ -3631,22 +3749,99 @@ class VNAApp(App):
             freq_unit = self.query_one("#select_freq_unit", Select).value
             exporter = TouchstoneExporter(freq_unit=freq_unit)
 
-            # Determine filename and prefix
-            use_custom = self.query_one("#check_custom_filename", Checkbox).value
-            prefix = self.query_one("#input_filename_prefix", Input).value.strip()
-            if not prefix:
-                prefix = "measurement"
+            filename_template = self.query_one(
+                "#input_filename_prefix", Input
+            ).value.strip()
+            if not filename_template:
+                filename_template = (
+                    self.settings.filename_template or "measurement_{date}_{time}"
+                )
 
+            folder_template = self.query_one(
+                "#input_output_folder", Input
+            ).value.strip()
+            if not folder_template:
+                folder_template = self.settings.folder_template or "measurement"
+
+            filename_validation = self._validate_export_template(
+                filename_template,
+                allow_path_separators=False,
+            )
+            folder_validation = self._validate_export_template(
+                folder_template,
+                allow_path_separators=True,
+            )
+
+            self._filename_template_validation = filename_validation
+            self._folder_template_validation = folder_validation
+            self._apply_template_input_state(
+                "#input_filename_prefix",
+                filename_validation,
+                kind="filename template",
+            )
+            self._apply_template_input_state(
+                "#input_output_folder",
+                folder_validation,
+                kind="folder template",
+            )
+
+            if filename_validation.has_errors or folder_validation.has_errors:
+                self.notify(
+                    "Export blocked: fix output template path errors first.",
+                    severity="error",
+                    timeout=3,
+                )
+                self.log_message(
+                    "Export blocked due to invalid output template characters.",
+                    "error",
+                )
+                self.sub_title = "Connected"
+                return
+
+            export_context = self._build_export_template_context()
+            rendered_filename = render_template(
+                filename_template,
+                context=export_context,
+                allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
+            )
+            rendered_folder = render_template(
+                folder_template,
+                context=export_context,
+                allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
+                invalid_path_chars=set(PATH_INVALID_CHARS) - {"/", "\\"},
+            )
+
+            if rendered_filename.validation.has_warnings:
+                self.log_message(
+                    "Filename template contains unknown tags: "
+                    + ", ".join(rendered_filename.validation.unknown_tags),
+                    "info",
+                )
+            if rendered_folder.validation.has_warnings:
+                self.log_message(
+                    "Folder template contains unknown tags: "
+                    + ", ".join(rendered_folder.validation.unknown_tags),
+                    "info",
+                )
+
+            use_custom = self.query_one("#check_custom_filename", Checkbox).value
             if use_custom:
                 filename = self.query_one("#input_custom_filename", Input).value.strip()
                 if not filename:
                     filename = None
             else:
-                filename = None
+                filename = rendered_filename.rendered.strip() or None
 
-            output_folder = self.query_one("#input_output_folder", Input).value.strip()
-            if not output_folder:
-                output_folder = "measurement"
+            output_folder = rendered_folder.rendered.strip() or "measurement"
+
+            self.settings_manager.touch_template_history(
+                "filename_template_history",
+                filename_template,
+            )
+            self.settings_manager.touch_template_history(
+                "folder_template_history",
+                folder_template,
+            )
 
             output_path = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -3655,7 +3850,7 @@ class VNAApp(App):
                 export_params,
                 output_folder,
                 filename,
-                prefix,
+                "measurement",
             )
 
             self.log_message(f"Saved: {output_path}", "success")
