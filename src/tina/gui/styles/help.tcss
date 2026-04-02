@@ -1,0 +1,45 @@
+HelpScreen {
+    align: center middle;
+}
+
+#help-dialog {
+    width: 90%;
+    height: 90%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+#help-title {
+    text-style: bold;
+    color: $primary;
+    width: 1fr;
+}
+
+#help-body {
+    height: 1fr;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 0;
+}
+
+#help-body Markdown {
+    margin: 0;
+    padding: 0;
+}
+
+#help-body Markdown > * {
+    margin-top: 0;
+}
+
+.math-img-row {
+    height: auto;
+    width: 100%;
+    align-horizontal: center;
+    margin: 0 0 1 0;
+}
+
+#help-footer {
+    height: auto;
+    align-horizontal: right;
+}

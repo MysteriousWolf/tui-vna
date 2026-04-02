@@ -1,0 +1,85 @@
+UpdateNotificationScreen {
+    align: center middle;
+}
+
+#notif-dialog {
+    width: 90;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+UpdateNotificationScreen.--welcome #notif-dialog {
+    border: thick $success;
+}
+
+UpdateNotificationScreen #notif-title {
+    text-style: bold;
+    width: 1fr;
+}
+
+UpdateNotificationScreen.--welcome #notif-title {
+    color: $success;
+}
+
+UpdateNotificationScreen #notif-badge {
+    margin-left: 1;
+}
+
+UpdateNotificationScreen .badge-stable {
+    background: $success;
+    color: $background;
+    padding: 0 1;
+}
+
+UpdateNotificationScreen .badge-pre {
+    background: $warning;
+    color: $background;
+    padding: 0 1;
+}
+
+UpdateNotificationScreen #notif-body {
+    height: auto;
+    max-height: 60vh;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 0;
+}
+
+UpdateNotificationScreen #notif-body Markdown {
+    margin: 0;
+    padding: 0;
+}
+
+UpdateNotificationScreen #notif-body Markdown > * {
+    margin-top: 0;
+}
+
+UpdateNotificationScreen #notif-header {
+    height: auto;
+}
+
+UpdateNotificationScreen #notif-footer {
+    width: 100%;
+    height: auto;
+    margin-top: 0;
+    align: right middle;
+}
+
+UpdateNotificationScreen .notif-btn {
+    height: 3;
+    min-width: 0;
+}
+
+#btn-notif-github {
+    max-width: 25;
+}
+
+#btn-notif-dismiss {
+    max-width: 15;
+}
+
+UpdateNotificationScreen #footer-spacer {
+    width: 1;
+}

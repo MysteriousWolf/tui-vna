@@ -1,0 +1,56 @@
+PlotextPlot {
+    width: 100%;
+    height: 25;
+    margin: 1 0;
+}
+
+ImageWidget {
+    margin: 1 0;
+}
+
+.plot-controls {
+    height: auto;
+    margin-bottom: 0;
+    align: left middle;
+}
+
+.plot-controls Label {
+    width: auto;
+    padding-right: 1;
+    content-align: left middle;
+    height: 3;
+}
+
+.plot-controls Select {
+    width: 20;
+    margin-right: 2;
+}
+
+.plot-controls Checkbox {
+    width: auto;
+    margin-right: 1;
+    height: 3;
+    border: none;
+}
+
+.plot-controls .spacer {
+    width: 1fr;
+}
+
+.plot-controls Button {
+    width: auto;
+    min-width: 8;
+    margin-left: 1;
+}
+
+.plot-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#tools_plot_placeholder,
+#results_plot_placeholder {
+    padding: 1 1;
+    content-align: center middle;
+    width: 100%;
+}

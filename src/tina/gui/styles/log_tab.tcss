@@ -1,0 +1,45 @@
+#log_content {
+    height: 1fr;
+    margin: 1 0 0 0;
+}
+
+.filter-row {
+    height: auto;
+}
+
+.filter-row Checkbox {
+    width: auto;
+    margin-right: 0;
+}
+
+.filter-spacer {
+    width: 1fr;
+}
+
+.secondary-filter {
+    opacity: 0.5;
+}
+
+.log-info {
+    color: $text;
+}
+
+.log-success {
+    color: $success;
+}
+
+.log-error {
+    color: $error;
+}
+
+.log-progress {
+    color: $warning;
+}
+
+.log-tx {
+    color: $accent;
+}
+
+.log-rx {
+    color: $primary;
+}
