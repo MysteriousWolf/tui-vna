@@ -89,8 +89,6 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         )
 
         filename = None
-        if settings.use_custom_filename and settings.custom_filename:
-            filename = settings.custom_filename
 
         s2p_path = exporter.export(
             frequencies,

@@ -16,8 +16,8 @@ Examples:
   # Quick measurement with last settings
   tina --now
 
-  # Quick measurement with custom output
-  tina -n --output-folder ./data --filename-prefix test_run
+  # Quick measurement with custom output templates
+  tina -n --output-folder ./data/{date} --filename-prefix test_run_{time}
 
   # Custom measurement parameters
   tina --host 192.168.1.100 --start-freq 10 --stop-freq 1000 --points 201
@@ -113,9 +113,6 @@ Examples:
     output_group.add_argument(
         "--filename-prefix", help="Filename prefix (default: measurement)"
     )
-    output_group.add_argument(
-        "--custom-filename", help="Use custom filename instead of auto-generated"
-    )
 
     # S-parameter selection
     sparam_group = parser.add_argument_group("S-parameter selection")
@@ -193,9 +190,6 @@ def apply_cli_settings(args: argparse.Namespace, settings: AppSettings) -> AppSe
         settings.output_folder = args.output_folder
     if args.filename_prefix:
         settings.filename_prefix = args.filename_prefix
-    if args.custom_filename:
-        settings.custom_filename = args.custom_filename
-        settings.use_custom_filename = True
 
     # S-parameter selection
     if args.all_sparams:

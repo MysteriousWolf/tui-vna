@@ -1679,7 +1679,9 @@ _ALL_SB_STATE_CLASSES = (
 class StatusFooter(Footer):
     """Textual Footer with VNA status items appended after the key bindings."""
 
-    DEFAULT_CSS = Footer.DEFAULT_CSS + """
+    DEFAULT_CSS = (
+        Footer.DEFAULT_CSS
+        + """
     StatusFooter #sb_spacer {
         width: 1fr;
         height: 1;
@@ -1721,6 +1723,7 @@ class StatusFooter(Footer):
         display: block;
     }
     """
+    )
 
     # Initial placeholder text shown before first poll
     _PLACEHOLDERS: dict[str, str] = {
@@ -1982,15 +1985,31 @@ class VNAApp(App):
     }
 
     Input.template-warning {
-        border: tall $warning;
+        background: $warning 15%;
     }
 
     Input.template-error {
-        border: tall $error;
+        background: $error 15%;
+    }
+
+    .template-preview {
+        width: 1fr;
+        height: 3;
+        content-align: left middle;
+        color: $text-muted;
+        padding: 0 1;
+        border: solid $panel;
     }
 
     .param-row .col-check {
-        width: 17;
+        width: 30;
+    }
+
+    .param-row .col-check Select {
+        width: 100%;
+        height: 3;
+        text-overflow: ellipsis;
+        overflow: hidden hidden;
     }
 
     .filter-row {
@@ -2437,12 +2456,15 @@ class VNAApp(App):
         self._debug_scpi = self.settings.debug_scpi
         self._filename_template_validation = None
         self._folder_template_validation = None
+        self._cached_filename_history_options: tuple[tuple[str, str], ...] = ()
+        self._cached_folder_history_options: tuple[tuple[str, str], ...] = ()
 
         # Tools tab state
         self._tools_cursor1_hz: float | None = None
         self._tools_cursor2_hz: float | None = None
         self._tools_resize_timer = None
         self._tools_input_timer = None  # Timer for debouncing cursor input changes
+        self._template_input_timer = None
 
         # Create temporary directory for plot images
         self.plot_temp_dir = Path("/tmp/tui-vna-plots")
@@ -2570,38 +2592,47 @@ class VNAApp(App):
 
                     # Output Settings
                     with Container(classes="panel") as panel:
-                        panel.border_title = "Output"
+                        panel.border_title = (
+                            "Output [@click='app.show_output_help'][on $primary] ? [/]"
+                        )
                         with Horizontal(classes="param-row"):
-                            yield Label("File tmpl:", classes="col-label")
+                            yield Label("Filename:", classes="col-label")
                             yield Input(
                                 value=self.settings.filename_prefix,
                                 placeholder="measurement_{date}_{time}",
                                 id="input_filename_prefix",
                                 classes="col-input",
                             )
-                            yield Static("", classes="col-check")
+                            yield Static(
+                                "",
+                                id="preview_filename_template",
+                                classes="col-input template-preview",
+                            )
+                            yield Select(
+                                options=self.settings_manager.get_filename_template_options(),
+                                prompt="History",
+                                allow_blank=True,
+                                id="select_filename_template_history",
+                                classes="col-check",
+                            )
                         with Horizontal(classes="param-row"):
-                            yield Label("Folder tmpl:", classes="col-label")
+                            yield Label("Folder:", classes="col-label")
                             yield Input(
                                 value=self.settings.output_folder,
                                 placeholder="measurement",
                                 id="input_output_folder",
                                 classes="col-input",
                             )
-                            yield Static("", classes="col-check")
-                        with Horizontal(classes="param-row"):
-                            yield Label("Filename:", classes="col-label")
-                            yield Input(
-                                value=self.settings.custom_filename,
-                                placeholder="(template preview / legacy override)",
-                                id="input_custom_filename",
-                                classes="col-input",
-                                disabled=not self.settings.use_custom_filename,
+                            yield Static(
+                                "",
+                                id="preview_folder_template",
+                                classes="col-input template-preview",
                             )
-                            yield Checkbox(
-                                "Custom",
-                                id="check_custom_filename",
-                                value=self.settings.use_custom_filename,
+                            yield Select(
+                                options=self.settings_manager.get_folder_template_options(),
+                                prompt="History",
+                                allow_blank=True,
+                                id="select_folder_template_history",
                                 classes="col-check",
                             )
                         with Horizontal(classes="param-row"):
@@ -2889,6 +2920,7 @@ class VNAApp(App):
         self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
+        self.call_after_refresh(self._refresh_export_template_history_options)
         self.call_after_refresh(self._refresh_export_template_validation)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
@@ -3065,12 +3097,8 @@ class VNAApp(App):
                 "#input_filename_prefix", Input
             ).value
             self.settings.filename_template = self.settings.filename_prefix
-            self.settings.use_custom_filename = self.query_one(
-                "#check_custom_filename", Checkbox
-            ).value
-            self.settings.custom_filename = self.query_one(
-                "#input_custom_filename", Input
-            ).value
+            self.settings.use_custom_filename = False
+            self.settings.custom_filename = ""
             self.settings.export_s11 = self.query_one(
                 "#check_export_s11", Checkbox
             ).value
@@ -3171,6 +3199,99 @@ class VNAApp(App):
 
         widget.tooltip = "\n".join(messages) if messages else None
 
+    def _update_template_preview(
+        self,
+        input_id: str,
+        preview_id: str,
+        *,
+        allow_path_separators: bool,
+        default_template: str,
+    ) -> None:
+        """Render one template preview and update its paired preview widget."""
+        template = self.query_one(input_id, Input).value.strip() or default_template
+        preview = self.query_one(preview_id, Static)
+
+        validation = self._validate_export_template(
+            template,
+            allow_path_separators=allow_path_separators,
+        )
+        rendered = render_template(
+            template,
+            context=self._build_export_template_context(),
+            allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
+            invalid_path_chars=(
+                set(PATH_INVALID_CHARS) - {"/", "\\"}
+                if allow_path_separators
+                else set(PATH_INVALID_CHARS)
+            ),
+        )
+
+        rendered_markup = []
+        for segment in rendered.segments:
+            if segment.source in ("tag", "time_format"):
+                rendered_markup.append(f"[bold $accent]{segment.text}[/]")
+            elif segment.source == "unknown":
+                rendered_markup.append(f"[italic $warning]{segment.text}[/]")
+            else:
+                rendered_markup.append(segment.text)
+
+        preview.update(
+            "".join(rendered_markup) if rendered_markup else "[dim](empty)[/dim]"
+        )
+
+        if validation.has_errors:
+            preview.styles.border = ("solid", self.theme_variables["error"])
+        elif validation.has_warnings:
+            preview.styles.border = ("solid", self.theme_variables["warning"])
+        else:
+            preview.styles.border = ("solid", self.theme_variables["panel"])
+
+    def _refresh_export_template_history_options(self) -> None:
+        """Refresh template history select options after MRU history changes."""
+        filename_select = self.query_one("#select_filename_template_history", Select)
+        folder_select = self.query_one("#select_folder_template_history", Select)
+
+        filename_options = tuple(self.settings_manager.get_filename_template_options())
+        folder_options = tuple(self.settings_manager.get_folder_template_options())
+
+        if filename_options != self._cached_filename_history_options:
+            filename_select.set_options(filename_options)
+            self._cached_filename_history_options = filename_options
+
+        if folder_options != self._cached_folder_history_options:
+            folder_select.set_options(folder_options)
+            self._cached_folder_history_options = folder_options
+
+    def _sync_export_template_history_selects(
+        self, filename_template: str, folder_template: str
+    ) -> None:
+        """Synchronize history selects without triggering redundant widget churn."""
+        filename_values = {value for _, value in self._cached_filename_history_options}
+        folder_values = {value for _, value in self._cached_folder_history_options}
+
+        filename_select = self.query_one("#select_filename_template_history", Select)
+        folder_select = self.query_one("#select_folder_template_history", Select)
+
+        current_filename = filename_template or self.settings.filename_template
+        current_folder = folder_template or self.settings.folder_template
+
+        target_filename = (
+            current_filename if current_filename in filename_values else None
+        )
+        target_folder = current_folder if current_folder in folder_values else None
+
+        if target_filename is None:
+            if isinstance(filename_select.value, str):
+                filename_select.clear()
+        elif filename_select.value != target_filename:
+            filename_select.value = target_filename
+
+        if target_folder is None:
+            if isinstance(folder_select.value, str):
+                folder_select.clear()
+        elif folder_select.value != target_folder:
+            folder_select.value = target_folder
+
     def _refresh_export_template_validation(self) -> None:
         """Validate current filename and folder templates and refresh input styling."""
         filename_template = self.query_one(
@@ -3196,6 +3317,24 @@ class VNAApp(App):
             "#input_output_folder",
             self._folder_template_validation,
             kind="folder template",
+        )
+        self._update_template_preview(
+            "#input_filename_prefix",
+            "#preview_filename_template",
+            allow_path_separators=False,
+            default_template=self.settings.filename_template
+            or "measurement_{date}_{time}",
+        )
+        self._update_template_preview(
+            "#input_output_folder",
+            "#preview_folder_template",
+            allow_path_separators=True,
+            default_template=self.settings.folder_template or "measurement",
+        )
+
+        self._sync_export_template_history_selects(
+            filename_template,
+            folder_template,
         )
 
     def _start_message_polling(self):
@@ -3322,16 +3461,55 @@ class VNAApp(App):
         if self.connected:
             self._start_status_polling(event.value)
 
-    @on(Checkbox.Changed, "#check_custom_filename")
-    def on_custom_filename_change(self, event: Checkbox.Changed) -> None:
-        """Enable/disable custom filename input based on checkbox."""
-        custom_input = self.query_one("#input_custom_filename", Input)
-        custom_input.disabled = not event.value
+    def _debounced_export_template_refresh(self) -> None:
+        """Debounced refresh for export template validation and preview updates."""
+        self._template_input_timer = None
+        self._refresh_export_template_validation()
 
     @on(Input.Changed, "#input_filename_prefix, #input_output_folder")
     def on_export_template_change(self, event: Input.Changed) -> None:
         """Refresh export-template validation when the template inputs change."""
         del event
+        if self._template_input_timer is not None:
+            self._template_input_timer.stop()
+        self._template_input_timer = self.set_timer(
+            0.15, self._debounced_export_template_refresh
+        )
+
+    @on(Select.Changed, "#select_filename_template_history")
+    def on_filename_template_history_change(self, event: Select.Changed) -> None:
+        """Apply a selected filename template from history."""
+        if not isinstance(event.value, str):
+            return
+        input_widget = self.query_one("#input_filename_prefix", Input)
+        current_value = input_widget.value.strip()
+        if current_value and current_value != event.value:
+            self.settings_manager.touch_template_history(
+                "filename_template_history",
+                current_value,
+            )
+            self.settings_manager.save(self.settings)
+            self._refresh_export_template_history_options()
+        if input_widget.value != event.value:
+            input_widget.value = event.value
+        self._refresh_export_template_validation()
+
+    @on(Select.Changed, "#select_folder_template_history")
+    def on_folder_template_history_change(self, event: Select.Changed) -> None:
+        """Apply a selected folder template from history."""
+        if not isinstance(event.value, str):
+            return
+        input_widget = self.query_one("#input_output_folder", Input)
+        current_value = input_widget.value.strip()
+        if current_value and current_value != event.value:
+            self.settings_manager.touch_template_history(
+                "folder_template_history",
+                current_value,
+            )
+            self.settings_manager.save(self.settings)
+            self._refresh_export_template_history_options()
+        if input_widget.value != event.value:
+            input_widget.value = event.value
         self._refresh_export_template_validation()
 
     @on(TabbedContent.TabActivated)
@@ -3497,6 +3675,15 @@ class VNAApp(App):
             btn.label = "📡\nConnect"
             btn.variant = "primary"
 
+    def _show_help_document(self, filename: str, title: str) -> None:
+        """Load a markdown help document from package resources and show it."""
+        try:
+            help_files = importlib.resources.files("tina") / "help"
+            content = (help_files / filename).read_text(encoding="utf-8")
+        except (OSError, FileNotFoundError, ModuleNotFoundError):
+            content = "_Help file not found._"
+        self.push_screen(HelpScreen(title, content))
+
     def action_show_tool_help(self) -> None:
         """
         Show the help viewer for the currently selected tool.
@@ -3512,13 +3699,11 @@ class VNAApp(App):
             self.notify("Activate a tool to see its help.", timeout=2)
             return
         filename, title = help_map[active]
-        try:
-            # Use importlib.resources to load help files from installed package
-            help_files = importlib.resources.files("tina") / "help"
-            content = (help_files / filename).read_text(encoding="utf-8")
-        except (OSError, FileNotFoundError, ModuleNotFoundError):
-            content = "_Help file not found._"
-        self.push_screen(HelpScreen(title, content))
+        self._show_help_document(filename, title)
+
+    def action_show_output_help(self) -> None:
+        """Show help for output template rendering and validation."""
+        self._show_help_document("output.md", "Output Help")
 
     def action_copy_cell_value(self, value: str) -> None:
         """
@@ -3824,14 +4009,7 @@ class VNAApp(App):
                     "info",
                 )
 
-            use_custom = self.query_one("#check_custom_filename", Checkbox).value
-            if use_custom:
-                filename = self.query_one("#input_custom_filename", Input).value.strip()
-                if not filename:
-                    filename = None
-            else:
-                filename = rendered_filename.rendered.strip() or None
-
+            filename = rendered_filename.rendered.strip() or None
             output_folder = rendered_folder.rendered.strip() or "measurement"
 
             self.settings_manager.touch_template_history(
@@ -3842,6 +4020,8 @@ class VNAApp(App):
                 "folder_template_history",
                 folder_template,
             )
+            self.settings_manager.save(self.settings)
+            self._refresh_export_template_history_options()
 
             output_path = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -5098,12 +5278,12 @@ class VNAApp(App):
         # Update input placeholders with original values and unit
         freq_min_orig = freqs[0] / multiplier
         freq_max_orig = freqs[-1] / multiplier
-        self.query_one("#input_plot_freq_min", Input).placeholder = (
-            f"Min: {freq_min_orig:.2f} {freq_unit}"
-        )
-        self.query_one("#input_plot_freq_max", Input).placeholder = (
-            f"Max: {freq_max_orig:.2f} {freq_unit}"
-        )
+        self.query_one(
+            "#input_plot_freq_min", Input
+        ).placeholder = f"Min: {freq_min_orig:.2f} {freq_unit}"
+        self.query_one(
+            "#input_plot_freq_max", Input
+        ).placeholder = f"Max: {freq_max_orig:.2f} {freq_unit}"
 
         # Apply frequency filtering based on user input
         freq_min_str = self.query_one("#input_plot_freq_min", Input).value.strip()
@@ -5262,12 +5442,12 @@ class VNAApp(App):
                     )
             else:
                 # Smith chart or no data - set generic placeholders
-                self.query_one("#input_plot_y_min", Input).placeholder = (
-                    "Min (N/A for Smith)"
-                )
-                self.query_one("#input_plot_y_max", Input).placeholder = (
-                    "Max (N/A for Smith)"
-                )
+                self.query_one(
+                    "#input_plot_y_min", Input
+                ).placeholder = "Min (N/A for Smith)"
+                self.query_one(
+                    "#input_plot_y_max", Input
+                ).placeholder = "Max (N/A for Smith)"
 
             # Check if smith chart is selected
             if plot_type == "smith" and plot_backend == "terminal":
