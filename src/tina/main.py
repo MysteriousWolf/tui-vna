@@ -13,6 +13,7 @@ import sys
 import tempfile
 import tkinter as tk
 import webbrowser
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -46,6 +47,8 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
 )
+from textual_autocomplete import AutoComplete, DropdownItem
+from textual_autocomplete._autocomplete import TargetState
 
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
@@ -1636,6 +1639,116 @@ class CursorMarkerProvider(Provider):
 
 _SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
 
+
+@dataclass(slots=True, frozen=True)
+class _AutocompleteChoice:
+    """Autocomplete option with explicit application behavior."""
+
+    value: str
+    kind: str
+    label: str
+    prefix: str | None = None
+
+
+class HistoryReplaceAutoComplete(AutoComplete):
+    """Autocomplete for inputs where selecting a suggestion replaces the full value."""
+
+    def __init__(self, target: Input | str, get_choices, **kwargs) -> None:
+        super().__init__(target=target, candidates=None, **kwargs)
+        self._get_choices = get_choices
+
+    def get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
+        query = target_state.text.strip().lower()
+        seen: set[str] = set()
+        items: list[DropdownItem] = []
+        for choice in self._get_choices():
+            if not choice.value or choice.value in seen:
+                continue
+            seen.add(choice.value)
+            if (
+                query
+                and query not in choice.label.lower()
+                and query not in choice.value.lower()
+            ):
+                continue
+            items.append(DropdownItem(choice.label, prefix=choice.prefix))
+        return items
+
+
+class TemplateAutoComplete(AutoComplete):
+    """Autocomplete for template inputs with whole-value and tag insertion completions."""
+
+    def __init__(self, target: Input | str, get_choices, **kwargs) -> None:
+        super().__init__(target=target, candidates=None, **kwargs)
+        self._get_choices = get_choices
+
+    def get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
+        search = self.get_search_string(target_state).lower().strip()
+        seen: set[tuple[str, str]] = set()
+        items: list[DropdownItem] = []
+        for choice in self._get_choices():
+            key = (choice.kind, choice.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            haystack = f"{choice.label} {choice.value}".lower()
+            if search and search not in haystack:
+                continue
+            items.append(DropdownItem(choice.label, prefix=choice.prefix))
+        return items
+
+    def get_search_string(self, target_state: TargetState) -> str:
+        """Search only the current token-ish fragment around the cursor."""
+        text = target_state.text[: target_state.cursor_position]
+        token_start = max(text.rfind("{"), text.rfind(" "))
+        if token_start == -1:
+            return text
+        return text[token_start:]
+
+    def apply_completion(self, value: str, state: TargetState) -> None:
+        """Apply either a whole-template replacement or a tag insertion."""
+        target = self.target
+        choice = next(
+            (choice for choice in self._get_choices() if choice.value == value), None
+        )
+        if choice is None:
+            super().apply_completion(value, state)
+            target.cursor_position = len(target.value)
+            return
+
+        if choice.kind == "history":
+            target.value = value
+            target.cursor_position = len(value)
+        else:
+            cursor = state.cursor_position
+            before = state.text[:cursor]
+            after = state.text[cursor:]
+            token_start = max(before.rfind("{"), before.rfind(" "))
+            if token_start == -1:
+                token_start = 0
+            elif before[token_start] == " ":
+                token_start += 1
+
+            token_end = 0
+            if after.startswith("}"):
+                token_end = 1
+
+            target.value = before[:token_start] + value + after[token_end:]
+            target.cursor_position = token_start + len(value)
+
+        new_target_state = self._get_target_state()
+        self._rebuild_options(
+            new_target_state, self.get_search_string(new_target_state)
+        )
+
+    def post_completion(self) -> None:
+        """Hide the dropdown and refresh dependent previews after completion."""
+        super().post_completion()
+        app = self.app
+        if hasattr(app, "_refresh_export_template_validation"):
+            app.call_after_refresh(app._refresh_export_template_validation)
+
+
 # Short human-readable names for common SCPI error codes (IEEE 488.2 / SCPI 1999).
 _SCPI_ERROR_NAMES: dict[str, str] = {
     "+0": "OK",
@@ -2022,19 +2135,25 @@ class VNAApp(App):
         border: round $border-blurred;
     }
 
+    AutoComplete AutoCompleteList {
+        width: auto;
+        max-width: 60;
+        max-height: 8;
+        background: $panel;
+    }
+
+    AutoComplete .autocomplete--highlight-match {
+        color: $accent;
+        text-style: bold;
+    }
+
+    AutoComplete .option-list--option-highlighted {
+        background: $boost;
+        color: $text;
+    }
+
     .param-row .col-check {
         width: 17;
-    }
-
-    .param-row .col-history {
-        width: 30;
-    }
-
-    .param-row .col-history Select {
-        width: 100%;
-        height: 3;
-        text-overflow: ellipsis;
-        overflow: hidden hidden;
     }
 
     .output-export-row {
@@ -2505,8 +2624,6 @@ class VNAApp(App):
         self._debug_scpi = self.settings.debug_scpi
         self._filename_template_validation = None
         self._folder_template_validation = None
-        self._cached_filename_history_options: tuple[tuple[str, str], ...] = ()
-        self._cached_folder_history_options: tuple[tuple[str, str], ...] = ()
 
         # Tools tab state
         self._tools_cursor1_hz: float | None = None
@@ -2657,13 +2774,7 @@ class VNAApp(App):
                                 id="preview_filename_template",
                                 classes="template-preview",
                             )
-                            yield Select(
-                                options=self.settings_manager.get_filename_template_options(),
-                                prompt="History",
-                                allow_blank=True,
-                                id="select_filename_template_history",
-                                classes="col-history",
-                            )
+
                         with Horizontal(classes="param-row"):
                             yield Label("Folder:", classes="col-label")
                             yield Input(
@@ -2677,13 +2788,7 @@ class VNAApp(App):
                                 id="preview_folder_template",
                                 classes="template-preview",
                             )
-                            yield Select(
-                                options=self.settings_manager.get_folder_template_options(),
-                                prompt="History",
-                                allow_blank=True,
-                                id="select_folder_template_history",
-                                classes="col-history",
-                            )
+
                         with Horizontal(classes="param-row output-export-row"):
                             yield Label("Export:", classes="col-label")
                             with Horizontal(classes="output-export-half"):
@@ -3006,7 +3111,7 @@ class VNAApp(App):
         self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
-        self.call_after_refresh(self._refresh_export_template_history_options)
+        self.call_after_refresh(self._mount_setup_autocompletes)
         self.call_after_refresh(self._refresh_export_template_validation)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
@@ -3355,51 +3460,127 @@ class VNAApp(App):
         preview.styles.border_bottom = ("round", border_color)
         preview.styles.border_left = ("round", border_color)
 
-    def _refresh_export_template_history_options(self) -> None:
-        """Refresh template history select options after MRU history changes."""
-        filename_select = self.query_one("#select_filename_template_history", Select)
-        folder_select = self.query_one("#select_folder_template_history", Select)
+    def _get_host_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+        """Build host autocomplete choices from persisted host history."""
+        return [
+            _AutocompleteChoice(
+                value=host,
+                kind="history",
+                label=host,
+                prefix="↺ ",
+            )
+            for host in self.settings.host_history
+            if host
+        ]
 
-        filename_options = tuple(self.settings_manager.get_filename_template_options())
-        folder_options = tuple(self.settings_manager.get_folder_template_options())
+    def _get_port_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+        """Build port autocomplete choices from persisted port history."""
+        return [
+            _AutocompleteChoice(
+                value=port,
+                kind="history",
+                label=port,
+                prefix="↺ ",
+            )
+            for port in self.settings.port_history
+            if port
+        ]
 
-        if filename_options != self._cached_filename_history_options:
-            filename_select.set_options(filename_options)
-            self._cached_filename_history_options = filename_options
-
-        if folder_options != self._cached_folder_history_options:
-            folder_select.set_options(folder_options)
-            self._cached_folder_history_options = folder_options
-
-    def _sync_export_template_history_selects(
-        self, filename_template: str, folder_template: str
-    ) -> None:
-        """Synchronize history selects without triggering redundant widget churn."""
-        filename_values = {value for _, value in self._cached_filename_history_options}
-        folder_values = {value for _, value in self._cached_folder_history_options}
-
-        filename_select = self.query_one("#select_filename_template_history", Select)
-        folder_select = self.query_one("#select_folder_template_history", Select)
-
-        current_filename = filename_template or self.settings.filename_template
-        current_folder = folder_template or self.settings.folder_template
-
-        target_filename = (
-            current_filename if current_filename in filename_values else None
+    def _get_template_tag_choices(self) -> list[_AutocompleteChoice]:
+        """Build autocomplete choices for supported export template tags."""
+        tag_examples = {
+            "date": "{date}",
+            "time": "{time}",
+            "host": "{host}",
+            "vend": "{vend}",
+            "model": "{model}",
+            "start": "{start}",
+            "stop": "{stop}",
+            "span": "{span}",
+            "pts": "{pts}",
+            "avg": "{avg}",
+            "ifbw": "{ifbw}",
+            "cal": "{cal}",
+        }
+        time_formats = ("{%Y%m%d_%H%M%S}", "{%Y-%m-%d}", "{%H%M}")
+        choices = [
+            _AutocompleteChoice(
+                value=value,
+                kind="tag",
+                label=value,
+                prefix="# ",
+            )
+            for value in tag_examples.values()
+        ]
+        choices.extend(
+            _AutocompleteChoice(
+                value=value,
+                kind="tag",
+                label=value,
+                prefix="% ",
+            )
+            for value in time_formats
         )
-        target_folder = current_folder if current_folder in folder_values else None
+        return choices
 
-        if target_filename is None:
-            if isinstance(filename_select.value, str):
-                filename_select.clear()
-        elif filename_select.value != target_filename:
-            filename_select.value = target_filename
+    def _get_filename_template_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+        """Build autocomplete choices for filename templates."""
+        history = [
+            _AutocompleteChoice(
+                value=template,
+                kind="history",
+                label=template,
+                prefix="↺ ",
+            )
+            for template in (self.settings.filename_template_history or [])
+            if template
+        ]
+        return history + self._get_template_tag_choices()
 
-        if target_folder is None:
-            if isinstance(folder_select.value, str):
-                folder_select.clear()
-        elif folder_select.value != target_folder:
-            folder_select.value = target_folder
+    def _get_folder_template_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+        """Build autocomplete choices for folder templates."""
+        history = [
+            _AutocompleteChoice(
+                value=template,
+                kind="history",
+                label=template,
+                prefix="↺ ",
+            )
+            for template in (self.settings.folder_template_history or [])
+            if template
+        ]
+        return history + self._get_template_tag_choices()
+
+    def _mount_setup_autocompletes(self) -> None:
+        """Mount autocomplete widgets for setup inputs."""
+        self.mount(
+            HistoryReplaceAutoComplete(
+                "#input_host",
+                self._get_host_autocomplete_choices,
+                id="ac_host",
+            )
+        )
+        self.mount(
+            HistoryReplaceAutoComplete(
+                "#input_port",
+                self._get_port_autocomplete_choices,
+                id="ac_port",
+            )
+        )
+        self.mount(
+            TemplateAutoComplete(
+                "#input_filename_prefix",
+                self._get_filename_template_autocomplete_choices,
+                id="ac_filename_template",
+            )
+        )
+        self.mount(
+            TemplateAutoComplete(
+                "#input_output_folder",
+                self._get_folder_template_autocomplete_choices,
+                id="ac_folder_template",
+            )
+        )
 
     def _refresh_export_template_validation(self) -> None:
         """Validate current filename and folder templates and refresh input styling."""
@@ -3439,11 +3620,6 @@ class VNAApp(App):
             "#preview_folder_template",
             allow_path_separators=True,
             default_template=self.settings.folder_template or "measurement",
-        )
-
-        self._sync_export_template_history_selects(
-            filename_template,
-            folder_template,
         )
 
     def _start_message_polling(self):
@@ -3584,42 +3760,6 @@ class VNAApp(App):
         self._template_input_timer = self.set_timer(
             0.15, self._debounced_export_template_refresh
         )
-
-    @on(Select.Changed, "#select_filename_template_history")
-    def on_filename_template_history_change(self, event: Select.Changed) -> None:
-        """Apply a selected filename template from history."""
-        if not isinstance(event.value, str):
-            return
-        input_widget = self.query_one("#input_filename_prefix", Input)
-        current_value = input_widget.value.strip()
-        if current_value and current_value != event.value:
-            self.settings_manager.touch_template_history(
-                "filename_template_history",
-                current_value,
-            )
-            self.settings_manager.save(self.settings)
-            self._refresh_export_template_history_options()
-        if input_widget.value != event.value:
-            input_widget.value = event.value
-        self._refresh_export_template_validation()
-
-    @on(Select.Changed, "#select_folder_template_history")
-    def on_folder_template_history_change(self, event: Select.Changed) -> None:
-        """Apply a selected folder template from history."""
-        if not isinstance(event.value, str):
-            return
-        input_widget = self.query_one("#input_output_folder", Input)
-        current_value = input_widget.value.strip()
-        if current_value and current_value != event.value:
-            self.settings_manager.touch_template_history(
-                "folder_template_history",
-                current_value,
-            )
-            self.settings_manager.save(self.settings)
-            self._refresh_export_template_history_options()
-        if input_widget.value != event.value:
-            input_widget.value = event.value
-        self._refresh_export_template_validation()
 
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
@@ -4130,7 +4270,6 @@ class VNAApp(App):
                 folder_template,
             )
             self.settings_manager.save(self.settings)
-            self._refresh_export_template_history_options()
 
             output_path = await asyncio.get_event_loop().run_in_executor(
                 None,

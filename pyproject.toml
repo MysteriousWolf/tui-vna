@@ -17,6 +17,7 @@ dependencies = [
     "platformdirs>=3.0.0",
     "pylatexenc>=2.10",
     "ruamel.yaml>=0.18.0",
+    "textual-autocomplete>=4.0.6",
 ]
 authors = [
     {name = "tina", email = "tina@example.com"}
