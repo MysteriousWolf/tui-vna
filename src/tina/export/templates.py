@@ -43,6 +43,15 @@ class TemplateValidation:
 
 
 @dataclass(slots=True, frozen=True)
+class RenderedTemplateSegment:
+    """One rendered template segment with source metadata."""
+
+    text: str
+    source: str
+    token: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class RenderedTemplate:
     """Rendered template output with diagnostics."""
 
@@ -51,6 +60,7 @@ class RenderedTemplate:
     validation: TemplateValidation
     used_tags: tuple[str, ...] = ()
     used_time_formats: tuple[str, ...] = ()
+    segments: tuple[RenderedTemplateSegment, ...] = ()
 
 
 @dataclass(slots=True)
@@ -151,26 +161,81 @@ def render_template(
 
     used_tags: list[str] = []
     used_time_formats: list[str] = []
+    rendered_parts: list[str] = []
+    segments: list[RenderedTemplateSegment] = []
+    last_end = 0
 
-    def replace(match: re.Match[str]) -> str:
+    for match in _TOKEN_RE.finditer(template):
+        start, end = match.span()
+        if start > last_end:
+            literal_text = template[last_end:start]
+            rendered_parts.append(literal_text)
+            segments.append(
+                RenderedTemplateSegment(
+                    text=literal_text,
+                    source="literal",
+                )
+            )
+
         token = match.group(1)
+        original_text = match.group(0)
 
         if token.startswith("%"):
             used_time_formats.append(token)
             try:
-                return now.strftime(token)
+                rendered_text = now.strftime(token)
+                rendered_parts.append(rendered_text)
+                segments.append(
+                    RenderedTemplateSegment(
+                        text=rendered_text,
+                        source="time_format",
+                        token=token,
+                    )
+                )
             except Exception:
-                # Keep literal if formatting fails unexpectedly.
-                return match.group(0)
-
-        if token in context:
+                rendered_parts.append(original_text)
+                segments.append(
+                    RenderedTemplateSegment(
+                        text=original_text,
+                        source="unknown",
+                        token=token,
+                    )
+                )
+        elif token in context:
             used_tags.append(token)
-            return _bool_to_human(context[token])
+            rendered_text = _bool_to_human(context[token])
+            rendered_parts.append(rendered_text)
+            segments.append(
+                RenderedTemplateSegment(
+                    text=rendered_text,
+                    source="tag",
+                    token=token,
+                )
+            )
+        else:
+            # Unknown tags are preserved literally by design.
+            rendered_parts.append(original_text)
+            segments.append(
+                RenderedTemplateSegment(
+                    text=original_text,
+                    source="unknown",
+                    token=token,
+                )
+            )
 
-        # Unknown tags are preserved literally by design.
-        return match.group(0)
+        last_end = end
 
-    rendered = _TOKEN_RE.sub(replace, template)
+    if last_end < len(template):
+        literal_text = template[last_end:]
+        rendered_parts.append(literal_text)
+        segments.append(
+            RenderedTemplateSegment(
+                text=literal_text,
+                source="literal",
+            )
+        )
+
+    rendered = "".join(rendered_parts)
 
     return RenderedTemplate(
         template=template,
@@ -178,6 +243,7 @@ def render_template(
         validation=validation,
         used_tags=_stable_unique(used_tags),
         used_time_formats=_stable_unique(used_time_formats),
+        segments=tuple(segments),
     )
 
 

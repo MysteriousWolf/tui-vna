@@ -19,9 +19,21 @@ from platformdirs import user_config_dir
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
+_HISTORY_SELECTOR_WIDTH = 30
+_HISTORY_LABEL_MAX_LEN = _HISTORY_SELECTOR_WIDTH - 8
+
 _yaml = YAML()
 _yaml.default_flow_style = False
 _yaml.width = 4096  # prevent unwanted line wrapping
+
+
+def _truncate_history_label(value: str, max_len: int = _HISTORY_LABEL_MAX_LEN) -> str:
+    """Truncate a history label with ellipsis while preserving the full value separately."""
+    if len(value) <= max_len:
+        return value
+    if max_len <= 3:
+        return "." * max_len
+    return value[: max_len - 3] + "..."
 
 
 def _build_commented_map(data: dict) -> CommentedMap:
@@ -87,8 +99,6 @@ class AppSettings:
     # Output / export
     output_folder: str = "measurement"
     filename_prefix: str = "measurement"
-    use_custom_filename: bool = False
-    custom_filename: str = ""
     filename_template: str = "measurement_{date}_{time}"
     folder_template: str = "measurement"
     filename_template_history: list[str] | None = None
@@ -213,6 +223,14 @@ class SettingsManager:
             self.settings = AppSettings(**filtered)
             self._load_failed = False
             self._merge_port_history()
+            self._normalize_template_history(
+                "filename_template_history",
+                self.settings.filename_template,
+            )
+            self._normalize_template_history(
+                "folder_template_history",
+                self.settings.folder_template,
+            )
             return self.settings
 
         except Exception:
@@ -386,13 +404,13 @@ class SettingsManager:
     def get_filename_template_options(self) -> list[tuple[str, str]]:
         """Get filename template history entries as dropdown options."""
         return [
-            (template, template)
+            (_truncate_history_label(template), template)
             for template in (self.settings.filename_template_history or [])
         ]
 
     def get_folder_template_options(self) -> list[tuple[str, str]]:
         """Get folder template history entries as dropdown options."""
         return [
-            (template, template)
+            (_truncate_history_label(template), template)
             for template in (self.settings.folder_template_history or [])
         ]

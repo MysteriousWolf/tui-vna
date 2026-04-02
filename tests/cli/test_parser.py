@@ -93,21 +93,18 @@ class TestCliParser:
         assert args.set_avg_count is True
 
     def test_parser_accepts_output_params(self):
-        """Test that parser accepts output parameters."""
+        """Test that parser accepts output template parameters."""
         parser = create_cli_parser()
         args = parser.parse_args(
             [
                 "--output-folder",
-                "./data",
+                "./data/{date}",
                 "--filename-prefix",
-                "test",
-                "--custom-filename",
-                "custom.s2p",
+                "test_{time}",
             ]
         )
-        assert args.output_folder == "./data"
-        assert args.filename_prefix == "test"
-        assert args.custom_filename == "custom.s2p"
+        assert args.output_folder == "./data/{date}"
+        assert args.filename_prefix == "test_{time}"
 
     def test_parser_accepts_sparam_flags(self):
         """Test that parser accepts S-parameter flags."""
@@ -204,25 +201,21 @@ class TestApplyCliSettings:
         assert updated.set_averaging_count is True
 
     def test_apply_output_settings(self):
-        """Test applying output settings."""
+        """Test applying output template settings."""
         settings = AppSettings()
         parser = create_cli_parser()
         args = parser.parse_args(
             [
                 "--output-folder",
-                "./data",
+                "./data/{date}",
                 "--filename-prefix",
-                "test",
-                "--custom-filename",
-                "custom.s2p",
+                "test_{time}",
             ]
         )
 
         updated = apply_cli_settings(args, settings)
-        assert updated.output_folder == "./data"
-        assert updated.filename_prefix == "test"
-        assert updated.custom_filename == "custom.s2p"
-        assert updated.use_custom_filename is True
+        assert updated.output_folder == "./data/{date}"
+        assert updated.filename_prefix == "test_{time}"
 
     def test_apply_sparam_export_flags(self):
         """Test applying S-parameter export flags."""

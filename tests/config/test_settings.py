@@ -79,6 +79,14 @@ class TestAppSettings:
         assert settings.plot_type == "magnitude"
         assert settings.plot_backend == "terminal"
 
+    def test_template_history_defaults(self):
+        """Test template defaults and history initialization."""
+        settings = AppSettings()
+        assert settings.filename_template == "measurement_{date}_{time}"
+        assert settings.folder_template == "measurement"
+        assert settings.filename_template_history == ["measurement_{date}_{time}"]
+        assert settings.folder_template_history == ["measurement"]
+
 
 @pytest.mark.unit
 class TestSettingsManager:
@@ -296,13 +304,168 @@ class TestSettingsManager:
         """Test output-related settings."""
         settings_manager.settings.output_folder = "custom_output"
         settings_manager.settings.filename_prefix = "my_measurement"
-        settings_manager.settings.use_custom_filename = True
+        settings_manager.settings.filename_template = "my_measurement_{date}"
+        settings_manager.settings.folder_template = "custom_output/{date}"
         settings_manager.save()
 
         loaded = settings_manager.load()
         assert loaded.output_folder == "custom_output"
         assert loaded.filename_prefix == "my_measurement"
-        assert loaded.use_custom_filename is True
+        assert loaded.filename_template == "my_measurement_{date}"
+        assert loaded.folder_template == "custom_output/{date}"
+
+    def test_touch_template_history_moves_existing_item_to_front(
+        self, settings_manager
+    ):
+        """Test touching an existing template keeps it unique and moves it to the front."""
+        settings_manager.settings.filename_template_history = [
+            "alpha_{date}",
+            "beta_{time}",
+            "gamma",
+        ]
+
+        settings_manager.touch_template_history(
+            "filename_template_history", "beta_{time}"
+        )
+
+        assert settings_manager.settings.filename_template_history == [
+            "beta_{time}",
+            "alpha_{date}",
+            "gamma",
+        ]
+
+    def test_touch_template_history_ignores_empty_values(self, settings_manager):
+        """Test touching empty template values does nothing."""
+        settings_manager.settings.folder_template_history = ["measurement"]
+
+        settings_manager.touch_template_history("folder_template_history", "")
+        settings_manager.touch_template_history("folder_template_history", "   ")
+
+        assert settings_manager.settings.folder_template_history == ["measurement"]
+
+    def test_save_normalizes_template_history_with_current_values(
+        self, settings_manager
+    ):
+        """Test saving keeps current templates at the top of normalized MRU history."""
+        settings_manager.settings.filename_template = "current_{date}"
+        settings_manager.settings.folder_template = "exports/{model}"
+        settings_manager.settings.filename_template_history = [
+            "older_{time}",
+            "current_{date}",
+            "older_{time}",
+            "  ",
+        ]
+        settings_manager.settings.folder_template_history = [
+            "measurement",
+            "exports/{model}",
+            "",
+        ]
+
+        settings_manager.save()
+        loaded = settings_manager.load()
+
+        assert loaded.filename_template_history == [
+            "current_{date}",
+            "older_{time}",
+        ]
+        assert loaded.folder_template_history == [
+            "exports/{model}",
+            "measurement",
+        ]
+
+    def test_template_history_options(self, settings_manager):
+        """Test template history option helpers for UI selectors."""
+        settings_manager.settings.filename_template_history = [
+            "measurement_{date}_{time}",
+            "run_{host}",
+        ]
+        settings_manager.settings.folder_template_history = [
+            "measurement",
+            "exports/{vend}_{model}",
+        ]
+
+        assert settings_manager.get_filename_template_options() == [
+            ("measurement_{date}_...", "measurement_{date}_{time}"),
+            ("run_{host}", "run_{host}"),
+        ]
+        assert settings_manager.get_folder_template_options() == [
+            ("measurement", "measurement"),
+            ("exports/{vend}_{model}", "exports/{vend}_{model}"),
+        ]
+
+    def test_load_restores_default_filename_history_when_empty(self, settings_manager):
+        """Test loading normalizes an empty filename template history to sane defaults."""
+        settings_manager.config_file.write_text(
+            "config_version: 1\n"
+            "filename_template: measurement_{date}_{time}\n"
+            "filename_template_history: []\n",
+            encoding="utf-8",
+        )
+
+        loaded = settings_manager.load()
+
+        assert loaded.filename_template_history == ["measurement_{date}_{time}"]
+
+    def test_load_restores_default_folder_history_when_empty(self, settings_manager):
+        """Test loading normalizes an empty folder template history to sane defaults."""
+        settings_manager.config_file.write_text(
+            "config_version: 1\n"
+            "folder_template: measurement\n"
+            "folder_template_history: []\n",
+            encoding="utf-8",
+        )
+
+        loaded = settings_manager.load()
+
+        assert loaded.folder_template_history == ["measurement"]
+
+    def test_touch_filename_template_history_preserves_current_before_selection(
+        self, settings_manager
+    ):
+        """Test current filename template is preserved before selecting another history item."""
+        settings_manager.settings.filename_template_history = [
+            "measurement_{date}_{time}",
+            "run_{host}",
+        ]
+
+        current_value = "both_frontends_tuned"
+        selected_value = "run_{host}"
+
+        settings_manager.touch_template_history(
+            "filename_template_history",
+            current_value,
+        )
+
+        assert settings_manager.settings.filename_template_history == [
+            "both_frontends_tuned",
+            "measurement_{date}_{time}",
+            "run_{host}",
+        ]
+        assert selected_value in settings_manager.settings.filename_template_history
+
+    def test_touch_folder_template_history_preserves_current_before_selection(
+        self, settings_manager
+    ):
+        """Test current folder template is preserved before selecting another history item."""
+        settings_manager.settings.folder_template_history = [
+            "measurement",
+            "exports/{vend}_{model}",
+        ]
+
+        current_value = "exports/custom_run"
+        selected_value = "measurement"
+
+        settings_manager.touch_template_history(
+            "folder_template_history",
+            current_value,
+        )
+
+        assert settings_manager.settings.folder_template_history == [
+            "exports/custom_run",
+            "measurement",
+            "exports/{vend}_{model}",
+        ]
+        assert selected_value in settings_manager.settings.folder_template_history
 
     def test_plot_settings_persistence(self, settings_manager):
         """Test plot settings are persisted."""

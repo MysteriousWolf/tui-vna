@@ -3,6 +3,7 @@
 from .templates import (
     SUPPORTED_SHORT_TAGS,
     RenderedTemplate,
+    RenderedTemplateSegment,
     TemplateHistory,
     TemplateValidation,
     build_export_template_context,
@@ -23,6 +24,7 @@ __all__ = [
     "PATH_INVALID_CHARS",
     "RenderedTemplate",
     "RenderedTemplateResult",
+    "RenderedTemplateSegment",
     "SUPPORTED_SHORT_TAGS",
     "TemplateHistory",
     "TemplateRenderContext",

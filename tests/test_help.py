@@ -7,7 +7,7 @@ Covers:
 - HelpScreen._prep_for_mathtext: LaTeX sanitisation for matplotlib
 - HelpScreen._render_math_image: PNG rendering + crop + temp-file tracking
 - HelpScreen cleanup: temp files removed on unmount
-- Help file presence and structure
+- Help file presence and structure, including output help
 """
 
 import os
@@ -130,6 +130,11 @@ class TestPreprocessInlineLaTeX:
         result = _preprocess_inline_latex("Value $\\alpha$ here.")
         assert "`\\alpha`" in result
         assert "$" not in result
+
+
+# ---------------------------------------------------------------------------
+# Help file presence
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +460,12 @@ class TestHelpFiles:
     @pytest.mark.unit
     def test_distortion_md_exists(self):
         assert (self._help_dir / "distortion.md").exists()
+
+    @pytest.mark.unit
+    def test_output_md_exists(self):
+        help_file = self._help_dir / "output.md"
+        assert help_file.exists()
+        assert help_file.read_text(encoding="utf-8").strip()
 
     @pytest.mark.unit
     def test_cursor_md_contains_display_math(self):
