@@ -2027,13 +2027,17 @@ class VNAApp(App):
         margin-bottom: 0;
     }
 
-    .panel {
+    .panel,
+    #log_content {
         border: round $panel;
-        border-title-color: $text-muted;
+        border-title-color: $accent;
         border-title-style: bold;
-        height: auto;
         padding: 0 1;
         margin-bottom: 1;
+    }
+
+    .panel {
+        height: auto;
     }
 
     .connection-strip {
@@ -2368,9 +2372,6 @@ class VNAApp(App):
 
     #log_content {
         height: 1fr;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
         margin: 1 0 0 0;
     }
 
@@ -2921,7 +2922,7 @@ class VNAApp(App):
                                 yield Button(
                                     "↻ Reset",
                                     id="btn_reset_freq_limits",
-                                    variant="default",
+                                    variant="error",
                                     flat=True,
                                 )
                             with Horizontal(classes="span-axis-group"):
@@ -2938,7 +2939,7 @@ class VNAApp(App):
                                 yield Button(
                                     "↻ Reset",
                                     id="btn_reset_y_limits",
-                                    variant="default",
+                                    variant="error",
                                     flat=True,
                                 )
                             yield Button(
@@ -3065,7 +3066,9 @@ class VNAApp(App):
                 log_area = RichLog(
                     id="log_content", markup=True, highlight=False, wrap=False
                 )
-                log_area.border_title = "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
+                log_area.border_title = (
+                    "Log  [@click='app.copy_log'][on $primary] ⎘ [/][/]"
+                )
                 yield log_area
 
         yield Static("", id="footer_separator")
