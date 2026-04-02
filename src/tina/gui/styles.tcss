@@ -8,42 +8,67 @@ Screen {
     margin-bottom: 0;
 }
 
-.panel {
-    border: solid $primary;
+.panel,
+#log_content {
+    border: round $panel;
     border-title-color: $accent;
     border-title-style: bold;
-    height: auto;
     padding: 0 1;
     margin-bottom: 1;
 }
 
-.field {
+.panel {
     height: auto;
+}
+
+.connection-strip {
+    height: 3;
     margin-bottom: 0;
     align: left middle;
 }
 
-.field Label {
+.connection-strip .conn-label {
     width: auto;
     padding-right: 1;
     content-align: left middle;
     height: 100%;
 }
 
-.field Input {
-    width: 1fr;
-}
-
-.field Select {
-    width: 1fr;
-}
-
-.field Checkbox {
+.connection-strip .conn-symbol {
     width: auto;
-    margin-right: 2;
+    padding: 0 1;
+    content-align: center middle;
+    height: 100%;
+}
+
+.connection-strip .conn-host {
+    width: 1fr;
+}
+
+.connection-strip .conn-port {
+    width: 20;
+}
+
+.connection-strip .conn-poll {
+    width: 12;
+}
+
+Input {
     height: 3;
-    border: none;
-    content-align: left middle;
+    background: $surface;
+    border: round $border-blurred;
+}
+
+Input:focus {
+    border: round $border;
+}
+
+Select {
+    height: 3;
+}
+
+Select:focus {
+    background: $boost;
 }
 
 Checkbox {
@@ -73,12 +98,71 @@ Checkbox {
     width: 1fr;
 }
 
-.param-row .col-input Input {
+.param-row .col-input Input,
+.param-row .col-input Select {
+    width: 100%;
+}
+
+Input.template-warning {
+    border: round $warning;
+}
+
+Input.template-error {
+    border: round $error;
+}
+
+.template-preview {
     width: 1fr;
+    height: 3;
+    content-align: left middle;
+    color: $text-muted;
+    padding: 0 1;
+    border: round $border-blurred;
+}
+
+AutoComplete AutoCompleteList {
+    width: auto;
+    max-width: 60;
+    max-height: 8;
+    background: $panel;
+}
+
+AutoComplete .autocomplete--highlight-match {
+    color: $accent;
+    text-style: bold;
+}
+
+AutoComplete .option-list--option-highlighted {
+    background: $boost;
+    color: $text;
 }
 
 .param-row .col-check {
     width: 17;
+}
+
+.output-export-row {
+    height: 3;
+    margin-bottom: 0;
+    align: left middle;
+}
+
+.output-export-half {
+    width: 1fr;
+    height: 3;
+    align: left middle;
+}
+
+.output-export-half.--right {
+    align: right middle;
+}
+
+.output-export-half Checkbox {
+    width: auto;
+    margin-right: 1;
+    height: 3;
+    border: none;
+    content-align: left middle;
 }
 
 .filter-row {
@@ -88,6 +172,14 @@ Checkbox {
 .filter-row Checkbox {
     width: auto;
     margin-right: 0;
+}
+
+.filter-spacer {
+    width: 1fr;
+}
+
+.secondary-filter {
+    opacity: 0.5;
 }
 
 .button-group {
@@ -179,17 +271,22 @@ Button {
     dock: bottom;
     width: 100%;
     height: auto;
-    margin: 0 1 1 1;
-    padding: 0 1;
-    border: solid $primary;
-    border-title-color: $accent;
-    border-title-style: bold;
+    margin: 0;
+    padding: 0;
+    border: none;
 }
 
 #action_bar {
     width: 100%;
     height: auto;
     align: right middle;
+    background: $boost;
+    padding: 0 1 1 1;
+}
+
+#progress_container {
+    width: 1fr;
+    height: auto;
 }
 
 #progress_container {
@@ -245,6 +342,9 @@ Button {
     width: auto;
     min-width: 16;
     margin: 0 0 0 1;
+    height: 2;
+    border: none;
+    padding: 0 2;
 }
 
 .spacer {
@@ -253,10 +353,7 @@ Button {
 
 #log_content {
     height: 1fr;
-    border: solid $primary;
-    border-title-color: $accent;
-    border-title-style: bold;
-    margin: 1 0;
+    margin: 1 0 0 0;
 }
 
 #results_text {
@@ -266,6 +363,12 @@ Button {
 
 TabbedContent {
     height: 100%;
+}
+
+#footer_separator {
+    dock: bottom;
+    height: 1;
+    background: $secondary;
 }
 
 .log-info {
@@ -310,4 +413,169 @@ PlotextPlot {
 
 ImageWidget {
     margin: 1 0;
+}
+
+#tools_plot_container {
+    width: 100%;
+    align: center top;
+    height: auto;
+    padding: 0;
+}
+
+#tools_plot_placeholder,
+#results_plot_placeholder {
+    padding: 1 1;
+    content-align: center middle;
+    width: 100%;
+}
+
+#tools_params_container {
+    height: auto;
+    padding: 0;
+    margin: 0;
+}
+
+#tools_scroll {
+    height: 1fr;
+}
+
+#tools_tool_panel,
+#output_file_container {
+    dock: bottom;
+    margin-bottom: 0;
+    border: none;
+}
+
+#tools_tool_panel {
+    height: auto;
+    padding-bottom: 1;
+}
+
+#output_file_container {
+    height: 3;
+    padding-bottom: 1;
+}
+
+#tools_tool_panel Button,
+#output_file_container Button {
+    height: 2;
+    border: none;
+    padding: 0 2;
+}
+
+#tools_tool_panel .button-group {
+    margin-top: 0;
+    margin-bottom: 0;
+    align: center middle;
+}
+
+#tools_middle_row {
+    layout: grid;
+    grid-size: 2 1;
+    grid-columns: auto 1fr;
+    height: auto;
+}
+
+#tools_middle_row > Container {
+    height: 100%;
+    margin-bottom: 0;
+}
+
+#tools_results_container {
+    width: 1fr;
+    align: center middle;
+}
+
+#tools_results_display {
+    padding: 1 0;
+    width: auto;
+    height: auto;
+    content-align: center middle;
+    link-style: none;
+    link-style-hover: none;
+    link-color-hover: $background;
+    link-background-hover: $foreground;
+}
+
+#tools_params_placeholder {
+    padding: 1 0;
+    width: 100%;
+    content-align: center middle;
+}
+
+#tools_params_container .param-row {
+    margin-bottom: 0;
+}
+
+#tools_params_container Input {
+    width: 18;
+}
+
+#tools_params_container Select {
+    width: 18;
+}
+
+#tools_params_container .inline-label {
+    width: auto;
+    padding-right: 1;
+}
+
+#tools_params_container .inline-button {
+    width: auto;
+    min-width: 7;
+    margin-left: 1;
+    height: 3;
+}
+
+#tools_params_container .distortion-row {
+    height: auto;
+    margin-top: 1;
+    align: left middle;
+}
+
+.distortion-comp-check {
+    width: auto;
+    margin-right: 1;
+}
+
+#tools_trace_radioset {
+    width: auto;
+    height: 3;
+    border: none;
+    background: transparent;
+    margin: 0;
+    padding: 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+#tools_trace_radioset RadioButton {
+    height: 3;
+    border: none;
+    background: transparent;
+    padding: 0 1;
+    width: auto;
+    content-align: left middle;
+}
+
+#tools_trace_radioset RadioButton:last-child {
+    margin-right: 0;
+}
+
+#btn_tool_measure,
+#btn_tool_distortion {
+    width: 1fr;
+    margin: 0 1 0 0;
+}
+
+#btn_tool_distortion {
+    margin-right: 0;
+}
+
+.tools-cursor-1 {
+    color: $warning;
+}
+
+.tools-cursor-2 {
+    color: $primary;
 }
