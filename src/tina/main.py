@@ -1679,9 +1679,7 @@ _ALL_SB_STATE_CLASSES = (
 class StatusFooter(Footer):
     """Textual Footer with VNA status items appended after the key bindings."""
 
-    DEFAULT_CSS = (
-        Footer.DEFAULT_CSS
-        + """
+    DEFAULT_CSS = Footer.DEFAULT_CSS + """
     StatusFooter #sb_spacer {
         width: 1fr;
         height: 1;
@@ -1723,7 +1721,6 @@ class StatusFooter(Footer):
         display: block;
     }
     """
-    )
 
     # Initial placeholder text shown before first poll
     _PLACEHOLDERS: dict[str, str] = {
@@ -2010,6 +2007,30 @@ class VNAApp(App):
         height: 3;
         text-overflow: ellipsis;
         overflow: hidden hidden;
+    }
+
+    .output-export-row {
+        height: 3;
+        margin-bottom: 0;
+        align: left middle;
+    }
+
+    .output-export-half {
+        width: 1fr;
+        height: 3;
+        align: left middle;
+    }
+
+    .output-export-half.--right {
+        align: right middle;
+    }
+
+    .output-export-half Checkbox {
+        width: auto;
+        margin-right: 1;
+        height: 3;
+        border: none;
+        content-align: left middle;
     }
 
     .filter-row {
@@ -2485,18 +2506,20 @@ class VNAApp(App):
                     # Connection Settings
                     with Container(classes="panel") as panel:
                         panel.border_title = "Connection"
-                        with Horizontal(classes="field"):
-                            yield Label("Host:")
+                        with Horizontal(classes="param-row"):
+                            yield Label("Host:", classes="col-label")
                             yield Input(
                                 value=self.settings.last_host,
                                 placeholder="IP address (e.g., 192.168.1.100)",
                                 id="input_host",
+                                classes="col-input",
                             )
-                            yield Label("Port:")
+                            yield Label("Port:", classes="col-label")
                             yield Input(
                                 value=self.settings.last_port,
                                 placeholder="inst0",
                                 id="input_port",
+                                classes="col-input",
                             )
                         with Horizontal(classes="param-row"):
                             yield Label("Status poll:", classes="col-label")
@@ -2635,29 +2658,50 @@ class VNAApp(App):
                                 id="select_folder_template_history",
                                 classes="col-check",
                             )
-                        with Horizontal(classes="param-row"):
+                        with Horizontal(classes="param-row output-export-row"):
                             yield Label("Export:", classes="col-label")
-                            yield Checkbox(
-                                "S11",
-                                id="check_export_s11",
-                                value=self.settings.export_s11,
-                            )
-                            yield Checkbox(
-                                "S21",
-                                id="check_export_s21",
-                                value=self.settings.export_s21,
-                            )
-                            yield Checkbox(
-                                "S12",
-                                id="check_export_s12",
-                                value=self.settings.export_s12,
-                            )
-                            yield Checkbox(
-                                "S22",
-                                id="check_export_s22",
-                                value=self.settings.export_s22,
-                            )
-                            yield Static("", classes="col-check")
+                            with Horizontal(classes="output-export-half"):
+                                yield Checkbox(
+                                    "S11",
+                                    id="check_export_s11",
+                                    value=self.settings.export_s11,
+                                )
+                                yield Checkbox(
+                                    "S21",
+                                    id="check_export_s21",
+                                    value=self.settings.export_s21,
+                                )
+                                yield Checkbox(
+                                    "S12",
+                                    id="check_export_s12",
+                                    value=self.settings.export_s12,
+                                )
+                                yield Checkbox(
+                                    "S22",
+                                    id="check_export_s22",
+                                    value=self.settings.export_s22,
+                                )
+                            with Horizontal(classes="output-export-half --right"):
+                                yield Checkbox(
+                                    "s2p",
+                                    id="check_export_bundle_s2p",
+                                    value=self.settings.export_bundle_s2p,
+                                )
+                                yield Checkbox(
+                                    "csv",
+                                    id="check_export_bundle_csv",
+                                    value=self.settings.export_bundle_csv,
+                                )
+                                yield Checkbox(
+                                    "png",
+                                    id="check_export_bundle_png",
+                                    value=self.settings.export_bundle_png,
+                                )
+                                yield Checkbox(
+                                    "svg",
+                                    id="check_export_bundle_svg",
+                                    value=self.settings.export_bundle_svg,
+                                )
 
             # Measurement Tab
             with TabPane("Measurement", id="tab_results"):
@@ -3111,7 +3155,18 @@ class VNAApp(App):
             self.settings.export_s22 = self.query_one(
                 "#check_export_s22", Checkbox
             ).value
-            self.settings.export_bundle_s2p = True
+            self.settings.export_bundle_s2p = self.query_one(
+                "#check_export_bundle_s2p", Checkbox
+            ).value
+            self.settings.export_bundle_csv = self.query_one(
+                "#check_export_bundle_csv", Checkbox
+            ).value
+            self.settings.export_bundle_png = self.query_one(
+                "#check_export_bundle_png", Checkbox
+            ).value
+            self.settings.export_bundle_svg = self.query_one(
+                "#check_export_bundle_svg", Checkbox
+            ).value
             self.settings_manager.touch_template_history(
                 "filename_template_history",
                 self.settings.filename_template,
@@ -5278,12 +5333,12 @@ class VNAApp(App):
         # Update input placeholders with original values and unit
         freq_min_orig = freqs[0] / multiplier
         freq_max_orig = freqs[-1] / multiplier
-        self.query_one(
-            "#input_plot_freq_min", Input
-        ).placeholder = f"Min: {freq_min_orig:.2f} {freq_unit}"
-        self.query_one(
-            "#input_plot_freq_max", Input
-        ).placeholder = f"Max: {freq_max_orig:.2f} {freq_unit}"
+        self.query_one("#input_plot_freq_min", Input).placeholder = (
+            f"Min: {freq_min_orig:.2f} {freq_unit}"
+        )
+        self.query_one("#input_plot_freq_max", Input).placeholder = (
+            f"Max: {freq_max_orig:.2f} {freq_unit}"
+        )
 
         # Apply frequency filtering based on user input
         freq_min_str = self.query_one("#input_plot_freq_min", Input).value.strip()
@@ -5442,12 +5497,12 @@ class VNAApp(App):
                     )
             else:
                 # Smith chart or no data - set generic placeholders
-                self.query_one(
-                    "#input_plot_y_min", Input
-                ).placeholder = "Min (N/A for Smith)"
-                self.query_one(
-                    "#input_plot_y_max", Input
-                ).placeholder = "Max (N/A for Smith)"
+                self.query_one("#input_plot_y_min", Input).placeholder = (
+                    "Min (N/A for Smith)"
+                )
+                self.query_one("#input_plot_y_max", Input).placeholder = (
+                    "Max (N/A for Smith)"
+                )
 
             # Check if smith chart is selected
             if plot_type == "smith" and plot_backend == "terminal":
