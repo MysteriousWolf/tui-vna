@@ -1,0 +1,83 @@
+.connection-strip {
+    height: 3;
+    margin-bottom: 0;
+    align: left middle;
+}
+
+.connection-strip .conn-label {
+    width: auto;
+    padding-right: 1;
+    content-align: left middle;
+    height: 100%;
+}
+
+.connection-strip .conn-symbol {
+    width: auto;
+    padding: 0 1;
+    content-align: center middle;
+    height: 100%;
+}
+
+.connection-strip .conn-host {
+    width: 1fr;
+}
+
+.connection-strip .conn-port {
+    width: 20;
+}
+
+.connection-strip .conn-poll {
+    width: 12;
+}
+
+.param-row .col-label {
+    width: 12;
+    content-align: left middle;
+    height: 100%;
+}
+
+.param-row .col-input {
+    width: 1fr;
+}
+
+.param-row .col-input Input,
+.param-row .col-input Select {
+    width: 100%;
+}
+
+.param-row .col-check {
+    width: 17;
+}
+
+.template-preview {
+    width: 1fr;
+    height: 3;
+    content-align: left middle;
+    color: $text-muted;
+    padding: 0 1;
+    border: round $border-blurred;
+}
+
+.output-export-row {
+    height: 3;
+    margin-bottom: 0;
+    align: left middle;
+}
+
+.output-export-half {
+    width: 1fr;
+    height: 3;
+    align: left middle;
+}
+
+.output-export-half.--right {
+    align: right middle;
+}
+
+.output-export-half Checkbox {
+    width: auto;
+    margin-right: 1;
+    height: 3;
+    border: none;
+    content-align: left middle;
+}

@@ -970,77 +970,7 @@ def _create_smith_chart(
 class UpdateNotificationScreen(ModalScreen):
     """Reusable modal for update-related notifications (new release or post-update welcome)."""
 
-    DEFAULT_CSS = """
-    UpdateNotificationScreen {
-        align: center middle;
-    }
-    #notif-dialog {
-        width: 90;
-        height: auto;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-    }
-    UpdateNotificationScreen.--welcome #notif-dialog {
-        border: thick $success;
-    }
-    UpdateNotificationScreen #notif-title {
-        text-style: bold;
-        width: 1fr;
-    }
-    UpdateNotificationScreen.--welcome #notif-title {
-        color: $success;
-    }
-    UpdateNotificationScreen #notif-badge {
-        margin-left: 1;
-    }
-    UpdateNotificationScreen .badge-stable {
-        background: $success;
-        color: $background;
-        padding: 0 1;
-    }
-    UpdateNotificationScreen .badge-pre {
-        background: $warning;
-        color: $background;
-        padding: 0 1;
-    }
-    UpdateNotificationScreen #notif-body {
-        height: auto;
-        max-height: 60vh;
-        border: solid $panel;
-        padding: 0 1;
-        margin: 0;
-    }
-    UpdateNotificationScreen #notif-body Markdown {
-        margin: 0;
-        padding: 0;
-    }
-    UpdateNotificationScreen #notif-body Markdown > * {
-        margin-top: 0;
-    }
-    UpdateNotificationScreen #notif-header {
-        height: auto;
-    }
-    UpdateNotificationScreen #notif-footer {
-        width: 100%;
-        height: auto;
-        margin-top: 0;
-        align: right middle;
-    }
-    UpdateNotificationScreen .notif-btn {
-        height: 3;
-        min-width: 0;
-    }
-    #btn-notif-github {
-        max-width: 25;
-    }
-    #btn-notif-dismiss {
-        max-width: 15;
-    }
-    UpdateNotificationScreen #footer-spacer {
-        width: 1;
-    }
-    """
+    CSS_PATH = ["gui/styles/update_dialogs.tcss"]
 
     BINDINGS = [
         ("escape", "close", "Close"),
@@ -1186,46 +1116,7 @@ class HelpScreen(ModalScreen):
     ($...$) is always converted to Unicode via pylatexenc.
     """
 
-    DEFAULT_CSS = """
-    HelpScreen {
-        align: center middle;
-    }
-    #help-dialog {
-        width: 90%;
-        height: 90%;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-    }
-    #help-title {
-        text-style: bold;
-        color: $primary;
-        width: 1fr;
-    }
-    #help-body {
-        height: 1fr;
-        border: solid $panel;
-        padding: 0 1;
-        margin: 0;
-    }
-    #help-body Markdown {
-        margin: 0;
-        padding: 0;
-    }
-    #help-body Markdown > * {
-        margin-top: 0;
-    }
-    .math-img-row {
-        height: auto;
-        width: 100%;
-        align-horizontal: center;
-        margin: 0 0 1 0;
-    }
-    #help-footer {
-        height: auto;
-        align-horizontal: right;
-    }
-    """
+    CSS_PATH = ["gui/styles/help.tcss"]
 
     BINDINGS = [
         ("escape", "close", "Close"),
@@ -2002,7 +1893,14 @@ class StatusFooter(Footer):
 class VNAApp(App):
     """TINA - Terminal UI Network Analyzer"""
 
-    CSS_PATH = "gui/styles.tcss"
+    CSS_PATH = [
+        "gui/styles/core.tcss",
+        "gui/styles/plots.tcss",
+        "gui/styles/setup_tab.tcss",
+        "gui/styles/measurement_tab.tcss",
+        "gui/styles/tools_tab.tcss",
+        "gui/styles/log_tab.tcss",
+    ]
 
     # Maps log level names to their filter checkbox widget IDs.
     # Both primary and secondary levels are listed here; composite levels
@@ -2449,7 +2347,7 @@ class VNAApp(App):
                                         value=(self.settings.tools_trace == "S22"),
                                     )
                             # Dynamic parameters area (populated when a tool is active)
-                            with Container(id="tools_params_container"):
+                            with Vertical(id="tools_params_container"):
                                 yield Static(
                                     "[dim]Activate a tool below to see options.[/dim]",
                                     id="tools_params_placeholder",
@@ -4216,7 +4114,7 @@ class VNAApp(App):
         When the active tool is "cursor" or "distortion", mounts input rows for Cursor 1 and Cursor 2 (with placeholders labeled by the current frequency unit) and, for "distortion", an additional row of six component checkboxes with appropriate default selections. When no tool is active, mounts a placeholder message prompting the user to activate a tool.
         """
         try:
-            container = self.query_one("#tools_params_container", Container)
+            container = self.query_one("#tools_params_container", Vertical)
         except Exception:
             return
 
@@ -4263,7 +4161,7 @@ class VNAApp(App):
                 ),
             )
             if active == "distortion":
-                comp_row = Horizontal(classes="distortion-comp-row")
+                comp_row = Horizontal(classes="distortion-row")
                 await container.mount(comp_row)
                 for n in range(6):
                     await comp_row.mount(
