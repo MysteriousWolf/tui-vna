@@ -1083,6 +1083,7 @@ class UpdateNotificationScreen(ModalScreen):
                     variant=self._button_variant,
                     id="btn-notif-dismiss",
                     classes="notif-btn",
+                    flat=True,
                 )
                 yield Static(id="footer-spacer")
                 yield Button(
@@ -1090,6 +1091,7 @@ class UpdateNotificationScreen(ModalScreen):
                     variant="primary",
                     id="btn-notif-github",
                     classes="notif-btn",
+                    flat=True,
                 )
 
     @on(Button.Pressed, "#btn-notif-github")
@@ -1401,7 +1403,7 @@ class HelpScreen(ModalScreen):
                             )
                             yield Markdown(f"\n```\n{fallback}\n```\n")
             with Horizontal(id="help-footer"):
-                yield Button("Close", variant="primary", id="btn-help-close")
+                yield Button("Close", variant="primary", id="btn-help-close", flat=True)
 
     def on_unmount(self) -> None:
         """
@@ -1913,41 +1915,62 @@ class VNAApp(App):
     }
 
     .panel {
-        border: solid $primary;
-        border-title-color: $accent;
+        border: round $panel;
+        border-title-color: $text-muted;
         border-title-style: bold;
         height: auto;
         padding: 0 1;
         margin-bottom: 1;
     }
 
-    .field {
-        height: auto;
+    .connection-strip {
+        height: 3;
         margin-bottom: 0;
         align: left middle;
     }
 
-    .field Label {
+    .connection-strip .conn-label {
         width: auto;
         padding-right: 1;
         content-align: left middle;
         height: 100%;
     }
 
-    .field Input {
-        width: 1fr;
-    }
-
-    .field Select {
-        width: 1fr;
-    }
-
-    .field Checkbox {
+    .connection-strip .conn-symbol {
         width: auto;
-        margin-right: 2;
+        padding: 0 1;
+        content-align: center middle;
+        height: 100%;
+    }
+
+    .connection-strip .conn-host {
+        width: 1fr;
+    }
+
+    .connection-strip .conn-port {
+        width: 20;
+    }
+
+    .connection-strip .conn-poll {
+        width: 12;
+    }
+
+    Input {
         height: 3;
-        border: none;
-        content-align: left middle;
+        background: $surface;
+        border: round $border-blurred;
+    }
+
+    Input:focus {
+        border: round $border;
+    }
+
+    Select {
+        height: 3;
+    }
+
+    Select:focus {
+        background: $boost;
     }
 
     Checkbox {
@@ -1977,16 +2000,17 @@ class VNAApp(App):
         width: 1fr;
     }
 
-    .param-row .col-input Input {
-        width: 1fr;
+    .param-row .col-input Input,
+    .param-row .col-input Select {
+        width: 100%;
     }
 
     Input.template-warning {
-        background: $warning 15%;
+        border: round $warning;
     }
 
     Input.template-error {
-        background: $error 15%;
+        border: round $error;
     }
 
     .template-preview {
@@ -1995,14 +2019,18 @@ class VNAApp(App):
         content-align: left middle;
         color: $text-muted;
         padding: 0 1;
-        border: solid $panel;
+        border: round $border-blurred;
     }
 
     .param-row .col-check {
+        width: 17;
+    }
+
+    .param-row .col-history {
         width: 30;
     }
 
-    .param-row .col-check Select {
+    .param-row .col-history Select {
         width: 100%;
         height: 3;
         text-overflow: ellipsis;
@@ -2506,23 +2534,22 @@ class VNAApp(App):
                     # Connection Settings
                     with Container(classes="panel") as panel:
                         panel.border_title = "Connection"
-                        with Horizontal(classes="param-row"):
-                            yield Label("Host:", classes="col-label")
+                        with Horizontal(classes="connection-strip"):
+                            yield Label("Host:", classes="conn-label")
                             yield Input(
                                 value=self.settings.last_host,
                                 placeholder="IP address (e.g., 192.168.1.100)",
                                 id="input_host",
-                                classes="col-input",
+                                classes="conn-host",
                             )
-                            yield Label("Port:", classes="col-label")
+                            yield Label("@", classes="conn-symbol")
                             yield Input(
                                 value=self.settings.last_port,
                                 placeholder="inst0",
                                 id="input_port",
-                                classes="col-input",
+                                classes="conn-port",
                             )
-                        with Horizontal(classes="param-row"):
-                            yield Label("Status poll:", classes="col-label")
+                            yield Label("🗘", classes="conn-symbol")
                             yield Select(
                                 options=[
                                     ("Off", 0),
@@ -2534,9 +2561,8 @@ class VNAApp(App):
                                 ],
                                 value=self.settings.status_poll_interval,
                                 id="sb_poll_interval",
-                                classes="col-input",
+                                classes="conn-poll",
                             )
-                            yield Static("", classes="col-check")
 
                     # Measurement Settings
                     with Container(classes="panel") as panel:
@@ -2629,14 +2655,14 @@ class VNAApp(App):
                             yield Static(
                                 "",
                                 id="preview_filename_template",
-                                classes="col-input template-preview",
+                                classes="template-preview",
                             )
                             yield Select(
                                 options=self.settings_manager.get_filename_template_options(),
                                 prompt="History",
                                 allow_blank=True,
                                 id="select_filename_template_history",
-                                classes="col-check",
+                                classes="col-history",
                             )
                         with Horizontal(classes="param-row"):
                             yield Label("Folder:", classes="col-label")
@@ -2649,14 +2675,14 @@ class VNAApp(App):
                             yield Static(
                                 "",
                                 id="preview_folder_template",
-                                classes="col-input template-preview",
+                                classes="template-preview",
                             )
                             yield Select(
                                 options=self.settings_manager.get_folder_template_options(),
                                 prompt="History",
                                 allow_blank=True,
                                 id="select_folder_template_history",
-                                classes="col-check",
+                                classes="col-history",
                             )
                         with Horizontal(classes="param-row output-export-row"):
                             yield Label("Export:", classes="col-label")
@@ -2718,18 +2744,21 @@ class VNAApp(App):
                             id="btn_open_output",
                             variant="primary",
                             disabled=True,
+                            flat=True,
                         )
                         yield Button(
                             "◐\nPNG",
                             id="btn_export_png",
                             variant="success",
                             disabled=True,
+                            flat=True,
                         )
                         yield Button(
                             "◇\nSVG",
                             id="btn_export_svg",
                             variant="success",
                             disabled=True,
+                            flat=True,
                         )
                 with VerticalScroll():
                     # Plot container (results/graph)
@@ -2788,6 +2817,7 @@ class VNAApp(App):
                                     "↻ Reset",
                                     id="btn_reset_freq_limits",
                                     variant="default",
+                                    flat=True,
                                 )
                             with Horizontal(classes="span-axis-group"):
                                 yield Label("Y:")
@@ -2804,11 +2834,13 @@ class VNAApp(App):
                                     "↻ Reset",
                                     id="btn_reset_y_limits",
                                     variant="default",
+                                    flat=True,
                                 )
                             yield Button(
                                 "✓ Apply",
                                 id="btn_apply_limits",
                                 variant="primary",
+                                flat=True,
                             )
 
             # Tools Tab
@@ -2891,11 +2923,13 @@ class VNAApp(App):
                             "⊙\nCursor",
                             id="btn_tool_measure",
                             variant="primary",
+                            flat=True,
                         )
                         yield Button(
                             "⌇\nDistortion",
                             id="btn_tool_distortion",
                             variant="primary",
+                            flat=True,
                         )
 
             # Log Tab
@@ -2937,20 +2971,28 @@ class VNAApp(App):
                 with Vertical(id="progress_container"):
                     yield Label("Disconnected", id="progress_label")
                     yield ProgressBar(id="progress_bar")
-                yield Button("📡\nConnect", id="btn_connect", variant="primary")
+                yield Button(
+                    "📡\nConnect", id="btn_connect", variant="primary", flat=True
+                )
                 yield Button(
                     "🔍\nRead Parameters",
                     id="btn_read_params",
                     variant="default",
                     disabled=True,
+                    flat=True,
                 )
                 yield Button(
-                    "📊\nMeasure", id="btn_measure", variant="success", disabled=True
+                    "📊\nMeasure",
+                    id="btn_measure",
+                    variant="success",
+                    disabled=True,
+                    flat=True,
                 )
                 yield Button(
                     "📁\nImport File",
                     id="btn_import_results",
                     variant="warning",
+                    flat=True,
                 )
 
         yield StatusFooter()
@@ -3294,12 +3336,24 @@ class VNAApp(App):
             "".join(rendered_markup) if rendered_markup else "[dim](empty)[/dim]"
         )
 
+        theme_vars = self.theme_variables
         if validation.has_errors:
-            preview.styles.border = ("solid", self.theme_variables["error"])
+            border_color = theme_vars.get("error", "#ff6b6b")
         elif validation.has_warnings:
-            preview.styles.border = ("solid", self.theme_variables["warning"])
+            border_color = theme_vars.get("warning", "#ffa500")
         else:
-            preview.styles.border = ("solid", self.theme_variables["panel"])
+            border_color = (
+                theme_vars.get("border-blurred")
+                or theme_vars.get("border_blurred")
+                or theme_vars.get("panel")
+                or theme_vars.get("text-muted")
+                or "#666666"
+            )
+
+        preview.styles.border_top = ("round", border_color)
+        preview.styles.border_right = ("round", border_color)
+        preview.styles.border_bottom = ("round", border_color)
+        preview.styles.border_left = ("round", border_color)
 
     def _refresh_export_template_history_options(self) -> None:
         """Refresh template history select options after MRU history changes."""
