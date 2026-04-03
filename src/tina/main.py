@@ -40,7 +40,12 @@ matplotlib.use("Agg")
 from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
-from .export import DEFAULT_TEMPLATE_TAGS, PATH_INVALID_CHARS, render_template
+from .export import (
+    DEFAULT_TEMPLATE_TAGS,
+    PATH_INVALID_CHARS,
+    CsvExporter,
+    render_template,
+)
 from .gui.components import (
     StatusFooter,
 )
@@ -1046,12 +1051,28 @@ class VNAApp(App):
 
             self.log_message(f"Saved: {output_path}", "success")
 
+            csv_path = None
+            if self.query_one("#check_export_bundle_csv", Checkbox).value:
+                csv_exporter = CsvExporter(freq_unit=str(self.settings.freq_unit))
+                csv_path = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    csv_exporter.export,
+                    freqs,
+                    export_params,
+                    export_folder,
+                    export_filename,
+                    export_name,
+                )
+                self.log_message(f"Saved: {csv_path}", "success")
+
             # Store measurement data with frequency unit
             freq_unit = self.query_one("#select_freq_unit", Select).value
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
                 "output_path": output_path,
+                "touchstone_path": output_path,
+                "csv_path": csv_path,
                 "freq_unit": freq_unit,
             }
             self.last_output_path = output_path
@@ -1154,6 +1175,143 @@ class VNAApp(App):
             self.log_message(f"Invalid file format: {e}", "error")
         except Exception as e:
             self.log_message(f"Import failed: {e}", "error")
+
+    def _get_selected_export_params(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """Return the currently selected S-parameters available in cached data."""
+        if not self.last_measurement:
+            return {}
+
+        sparams = self.last_measurement["sparams"]
+        export_params: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+
+        if self.query_one("#check_export_s11", Checkbox).value and "S11" in sparams:
+            export_params["S11"] = sparams["S11"]
+        if self.query_one("#check_export_s21", Checkbox).value and "S21" in sparams:
+            export_params["S21"] = sparams["S21"]
+        if self.query_one("#check_export_s12", Checkbox).value and "S12" in sparams:
+            export_params["S12"] = sparams["S12"]
+        if self.query_one("#check_export_s22", Checkbox).value and "S22" in sparams:
+            export_params["S22"] = sparams["S22"]
+
+        return export_params
+
+    def _choose_measurement_export_path(
+        self,
+        *,
+        title: str,
+        extension: str,
+        filetypes: list[tuple[str, str]],
+        default_source: str | None,
+        fallback_name: str,
+    ) -> str:
+        """Open a save dialog for a measurement export and return the chosen path."""
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        if default_source:
+            default_name = Path(str(default_source)).stem + extension
+        else:
+            default_name = fallback_name
+
+        try:
+            return filedialog.asksaveasfilename(
+                title=title,
+                defaultextension=extension,
+                filetypes=filetypes,
+                initialdir=(
+                    self.settings.output_folder if self.settings.output_folder else "."
+                ),
+                initialfile=default_name,
+            )
+        finally:
+            root.destroy()
+
+    @on(Button.Pressed, "#btn_export_touchstone")
+    def handle_export_touchstone(self) -> None:
+        """Export current measurement as a Touchstone file."""
+        if not self.last_measurement:
+            self.log_message("No measurement data to export", "error")
+            return
+
+        try:
+            file_path = self._choose_measurement_export_path(
+                title="Export Measurement as Touchstone (SxP)",
+                extension=".s2p",
+                filetypes=[("Touchstone / SxP File", "*.s2p"), ("All Files", "*.*")],
+                default_source=(
+                    self.last_measurement.get("touchstone_path")
+                    or self.last_output_path
+                ),
+                fallback_name="measurement.s2p",
+            )
+
+            if not file_path:
+                return
+
+            export_params = self._get_selected_export_params()
+            if not export_params:
+                self.log_message(
+                    "No S-parameters selected for Touchstone export", "error"
+                )
+                return
+
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
+            exporter = TouchstoneExporter(freq_unit=freq_unit)
+            exporter.export(
+                self.last_measurement["freqs"],
+                export_params,
+                str(Path(file_path).parent),
+                filename=Path(file_path).name,
+            )
+
+            self.last_measurement["touchstone_path"] = file_path
+            self.log_message(f"Exported Touchstone (SxP): {file_path}", "success")
+
+        except Exception as e:
+            self.log_message(f"Touchstone export failed: {e}", "error")
+
+    @on(Button.Pressed, "#btn_export_csv")
+    def handle_export_csv(self) -> None:
+        """Export current measurement as a CSV file."""
+        if not self.last_measurement:
+            self.log_message("No measurement data to export", "error")
+            return
+
+        try:
+            file_path = self._choose_measurement_export_path(
+                title="Export Measurement as CSV",
+                extension=".csv",
+                filetypes=[("CSV File", "*.csv"), ("All Files", "*.*")],
+                default_source=self.last_measurement.get("csv_path")
+                or self.last_output_path,
+                fallback_name="measurement.csv",
+            )
+
+            if not file_path:
+                return
+
+            export_params = self._get_selected_export_params()
+            if not export_params:
+                self.log_message("No S-parameters selected for CSV export", "error")
+                return
+
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
+            exporter = CsvExporter(freq_unit=freq_unit)
+            exporter.export(
+                self.last_measurement["freqs"],
+                export_params,
+                str(Path(file_path).parent),
+                filename=Path(file_path).name,
+            )
+
+            self.last_measurement["csv_path"] = file_path
+            self.log_message(f"Exported CSV: {file_path}", "success")
+
+        except Exception as e:
+            self.log_message(f"CSV export failed: {e}", "error")
 
     @on(Button.Pressed, "#btn_export_png")
     def handle_export_png(self) -> None:
@@ -1498,10 +1656,11 @@ class VNAApp(App):
         Update the output file label in the UI to a truncated path that fits the available container width.
 
         If `self.last_output_path` is None the method returns immediately. The method measures the widths of
-        the output container and the three export/show buttons (#btn_open_output, #btn_export_png, #btn_export_svg),
-        computes the remaining width, and uses `truncate_path_intelligently` to produce a shortened path
-        prefixed with "📁 ". If the computed available width is too small (<= 10) the label is not updated.
-        The method ignores exceptions raised while querying widgets (e.g., widgets not yet mounted).
+        the output container and the export/show buttons (#btn_open_output, #btn_export_touchstone,
+        #btn_export_csv, #btn_export_png, #btn_export_svg), computes the remaining width, and uses
+        `truncate_path_intelligently` to produce a shortened path prefixed with "📁 ". If the computed
+        available width is too small (<= 10) the label is not updated. The method ignores exceptions raised
+        while querying widgets (e.g., widgets not yet mounted).
         """
         if self.last_output_path is None:
             return
@@ -1512,15 +1671,19 @@ class VNAApp(App):
 
             # Calculate actual button widths
             btn_show = self.query_one("#btn_open_output", Button)
+            btn_touchstone = self.query_one("#btn_export_touchstone", Button)
+            btn_csv = self.query_one("#btn_export_csv", Button)
             btn_png = self.query_one("#btn_export_png", Button)
             btn_svg = self.query_one("#btn_export_svg", Button)
 
             # Sum of button widths + margins (each button has margin-left: 1)
             buttons_width = (
                 btn_show.size.width
+                + btn_touchstone.size.width
+                + btn_csv.size.width
                 + btn_png.size.width
                 + btn_svg.size.width
-                + 6  # 3 buttons × 2 margin (left+right spacing)
+                + 10  # 5 buttons × 2 margin (left+right spacing)
             )
 
             # Available width for path = container width - buttons - buffer
@@ -2111,6 +2274,8 @@ class VNAApp(App):
 
         # Enable export buttons
         self.query_one("#btn_open_output", Button).disabled = False
+        self.query_one("#btn_export_touchstone", Button).disabled = False
+        self.query_one("#btn_export_csv", Button).disabled = False
         self.query_one("#btn_export_png", Button).disabled = False
         self.query_one("#btn_export_svg", Button).disabled = False
 

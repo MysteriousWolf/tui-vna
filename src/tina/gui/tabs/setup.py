@@ -180,22 +180,22 @@ def compose_setup_tab(app) -> ComposeResult:
                     )
                 with Horizontal(classes="output-export-half --right"):
                     yield Checkbox(
-                        "s2p",
+                        "SxP",
                         id="check_export_bundle_s2p",
                         value=app.settings.export_bundle_s2p,
                     )
                     yield Checkbox(
-                        "csv",
+                        "CSV",
                         id="check_export_bundle_csv",
                         value=app.settings.export_bundle_csv,
                     )
                     yield Checkbox(
-                        "png",
+                        "PNG",
                         id="check_export_bundle_png",
                         value=app.settings.export_bundle_png,
                     )
                     yield Checkbox(
-                        "svg",
+                        "SVG",
                         id="check_export_bundle_svg",
                         value=app.settings.export_bundle_svg,
                     )

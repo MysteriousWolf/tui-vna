@@ -19,6 +19,8 @@
 }
 
 #btn_open_output,
+#btn_export_touchstone,
+#btn_export_csv,
 #btn_export_png,
 #btn_export_svg {
     width: auto;
