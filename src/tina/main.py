@@ -25,6 +25,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    Markdown,
     ProgressBar,
     RadioSet,
     RichLog,
@@ -32,6 +33,7 @@ from textual.widgets import (
     Static,
     TabbedContent,
     TabPane,
+    TextArea,
 )
 
 # Set matplotlib to non-interactive backend
@@ -152,6 +154,7 @@ class VNAApp(App):
         self.connected = False
         self.measuring = False
         self.last_measurement = None  # Store last measurement data
+        self.measurement_notes = ""  # Store raw markdown notes for current measurement
         self.last_output_path = None  # Store last output file path
         self.last_plot_path = None  # Store last plot image path
         self.log_messages = []  # Store all log messages for filtering
@@ -241,6 +244,8 @@ class VNAApp(App):
         self.call_after_refresh(self._log_startup)
         self.call_after_refresh(setup_logic.mount_setup_autocompletes, self)
         self.call_after_refresh(setup_logic.refresh_export_template_validation, self)
+        self.call_after_refresh(self._load_measurement_notes_into_editor)
+        self.call_after_refresh(self._refresh_measurement_notes_preview)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
         # Initialize plot-type options based on backend
@@ -1074,6 +1079,7 @@ class VNAApp(App):
                 "touchstone_path": output_path,
                 "csv_path": csv_path,
                 "freq_unit": freq_unit,
+                "notes": self.measurement_notes,
             }
             self.last_output_path = output_path
 
@@ -1148,13 +1154,17 @@ class VNAApp(App):
             )
 
             # Store measurement data (imported files use MHz by default)
+            self.measurement_notes = ""
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
                 "output_path": file_path,
                 "freq_unit": "MHz",  # Touchstone files typically use MHz
+                "notes": self.measurement_notes,
             }
             self.last_output_path = file_path
+            self._load_measurement_notes_into_editor()
+            self._refresh_measurement_notes_preview()
 
             # Update plot checkboxes based on available parameters
             self.query_one("#check_plot_s11", Checkbox).value = "S11" in sparams
@@ -1643,6 +1653,36 @@ class VNAApp(App):
             self.last_measurement["output_path"],
         )
 
+    def _sync_measurement_notes_from_editor(self) -> None:
+        """Copy the current notes editor contents into app and measurement state."""
+        editor = self.query_one("#measurement_notes_editor", TextArea)
+        self.measurement_notes = editor.text
+        if self.last_measurement is not None:
+            self.last_measurement["notes"] = self.measurement_notes
+
+    def _load_measurement_notes_into_editor(self) -> None:
+        """Load cached measurement notes into the notes editor."""
+        editor = self.query_one("#measurement_notes_editor", TextArea)
+        notes = self.measurement_notes
+        if self.last_measurement is not None:
+            notes = str(self.last_measurement.get("notes", notes))
+        self.measurement_notes = notes
+        editor.text = notes
+        self._refresh_measurement_notes_preview()
+
+    def _refresh_measurement_notes_preview(self) -> None:
+        """Render the current raw markdown notes into the preview pane."""
+        editor = self.query_one("#measurement_notes_editor", TextArea)
+        preview = self.query_one("#measurement_notes_preview", Markdown)
+        notes = editor.text.strip()
+        self.measurement_notes = editor.text
+        if self.last_measurement is not None:
+            self.last_measurement["notes"] = self.measurement_notes
+        if notes:
+            preview.update(self.measurement_notes)
+        else:
+            preview.update("No notes yet")
+
     async def _refresh_tools_plot(self) -> None:
         """Render the Tools tab plot for the currently selected trace."""
         await refresh_tools_plot(self)
@@ -1716,16 +1756,23 @@ class VNAApp(App):
 
     @on(Select.Changed, "#select_plot_type")
     async def on_plot_type_change(self, event: Select.Changed) -> None:
-        """Handle plot type selection change."""
+        """Handle plot type change."""
         if self.last_measurement is None:
             return
 
-        # Redraw plot with new plot type
+        # Redraw plot with new type
         await self._update_results(
             self.last_measurement["freqs"],
             self.last_measurement["sparams"],
             self.last_measurement["output_path"],
         )
+
+    @on(TextArea.Changed, "#measurement_notes_editor")
+    def handle_measurement_notes_change(self, event: TextArea.Changed) -> None:
+        """Track raw markdown notes entered for the current measurement."""
+        del event
+        self._sync_measurement_notes_from_editor()
+        self._refresh_measurement_notes_preview()
 
     @on(Button.Pressed, "#btn_apply_limits")
     async def handle_apply_limits(self) -> None:
