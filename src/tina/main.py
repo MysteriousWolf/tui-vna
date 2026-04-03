@@ -42,19 +42,8 @@ matplotlib.use("Agg")
 from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
-from .export import (
-    DEFAULT_TEMPLATE_TAGS,
-    PATH_INVALID_CHARS,
-    build_export_template_context,
-    render_template,
-    validate_template,
-)
-from .gui.components import (
-    AutocompleteChoice,
-    HistoryReplaceAutoComplete,
-    StatusFooter,
-    TemplateAutoComplete,
-)
+from .export import DEFAULT_TEMPLATE_TAGS, PATH_INVALID_CHARS, render_template
+from .gui.components import StatusFooter
 from .gui.modals import HelpScreen, build_update_screen, build_welcome_screen
 from .gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
 from .gui.plotting import (
@@ -81,6 +70,7 @@ from .gui.tabs import (
     refresh_tools_plot,
     run_tools_computation,
     set_active_tool,
+    setup_logic,
     tools_logic,
 )
 from .utils import TouchstoneExporter
@@ -254,8 +244,8 @@ class VNAApp(App):
         self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
-        self.call_after_refresh(self._mount_setup_autocompletes)
-        self.call_after_refresh(self._refresh_export_template_validation)
+        self.call_after_refresh(setup_logic.mount_setup_autocompletes, self)
+        self.call_after_refresh(setup_logic.refresh_export_template_validation, self)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
         # Initialize plot-type options based on backend
@@ -490,283 +480,6 @@ class VNAApp(App):
             # Silently fail during shutdown to avoid errors
             pass
 
-    def _build_export_template_context(self) -> dict[str, object]:
-        """Build export-template context from current setup state."""
-        start_freq = float(self.query_one("#input_start_freq", Input).value or "1.0")
-        stop_freq = float(self.query_one("#input_stop_freq", Input).value or "1100.0")
-        sweep_points = int(self.query_one("#input_points", Input).value or "601")
-        averaging_count = int(self.query_one("#input_avg_count", Input).value or "16")
-        span = stop_freq - start_freq
-
-        return build_export_template_context(
-            date_time=datetime.now(),
-            host=self.query_one("#input_host", Input).value.strip(),
-            vendor=getattr(self.worker, "vendor", ""),
-            model=getattr(self.worker, "model", ""),
-            start=f"{start_freq:.6g}",
-            stop=f"{stop_freq:.6g}",
-            span=f"{span:.6g}",
-            pts=sweep_points,
-            avg=averaging_count,
-            ifbw="",
-            cal=False,
-        )
-
-    def _validate_export_template(self, template: str, *, allow_path_separators: bool):
-        """Validate one export template, optionally permitting folder separators."""
-        invalid_chars = set(PATH_INVALID_CHARS)
-        if allow_path_separators:
-            invalid_chars.discard("/")
-            invalid_chars.discard("\\")
-
-        return validate_template(
-            template,
-            allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
-            invalid_path_chars=invalid_chars,
-        )
-
-    def _apply_template_input_state(
-        self, input_id: str, validation, *, kind: str
-    ) -> None:
-        """Apply warning/error classes and tooltip-like hints to a template input."""
-        widget = self.query_one(input_id, Input)
-        widget.remove_class("template-warning", "template-error")
-
-        messages: list[str] = []
-        if validation.has_warnings:
-            widget.add_class("template-warning")
-            messages.append(
-                f"Unknown {kind} tags: {', '.join(validation.unknown_tags)}"
-            )
-        if validation.has_errors:
-            widget.add_class("template-error")
-            messages.append(
-                "Invalid path characters: " + ", ".join(validation.invalid_characters)
-            )
-
-        widget.tooltip = "\n".join(messages) if messages else None
-
-    def _update_template_preview(
-        self,
-        input_id: str,
-        preview_id: str,
-        *,
-        allow_path_separators: bool,
-        default_template: str,
-    ) -> None:
-        """Render one template preview and update its paired preview widget."""
-        template = self.query_one(input_id, Input).value.strip() or default_template
-        preview = self.query_one(preview_id, Static)
-
-        validation = self._validate_export_template(
-            template,
-            allow_path_separators=allow_path_separators,
-        )
-        rendered = render_template(
-            template,
-            context=self._build_export_template_context(),
-            allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
-            invalid_path_chars=(
-                set(PATH_INVALID_CHARS) - {"/", "\\"}
-                if allow_path_separators
-                else set(PATH_INVALID_CHARS)
-            ),
-        )
-
-        rendered_markup = []
-        for segment in rendered.segments:
-            if segment.source in ("tag", "time_format"):
-                rendered_markup.append(f"[bold $accent]{segment.text}[/]")
-            elif segment.source == "unknown":
-                rendered_markup.append(f"[italic $warning]{segment.text}[/]")
-            else:
-                rendered_markup.append(segment.text)
-
-        preview.update(
-            "".join(rendered_markup) if rendered_markup else "[dim](empty)[/dim]"
-        )
-
-        theme_vars = self.theme_variables
-        if validation.has_errors:
-            border_color = theme_vars.get("error", "#ff6b6b")
-        elif validation.has_warnings:
-            border_color = theme_vars.get("warning", "#ffa500")
-        else:
-            border_color = (
-                theme_vars.get("border-blurred")
-                or theme_vars.get("border_blurred")
-                or theme_vars.get("panel")
-                or theme_vars.get("text-muted")
-                or "#666666"
-            )
-
-        preview.styles.border_top = ("round", border_color)
-        preview.styles.border_right = ("round", border_color)
-        preview.styles.border_bottom = ("round", border_color)
-        preview.styles.border_left = ("round", border_color)
-
-    def _get_host_autocomplete_choices(self) -> list[AutocompleteChoice]:
-        """Build host autocomplete choices from persisted host history."""
-        return [
-            AutocompleteChoice(
-                value=host,
-                kind="history",
-                label=host,
-                prefix="↺ ",
-            )
-            for host in self.settings.host_history
-            if host
-        ]
-
-    def _get_port_autocomplete_choices(self) -> list[AutocompleteChoice]:
-        """Build port autocomplete choices from persisted port history."""
-        return [
-            AutocompleteChoice(
-                value=port,
-                kind="history",
-                label=port,
-                prefix="↺ ",
-            )
-            for port in self.settings.port_history
-            if port
-        ]
-
-    def _get_template_tag_choices(self) -> list[AutocompleteChoice]:
-        """Build autocomplete choices for supported export template tags."""
-        tag_examples = {
-            "date": "{date}",
-            "time": "{time}",
-            "host": "{host}",
-            "vend": "{vend}",
-            "model": "{model}",
-            "start": "{start}",
-            "stop": "{stop}",
-            "span": "{span}",
-            "pts": "{pts}",
-            "avg": "{avg}",
-            "ifbw": "{ifbw}",
-            "cal": "{cal}",
-        }
-        time_formats = ("{%Y%m%d_%H%M%S}", "{%Y-%m-%d}", "{%H%M}")
-        choices = [
-            AutocompleteChoice(
-                value=value,
-                kind="tag",
-                label=value,
-                prefix="# ",
-            )
-            for value in tag_examples.values()
-        ]
-        choices.extend(
-            AutocompleteChoice(
-                value=value,
-                kind="tag",
-                label=value,
-                prefix="% ",
-            )
-            for value in time_formats
-        )
-        return choices
-
-    def _get_filename_template_autocomplete_choices(self) -> list[AutocompleteChoice]:
-        """Build autocomplete choices for filename templates."""
-        history = [
-            AutocompleteChoice(
-                value=template,
-                kind="history",
-                label=template,
-                prefix="↺ ",
-            )
-            for template in (self.settings.filename_template_history or [])
-            if template
-        ]
-        return history + self._get_template_tag_choices()
-
-    def _get_folder_template_autocomplete_choices(self) -> list[AutocompleteChoice]:
-        """Build autocomplete choices for folder templates."""
-        history = [
-            AutocompleteChoice(
-                value=template,
-                kind="history",
-                label=template,
-                prefix="↺ ",
-            )
-            for template in (self.settings.folder_template_history or [])
-            if template
-        ]
-        return history + self._get_template_tag_choices()
-
-    def _mount_setup_autocompletes(self) -> None:
-        """Mount autocomplete widgets for setup inputs."""
-        self.mount(
-            HistoryReplaceAutoComplete(
-                "#input_host",
-                self._get_host_autocomplete_choices,
-                id="ac_host",
-            )
-        )
-        self.mount(
-            HistoryReplaceAutoComplete(
-                "#input_port",
-                self._get_port_autocomplete_choices,
-                id="ac_port",
-            )
-        )
-        self.mount(
-            TemplateAutoComplete(
-                "#input_filename_prefix",
-                self._get_filename_template_autocomplete_choices,
-                id="ac_filename_template",
-            )
-        )
-        self.mount(
-            TemplateAutoComplete(
-                "#input_output_folder",
-                self._get_folder_template_autocomplete_choices,
-                id="ac_folder_template",
-            )
-        )
-
-    def _refresh_export_template_validation(self) -> None:
-        """Validate current filename and folder templates and refresh input styling."""
-        filename_template = self.query_one(
-            "#input_filename_prefix", Input
-        ).value.strip()
-        folder_template = self.query_one("#input_output_folder", Input).value.strip()
-
-        self._filename_template_validation = self._validate_export_template(
-            filename_template or self.settings.filename_template,
-            allow_path_separators=False,
-        )
-        self._folder_template_validation = self._validate_export_template(
-            folder_template or self.settings.folder_template,
-            allow_path_separators=True,
-        )
-
-        self._apply_template_input_state(
-            "#input_filename_prefix",
-            self._filename_template_validation,
-            kind="filename template",
-        )
-        self._apply_template_input_state(
-            "#input_output_folder",
-            self._folder_template_validation,
-            kind="folder template",
-        )
-        self._update_template_preview(
-            "#input_filename_prefix",
-            "#preview_filename_template",
-            allow_path_separators=False,
-            default_template=self.settings.filename_template
-            or "measurement_{date}_{time}",
-        )
-        self._update_template_preview(
-            "#input_output_folder",
-            "#preview_folder_template",
-            allow_path_separators=True,
-            default_template=self.settings.folder_template or "measurement",
-        )
-
     def _start_message_polling(self):
         """Start polling worker thread for messages."""
         self._message_check_timer = self.set_interval(0.05, self._check_worker_messages)
@@ -891,20 +604,11 @@ class VNAApp(App):
         if self.connected:
             self._start_status_polling(event.value)
 
-    def _debounced_export_template_refresh(self) -> None:
-        """Debounced refresh for export template validation and preview updates."""
-        self._template_input_timer = None
-        self._refresh_export_template_validation()
-
     @on(Input.Changed, "#input_filename_prefix, #input_output_folder")
     def on_export_template_change(self, event: Input.Changed) -> None:
         """Refresh export-template validation when the template inputs change."""
         del event
-        if self._template_input_timer is not None:
-            self._template_input_timer.stop()
-        self._template_input_timer = self.set_timer(
-            0.15, self._debounced_export_template_refresh
-        )
+        setup_logic.handle_export_template_change(self)
 
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
@@ -1342,23 +1046,25 @@ class VNAApp(App):
             if not folder_template:
                 folder_template = self.settings.folder_template or "measurement"
 
-            filename_validation = self._validate_export_template(
+            filename_validation = setup_logic.validate_export_template_for_app(
                 filename_template,
                 allow_path_separators=False,
             )
-            folder_validation = self._validate_export_template(
+            folder_validation = setup_logic.validate_export_template_for_app(
                 folder_template,
                 allow_path_separators=True,
             )
 
             self._filename_template_validation = filename_validation
             self._folder_template_validation = folder_validation
-            self._apply_template_input_state(
+            setup_logic.apply_template_input_state(
+                self,
                 "#input_filename_prefix",
                 filename_validation,
                 kind="filename template",
             )
-            self._apply_template_input_state(
+            setup_logic.apply_template_input_state(
+                self,
                 "#input_output_folder",
                 folder_validation,
                 kind="folder template",
@@ -1377,7 +1083,7 @@ class VNAApp(App):
                 self.sub_title = "Connected"
                 return
 
-            export_context = self._build_export_template_context()
+            export_context = setup_logic.build_export_template_context_for_app(self)
             rendered_filename = render_template(
                 filename_template,
                 context=export_context,
