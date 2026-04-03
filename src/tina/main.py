@@ -10,12 +10,8 @@ import queue
 import re
 import subprocess
 import sys
-import tempfile
 import tkinter as tk
-import webbrowser
-from dataclasses import dataclass
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from tkinter import filedialog
 
@@ -27,17 +23,13 @@ from rich.markup import escape as rich_escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.command import Hit, Hits, Provider
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Checkbox,
-    Footer,
     Header,
     Input,
     Label,
-    Markdown,
     ProgressBar,
     RadioButton,
     RadioSet,
@@ -47,8 +39,6 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
 )
-from textual_autocomplete import AutoComplete, DropdownItem
-from textual_autocomplete._autocomplete import TargetState
 
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
@@ -63,6 +53,15 @@ from .export import (
     render_template,
     validate_template,
 )
+from .gui.components import (
+    AutocompleteChoice,
+    HistoryReplaceAutoComplete,
+    StatusFooter,
+    TemplateAutoComplete,
+)
+from .gui.modals import HelpScreen, build_update_screen, build_welcome_screen
+from .gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
+from .gui.providers import CursorMarkerProvider, PlotBackendProvider, StatusPollProvider
 from .tools import DistortionTool, MeasureTool
 from .tools.distortion import COMPONENT_NAMES as _DISTORTION_COMPONENT_NAMES
 from .utils import TouchstoneExporter
@@ -80,22 +79,6 @@ from .worker import (
     ProgressUpdate,
     StatusResult,
 )
-
-try:
-    from pylatexenc.latex2text import LatexNodes2Text as _LatexNodes2Text
-
-    _latex_converter = _LatexNodes2Text()
-except ImportError:
-    _latex_converter = None
-
-# GUI-only imports - done at module level to ensure proper terminal detection
-try:
-    from textual_image.widget import Image as ImageWidget
-
-    TEXTUAL_IMAGE_AVAILABLE = True
-except ImportError:
-    ImageWidget = None
-    TEXTUAL_IMAGE_AVAILABLE = False
 
 # S-parameter to theme variable mapping.
 # Each S-param maps to a Textual CSS variable name.
@@ -272,7 +255,6 @@ def _get_terminal_font() -> tuple[str, float | None]:
     Windows Terminal.
     """
     import json
-    import re
 
     import matplotlib.font_manager as fm
 
@@ -967,929 +949,6 @@ def _create_smith_chart(
     plt.close(fig)
 
 
-class UpdateNotificationScreen(ModalScreen):
-    """Reusable modal for update-related notifications (new release or post-update welcome)."""
-
-    CSS_PATH = ["gui/styles/update_dialogs.tcss"]
-
-    BINDINGS = [
-        ("escape", "close", "Close"),
-    ]
-
-    def __init__(
-        self,
-        title: str,
-        body: str,
-        button_label: str,
-        button_variant: str = "primary",
-        badge: str | None = None,
-        badge_class: str | None = None,
-        welcome: bool = False,
-    ) -> None:
-        """Initialise the notification screen with title, markdown body, and button config."""
-        super().__init__()
-        self._title = title
-        self._body = body or "_No changelog provided._"
-        self._button_label = button_label
-        self._button_variant = button_variant
-        self._badge = badge
-        self._badge_class = badge_class
-        if welcome:
-            self.add_class("--welcome")
-
-    def compose(self) -> ComposeResult:
-        """Compose the modal layout: title row, scrollable body, and dismiss button."""
-        with Vertical(id="notif-dialog"):
-            with Horizontal(id="notif-header"):
-                yield Label(self._title, id="notif-title")
-                if self._badge:
-                    yield Label(
-                        f" {self._badge} ",
-                        id="notif-badge",
-                        classes=self._badge_class or "",
-                    )
-            with VerticalScroll(id="notif-body"):
-                yield Markdown(self._body)
-            with Horizontal(id="notif-footer"):
-                yield Button(
-                    self._button_label,
-                    variant=self._button_variant,
-                    id="btn-notif-dismiss",
-                    classes="notif-btn",
-                    flat=True,
-                )
-                yield Static(id="footer-spacer")
-                yield Button(
-                    "View on GitHub",
-                    variant="primary",
-                    id="btn-notif-github",
-                    classes="notif-btn",
-                    flat=True,
-                )
-
-    @on(Button.Pressed, "#btn-notif-github")
-    def open_github_release(self) -> None:
-        """Open the latest releases page in the system browser."""
-        webbrowser.open("https://github.com/MysteriousWolf/tui-vna/releases/latest")
-
-    def action_close(self) -> None:
-        """Close the notification modal (via Escape key or action binding)."""
-        self.dismiss()
-
-    @on(Button.Pressed, "#btn-notif-dismiss")
-    def dismiss_notification(self) -> None:
-        """
-        Dismisses the modal screen.
-        """
-        self.dismiss()
-
-
-# ---------------------------------------------------------------------------
-# Help viewer helpers
-# ---------------------------------------------------------------------------
-
-
-def _pixel_graphics_available() -> bool:
-    """
-    Detect whether the terminal backend supports true pixel graphics (Sixel or Kitty TGP).
-
-    Checks that the optional textual_image package is available and that its chosen
-    image renderable is specifically the Sixel or Kitty TGP implementation; half-cell
-    or Unicode/block renderers are not considered supported for pixel-accurate math
-    rendering.
-
-    Returns:
-        `True` if pixel graphics via Sixel or Kitty TGP are available, `False` otherwise.
-    """
-    if not TEXTUAL_IMAGE_AVAILABLE:
-        return False
-    try:
-        from textual_image.renderable import Image as _AutoRenderable
-        from textual_image.renderable.sixel import Image as _SixelRenderable
-        from textual_image.renderable.tgp import Image as _TGPRenderable
-
-        return _AutoRenderable in (_SixelRenderable, _TGPRenderable)
-    except Exception:
-        return False
-
-
-def _preprocess_inline_latex(text: str) -> str:
-    """Convert inline ``$...$`` math spans to backtick-wrapped Unicode text.
-
-    Each ``$expr$`` is replaced with `` `unicode` `` so Textual's
-    ``Markdown`` widget renders it as inline code rather than raw LaTeX.
-    When *pylatexenc* is unavailable the raw expression is kept as-is inside
-    the backticks.  Cross-line spans (containing a newline) are intentionally
-    left untouched.
-
-    Args:
-        text: A markdown text segment that may contain ``$...$`` spans.
-            Must NOT contain ``$$...$$`` display-math blocks (those are split
-            out before this function is called in ``HelpScreen.compose``).
-
-    Returns:
-        The text with all inline math spans converted to backtick strings.
-    """
-    if _latex_converter is None:
-        return re.sub(r"\$([^$\n]+?)\$", r"`\1`", text)
-
-    def replace_inline(m: re.Match) -> str:
-        """
-        Convert an inline LaTeX match to plain-text wrapped in backticks.
-
-        Parameters:
-            m (re.Match): A regex match whose group(1) contains the inline LaTeX expression.
-
-        Returns:
-            str: The LaTeX expression converted to plain text, trimmed, and wrapped in backticks.
-        """
-        return f"`{_latex_converter.latex_to_text(m.group(1)).strip()}`"
-
-    return re.sub(r"\$([^$\n]+?)\$", replace_inline, text)
-
-
-class HelpScreen(ModalScreen):
-    """Help viewer modal with hybrid LaTeX rendering.
-
-    Display math ($$...$$) is rendered as a matplotlib image when the terminal
-    supports graphics, with a plain-text code-block fallback.  Inline math
-    ($...$) is always converted to Unicode via pylatexenc.
-    """
-
-    CSS_PATH = ["gui/styles/help.tcss"]
-
-    BINDINGS = [
-        ("escape", "close", "Close"),
-    ]
-
-    def __init__(self, title: str, content: str) -> None:
-        """
-        Initialize the help viewer modal.
-
-        Parameters:
-            title (str): Heading displayed at the top of the modal.
-            content (str): Raw Markdown text, optionally containing $$...$$ display-math blocks and $...$ inline math.
-        """
-        super().__init__()
-        self._title = title
-        self._raw_content = content
-        self._temp_files: list[Path] = []
-
-    @staticmethod
-    def _prep_for_mathtext(expr: str) -> str:
-        """
-        Sanitize a LaTeX expression for use with matplotlib's mathtext engine.
-
-        This function rewrites or removes LaTeX constructs that matplotlib.mathtext does not support,
-        producing an expression that can be rendered without causing a ParseFatalException.
-
-        Transformations performed:
-        - Removes `\boxed` while keeping its braced content.
-        - Replaces `\text{...}` with `\\mathrm{...}`.
-        - Replaces `\\lvert` / `\rvert` with `|`.
-        - Removes size/bracket decorators such as `\bigl`, `\bigr`, `\\Bigl`, `\\Bigr`, `\\left`, and `\right`.
-        - Drops subscripts from `\\max_{...}` and `\\min_{...}`, leaving `\\max` / `\\min`.
-
-        Parameters:
-            expr (str): Raw LaTeX string (without surrounding `$` delimiters).
-
-        Returns:
-            str: Sanitized expression safe to pass to matplotlib mathtext (e.g., `fig.text(..., usetex=False)`).
-        """
-        # \boxed is unsupported — drop the command, keep the braced content as a group
-        expr = expr.replace("\\boxed", "")
-        # \text{X} -> \mathrm{X}  (mathtext supports \mathrm)
-        expr = re.sub(r"\\text\{([^{}]*)\}", r"\\mathrm{\1}", expr)
-        # \lvert \rvert -> |
-        expr = expr.replace("\\lvert", "|").replace("\\rvert", "|")
-        # Size/bracket decorators that confuse the parser
-        for cmd in ("\\bigl", "\\bigr", "\\Bigl", "\\Bigr", "\\left", "\\right"):
-            expr = expr.replace(cmd, "")
-        # \max / \min with subscripts — drop the subscript
-        expr = re.sub(r"\\(max|min)_\{[^{}]*\}", r"\\\1", expr)
-        return expr
-
-    def _render_math_image(self, latex_expr: str) -> tuple[Path, int, int] | None:
-        """
-        Render a LaTeX display-math expression to a tightly cropped PNG and return its file path and pixel dimensions.
-
-        The input expression is sanitized for matplotlib's mathtext and rendered as a display-style formula. On success returns a temporary PNG Path and its width and height in pixels; returns `None` if rendering fails.
-        Parameters:
-            latex_expr (str): The LaTeX expression to render (may be raw math without surrounding `$$`).
-
-        Returns:
-            tuple[Path, int, int] | None: `(path, width_px, height_px)` on success, or `None` on failure.
-        """
-        try:
-            from io import BytesIO
-
-            from PIL import Image as PILImage
-            from PIL import ImageColor
-
-            v = self.app.get_css_variables()
-            bg_hex = v.get("surface", "#1a1a1a")
-            fg_hex = v.get("foreground", "#ffffff")
-
-            expr = self._prep_for_mathtext(latex_expr.strip())
-
-            with plt.rc_context({"font.family": "monospace"}):
-                fig = plt.figure(figsize=(9, 1.5))
-                fig.patch.set_facecolor("none")
-                fig.text(
-                    0.5,
-                    0.5,
-                    f"${expr}$",
-                    ha="center",
-                    va="center",
-                    fontsize=14,
-                    color=fg_hex,
-                    usetex=False,
-                )
-                buf = BytesIO()
-                fig.savefig(
-                    buf,
-                    format="png",
-                    dpi=130,
-                    bbox_inches="tight",
-                    pad_inches=0.05,
-                    transparent=True,
-                )
-                plt.close(fig)
-
-            buf.seek(0)
-            img = PILImage.open(buf).convert("RGBA")
-
-            # Alpha-based crop — transparent pixels are background
-            _, _, _, alpha = img.split()
-            content_bbox = alpha.getbbox()
-            if content_bbox:
-                pad_px = 5
-                content_bbox = (
-                    max(0, content_bbox[0] - pad_px),
-                    max(0, content_bbox[1] - pad_px),
-                    min(img.width, content_bbox[2] + pad_px),
-                    min(img.height, content_bbox[3] + pad_px),
-                )
-                img = img.crop(content_bbox)
-
-            # Composite onto solid theme background
-            bg_rgba = ImageColor.getrgb(bg_hex) + (255,)
-            bg_layer = PILImage.new("RGBA", img.size, bg_rgba)
-            final = PILImage.alpha_composite(bg_layer, img)
-
-            fd, tmp_path = tempfile.mkstemp(suffix=".png")
-            os.close(fd)
-            final.convert("RGB").save(tmp_path, "PNG")
-            tmp = Path(tmp_path)
-            self._temp_files.append(tmp)
-            return tmp, final.width, final.height
-        except Exception:
-            plt.close("all")
-            return None
-
-    def compose(self) -> ComposeResult:
-        """
-        Builds the help modal contents by splitting the raw markdown into text and display-math segments and rendering display-math as pixel images when supported.
-
-        Text segments have inline LaTeX spans preprocessed for Markdown rendering; display-math segments are rendered to tightly-cropped PNG images when pixel graphics are available, otherwise emitted as a fenced-code plaintext fallback.
-
-        Returns:
-            ComposeResult: an iterable of child widgets that compose the Help modal (title, body with Markdown or images, and a Close button).
-        """
-        use_images = _pixel_graphics_available()
-        parts = re.split(r"\$\$(.*?)\$\$", self._raw_content, flags=re.DOTALL)
-        with Vertical(id="help-dialog"):
-            yield Label(self._title, id="help-title")
-            with VerticalScroll(id="help-body"):
-                for i, part in enumerate(parts):
-                    if i % 2 == 0:
-                        # Text segment — convert inline math to Unicode
-                        processed = _preprocess_inline_latex(part)
-                        if processed.strip():
-                            yield Markdown(processed)
-                    else:
-                        # Display math — pixel image or plain-text fallback
-                        result = self._render_math_image(part) if use_images else None
-                        if result is not None:
-                            img_path, img_w_px, img_h_px = result
-                            try:
-                                from textual_image.widget._base import (
-                                    get_cell_size as _gtcs,
-                                )
-
-                                tc = _gtcs()
-                                cw = tc.width if tc.width > 0 else 8
-                                ch = tc.height if tc.height > 0 else 16
-                            except Exception:
-                                cw, ch = 8, 16
-                            w_cells = max(8, round(img_w_px / cw))
-                            h_cells = max(1, round(img_h_px / ch))
-                            img_widget = ImageWidget(str(img_path))
-                            img_widget.styles.width = w_cells
-                            img_widget.styles.height = h_cells
-                            with Horizontal(classes="math-img-row"):
-                                yield img_widget
-                        else:
-                            fallback = (
-                                _latex_converter.latex_to_text(part).strip()
-                                if _latex_converter is not None
-                                else part.strip()
-                            )
-                            yield Markdown(f"\n```\n{fallback}\n```\n")
-            with Horizontal(id="help-footer"):
-                yield Button("Close", variant="primary", id="btn-help-close", flat=True)
-
-    def on_unmount(self) -> None:
-        """
-        Attempt to delete temporary PNG files created for rendered math.
-
-        Removes any paths in self._temp_files from the filesystem; failures during removal are ignored.
-        """
-        for f in self._temp_files:
-            try:
-                f.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    def action_close(self) -> None:
-        """Close the help modal (via Escape key or action binding)."""
-        self.dismiss()
-
-    @on(Button.Pressed, "#btn-help-close")
-    def close_help(self) -> None:
-        """Dismiss the help modal."""
-        self.dismiss()
-
-
-def _update_screen(release_info) -> UpdateNotificationScreen:
-    """
-    Create an UpdateNotificationScreen configured for the given release information.
-
-    The screen title, body text, dismiss button label, and badge (either "PRE-RELEASE" or "STABLE") are selected based on the release metadata.
-
-    Parameters:
-        release_info: An object with attributes `is_prerelease`, `version`, `changelog`, and `html_url` used to populate the notification content.
-
-    Returns:
-        UpdateNotificationScreen: A modal screen ready to show the release notification.
-    """
-    rel = release_info
-    if rel.is_prerelease:
-        intro = f"A new pre-release **v{rel.version}** is available.\n\n"
-        body = intro + (
-            rel.changelog if rel.changelog else f"[View on GitHub]({rel.html_url})"
-        )
-        badge, badge_class = "PRE-RELEASE", "badge-pre"
-    else:
-        body = rel.changelog or "_No changelog provided._"
-        badge, badge_class = "STABLE", "badge-stable"
-    return UpdateNotificationScreen(
-        title=f"Update available:  v{rel.version}",
-        body=body,
-        button_label="Dismiss",
-        badge=badge,
-        badge_class=badge_class,
-    )
-
-
-def _welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
-    """Build an UpdateNotificationScreen for the post-update welcome."""
-    return UpdateNotificationScreen(
-        title=f"Thanks for updating to v{version}!",
-        body=changelog,
-        button_label="Got it!",
-        button_variant="success",
-        welcome=True,
-    )
-
-
-_POLL_OPTIONS = [
-    ("Status poll: Off", 0),
-    ("Status poll: 1 second", 1),
-    ("Status poll: 2 seconds", 2),
-    ("Status poll: 5 seconds", 5),
-    ("Status poll: 10 seconds", 10),
-    ("Status poll: 30 seconds", 30),
-]
-
-
-class StatusPollProvider(Provider):
-    """Command palette provider for changing the status bar poll interval."""
-
-    async def discover(self) -> Hits:
-        """Yield all available poll-interval options unconditionally."""
-        for label, value in _POLL_OPTIONS:
-            yield Hit(
-                1.0,
-                label,
-                partial(self._apply, value),
-                help="Set status bar refresh interval",
-            )
-
-    async def search(self, query: str) -> Hits:
-        """Yield poll-interval options whose labels match *query*."""
-        matcher = self.matcher(query)
-        for label, value in _POLL_OPTIONS:
-            score = matcher.match(label)
-            if score > 0:
-                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
-
-    def _apply(self, value: int) -> None:
-        """
-        Set the application's status poll interval and restart polling if the app is connected.
-
-        Parameters:
-            value (int): Poll interval in seconds.
-        """
-        app = self.app
-        app.settings.status_poll_interval = value
-        app.query_one("#sb_poll_interval", Select).value = value
-        if app.connected:
-            app._start_status_polling(value)
-
-
-_BACKEND_OPTIONS = [
-    ("Plot backend: Terminal", "terminal"),
-    ("Plot backend: Image", "image"),
-]
-
-
-class PlotBackendProvider(Provider):
-    """Command palette provider for switching the global plot backend."""
-
-    async def discover(self) -> Hits:
-        """Yield all backend options unconditionally."""
-        for label, value in _BACKEND_OPTIONS:
-            yield Hit(
-                1.0,
-                label,
-                partial(self._apply, value),
-                help="Set plot rendering backend",
-            )
-
-    async def search(self, query: str) -> Hits:
-        """
-        Search for backend options whose labels match the provided query.
-
-        Parameters:
-            query (str): Substring or pattern to match against backend option labels.
-
-        Returns:
-            Hits: An asynchronous iterator yielding Hit objects. Each Hit contains a relevance score, a highlighted label for display, and a callable action that applies the corresponding backend when invoked.
-        """
-        matcher = self.matcher(query)
-        for label, value in _BACKEND_OPTIONS:
-            score = matcher.match(label)
-            if score > 0:
-                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
-
-    def _apply(self, value: str) -> None:
-        """
-        Set the application's global plot backend and refresh plot-related UI.
-
-        Parameters:
-            value (str): Plot backend identifier, e.g. "terminal" or "image".
-        """
-        app = self.app
-        app.settings.plot_backend = value
-        app._update_plot_type_options()
-        app.settings_manager.save(app.settings)
-        if app.last_measurement is not None:
-            app.call_after_refresh(
-                app._update_results,
-                app.last_measurement["freqs"],
-                app.last_measurement["sparams"],
-                app.last_measurement["output_path"],
-            )
-            app.call_after_refresh(app._refresh_tools_plot)
-
-
-_CURSOR_MARKER_OPTIONS = [
-    ("Cursor marker: ▼ (arrow down)", "▼"),
-    ("Cursor marker: ✕ (cross)", "✕"),
-    ("Cursor marker: ○ (circle)", "○"),
-]
-
-
-class CursorMarkerProvider(Provider):
-    """Command palette provider for selecting the cursor marker symbol."""
-
-    async def discover(self) -> Hits:
-        """
-        Provide command-palette hits for each available cursor marker option.
-
-        Each yielded Hit, when applied, sets the cursor marker style used in the Tools tab.
-
-        Returns:
-            Hits: An async iterable yielding `Hit` objects for every cursor marker option.
-        """
-        for label, value in _CURSOR_MARKER_OPTIONS:
-            yield Hit(
-                1.0,
-                label,
-                partial(self._apply, value),
-                help="Set cursor marker style for Tools tab",
-            )
-
-    async def search(self, query: str) -> Hits:
-        """
-        Find cursor marker options whose labels match the given query and yield corresponding Hits.
-
-        Scores and highlights option labels according to the provider's matcher and yields Hit objects
-        for each option with a positive match score.
-
-        Parameters:
-                query (str): The search query used to score and highlight option labels.
-
-        Returns:
-                An iterator of `Hit` objects for matching cursor marker options; each `Hit` contains a score,
-                a highlighted label, and a callable that applies the selected marker value.
-        """
-        matcher = self.matcher(query)
-        for label, value in _CURSOR_MARKER_OPTIONS:
-            score = matcher.match(label)
-            if score > 0:
-                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
-
-    def _apply(self, value: str) -> None:
-        """
-        Apply the selected cursor marker style to the application settings and persist it.
-
-        Parameters:
-            value (str): Identifier of the cursor marker style to apply (e.g., a symbol name or key).
-
-        Description:
-            Updates the app's cursor marker style, saves the settings, and triggers a tools-plot refresh if a previous measurement exists.
-        """
-        app = self.app
-        app.settings.cursor_marker_style = value
-        app.settings_manager.save(app.settings)
-        if app.last_measurement is not None:
-            app.call_after_refresh(app._refresh_tools_plot)
-
-
-_SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
-
-
-@dataclass(slots=True, frozen=True)
-class _AutocompleteChoice:
-    """Autocomplete option with explicit application behavior."""
-
-    value: str
-    kind: str
-    label: str
-    prefix: str | None = None
-
-
-class HistoryReplaceAutoComplete(AutoComplete):
-    """Autocomplete for inputs where selecting a suggestion replaces the full value."""
-
-    def __init__(self, target: Input | str, get_choices, **kwargs) -> None:
-        super().__init__(target=target, candidates=None, **kwargs)
-        self._get_choices = get_choices
-
-    def get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
-        query = target_state.text.strip().lower()
-        seen: set[str] = set()
-        items: list[DropdownItem] = []
-        for choice in self._get_choices():
-            if not choice.value or choice.value in seen:
-                continue
-            seen.add(choice.value)
-            if (
-                query
-                and query not in choice.label.lower()
-                and query not in choice.value.lower()
-            ):
-                continue
-            items.append(DropdownItem(choice.label, prefix=choice.prefix))
-        return items
-
-
-class TemplateAutoComplete(AutoComplete):
-    """Autocomplete for template inputs with whole-value and tag insertion completions."""
-
-    def __init__(self, target: Input | str, get_choices, **kwargs) -> None:
-        super().__init__(target=target, candidates=None, **kwargs)
-        self._get_choices = get_choices
-
-    def get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
-        search = self.get_search_string(target_state).lower().strip()
-        seen: set[tuple[str, str]] = set()
-        items: list[DropdownItem] = []
-        for choice in self._get_choices():
-            key = (choice.kind, choice.value)
-            if key in seen:
-                continue
-            seen.add(key)
-            haystack = f"{choice.label} {choice.value}".lower()
-            if search and search not in haystack:
-                continue
-            items.append(DropdownItem(choice.label, prefix=choice.prefix))
-        return items
-
-    def get_search_string(self, target_state: TargetState) -> str:
-        """Search only the current token-ish fragment around the cursor."""
-        text = target_state.text[: target_state.cursor_position]
-        token_start = max(text.rfind("{"), text.rfind(" "))
-        if token_start == -1:
-            return text
-        return text[token_start:]
-
-    def apply_completion(self, value: str, state: TargetState) -> None:
-        """Apply either a whole-template replacement or a tag insertion."""
-        target = self.target
-        choice = next(
-            (choice for choice in self._get_choices() if choice.value == value), None
-        )
-        if choice is None:
-            super().apply_completion(value, state)
-            target.cursor_position = len(target.value)
-            return
-
-        if choice.kind == "history":
-            target.value = value
-            target.cursor_position = len(value)
-        else:
-            cursor = state.cursor_position
-            before = state.text[:cursor]
-            after = state.text[cursor:]
-            token_start = max(before.rfind("{"), before.rfind(" "))
-            if token_start == -1:
-                token_start = 0
-            elif before[token_start] == " ":
-                token_start += 1
-
-            token_end = 0
-            if after.startswith("}"):
-                token_end = 1
-
-            target.value = before[:token_start] + value + after[token_end:]
-            target.cursor_position = token_start + len(value)
-
-        new_target_state = self._get_target_state()
-        self._rebuild_options(
-            new_target_state, self.get_search_string(new_target_state)
-        )
-
-    def post_completion(self) -> None:
-        """Hide the dropdown and refresh dependent previews after completion."""
-        super().post_completion()
-        app = self.app
-        if hasattr(app, "_refresh_export_template_validation"):
-            app.call_after_refresh(app._refresh_export_template_validation)
-
-
-# Short human-readable names for common SCPI error codes (IEEE 488.2 / SCPI 1999).
-_SCPI_ERROR_NAMES: dict[str, str] = {
-    "+0": "OK",
-    "0": "OK",
-    "-100": "CMD",
-    "-113": "UNDEF",
-    "-222": "RANGE",
-    "-224": "ILLEGAL",
-    "-310": "SYS",
-    "-350": "QUEUE",
-    "-400": "QUERY",
-    "-420": "UNTMN",
-    "-430": "DEADLK",
-}
-
-
-def _scpi_mnemonic(cmd: str) -> str:
-    """Return a compact display mnemonic for a SCPI command.
-
-    Strips parameter values (text after a space), trailing ``?``, and any
-    channel-number suffix on the first node (e.g. ``SENS1`` → removed so
-    ``SENS1:CORR:STAT?`` becomes ``CORR:STAT``).
-    """
-    base = cmd.split(" ")[0].rstrip("?")
-    parts = base.split(":")
-    if parts and parts[0] and parts[0][-1].isdigit():
-        parts = parts[1:]
-    return ":".join(parts) or base
-
-
-_ALL_SB_STATE_CLASSES = (
-    "--stale",
-    "--state-ok",
-    "--state-off",
-    "--smo-on",
-    "--trig-INT",
-    "--trig-MAN",
-    "--trig-EXT",
-    "--trig-BUS",
-)
-
-
-class StatusFooter(Footer):
-    """Textual Footer with VNA status items appended after the key bindings."""
-
-    DEFAULT_CSS = Footer.DEFAULT_CSS + """
-    StatusFooter #sb_spacer {
-        width: 1fr;
-        height: 1;
-    }
-    StatusFooter #sb_status_container {
-        width: auto;
-        height: 1;
-        padding: 0 1 0 0;
-    }
-    StatusFooter .sb-item {
-        width: auto;
-        height: 1;
-        padding: 0 1;
-        content-align: left middle;
-        background: $panel-lighten-1;
-    }
-    StatusFooter .sb-sep {
-        width: 1;
-        height: 1;
-    }
-    StatusFooter .sb-item.--stale {
-        background: $panel-lighten-1;
-        color: $text-muted;
-        text-style: dim;
-    }
-    StatusFooter .sb-item.--state-ok  { background: $success;   color: $background; }
-    StatusFooter .sb-item.--state-off { background: $error;     color: $background; }
-    StatusFooter .sb-item.--smo-on    { background: $accent;    color: $background; }
-    StatusFooter .sb-item.--trig-INT  { background: $primary;   color: $background; }
-    StatusFooter .sb-item.--trig-MAN  { background: $warning;   color: $background; }
-    StatusFooter .sb-item.--trig-EXT  { background: $secondary; color: $background; }
-    StatusFooter .sb-item.--trig-BUS  { background: $success;   color: $background; }
-    StatusFooter #sb_debug_group {
-        display: none;
-        width: auto;
-        height: 1;
-    }
-    StatusFooter #sb_debug_group.--visible {
-        display: block;
-    }
-    """
-
-    # Initial placeholder text shown before first poll
-    _PLACEHOLDERS: dict[str, str] = {
-        "sb_cal": "CAL",
-        "sb_smooth": "SMTH",
-        "sb_ifbw": "IFBW",
-        "sb_power": "PWR",
-        "sb_trigger": "TRIG",
-    }
-
-    def __init__(self, **kwargs):
-        """Initialise state stores for chip text/class and debug chip visibility."""
-        super().__init__(**kwargs)
-        # (text, css_class) — class "" means no coloured background
-        self._sb_state: dict[str, tuple[str, str]] = {
-            k: (self._PLACEHOLDERS[k], "--stale") for k in _SB_ITEMS
-        }
-        # Debug chip state — persists across Footer recomposes
-        self._debug_visible: bool = False
-        self._debug_chip_state: tuple[str, str] = ("ERR OK", "--state-ok")
-
-    def compose(self) -> ComposeResult:
-        """Build footer: key bindings (left), debug chip, spacer, status chips (right)."""
-        yield from super().compose()  # q Quit leftmost; ^p palette docked right
-        # Debug error chip — left-aligned next to q Quit, hidden until debug active.
-        # Classes are set from stored state so recomposes (triggered by Footer
-        # internals on focus changes) preserve visibility and chip content.
-        debug_text, debug_css = self._debug_chip_state
-        grp_classes = "--visible" if self._debug_visible else ""
-        with Horizontal(id="sb_debug_group", classes=grp_classes):
-            yield Static(" ", classes="sb-sep")
-            yield Static(
-                debug_text,
-                id="sb_lasterr",
-                classes=f"sb-item {debug_css}".strip(),
-            )
-        yield Static("", id="sb_spacer")  # pushes status items to the right
-        with Horizontal(id="sb_status_container"):
-            for i, item_id in enumerate(_SB_ITEMS):
-                if i > 0:
-                    yield Static(" ", classes="sb-sep")
-                text, css_class = self._sb_state[item_id]
-                yield Static(text, id=item_id, classes=f"sb-item {css_class}".strip())
-
-    def _set_item(self, item_id: str, text: str, css_class: str = "") -> None:
-        """Update a single status chip's text and CSS class in state and in the DOM."""
-        self._sb_state[item_id] = (text, css_class)
-        try:
-            w = self.query_one(f"#{item_id}", Static)
-            w.update(text)
-            w.remove_class(*_ALL_SB_STATE_CLASSES)
-            if css_class:
-                w.add_class(css_class)
-        except Exception:
-            pass
-
-    def _apply_debug_chip(self) -> None:
-        """Push stored debug chip state to the live widgets."""
-        try:
-            self.query_one("#sb_debug_group").set_class(
-                self._debug_visible, "--visible"
-            )
-            # Only update chip content when visible — avoids a colour flash
-            # when the group is being hidden (class change rendered before hide).
-            if not self._debug_visible:
-                return
-            text, css_class = self._debug_chip_state
-            chip = self.query_one("#sb_lasterr", Static)
-            chip.update(text)
-            chip.remove_class(*_ALL_SB_STATE_CLASSES)
-            if css_class:
-                chip.add_class(css_class)
-        except Exception:
-            pass
-
-    def set_disconnected(self) -> None:
-        """Mark all items as stale; preserve last-known text."""
-        for item_id in _SB_ITEMS:
-            text, _ = self._sb_state[item_id]
-            self._sb_state[item_id] = (text, "--stale")
-            try:
-                w = self.query_one(f"#{item_id}", Static)
-                w.remove_class(*_ALL_SB_STATE_CLASSES)
-                w.add_class("--stale")
-            except Exception:
-                pass
-        # Gray out debug chip while disconnected
-        prev_text, _ = self._debug_chip_state
-        self._debug_chip_state = (prev_text, "--stale")
-        self._apply_debug_chip()
-
-    def set_debug_mode(self, enabled: bool, connected: bool = True) -> None:
-        """Show or hide the last-error debug chip."""
-        self._debug_visible = enabled
-        if not enabled:
-            self._debug_chip_state = ("ERR OK", "--state-ok")
-        elif not connected:
-            self._debug_chip_state = ("ERR OK", "--stale")
-        self._apply_debug_chip()
-
-    def update_last_error(self, command: str, raw_error: str) -> None:
-        """Update the debug error chip from a SYST:ERR? response.
-
-        Args:
-            command:   The SCPI command that preceded the SYST:ERR? check.
-            raw_error: Stripped SYST:ERR? response, e.g. ``+0,"No error"``
-                       or ``-113,"Undefined header"``.
-        """
-        if raw_error.startswith("+0") or raw_error.startswith("0,"):
-            self._debug_chip_state = ("ERR OK", "--state-ok")
-        else:
-            code = raw_error.split(",")[0].strip()
-            name = _SCPI_ERROR_NAMES.get(code, code)
-            mnem = _scpi_mnemonic(command)
-            self._debug_chip_state = (f"{mnem} {name}", "--state-off")
-        self._apply_debug_chip()
-
-    def update_status(self, result: "StatusResult") -> None:
-        """Refresh all status chips from a fresh StatusResult."""
-        # Calibration
-        if result.cal_enabled is None:
-            self._set_item("sb_cal", self._sb_state["sb_cal"][0], "--stale")
-        elif result.cal_enabled:
-            self._set_item("sb_cal", (result.cal_type or "CAL").strip(), "--state-ok")
-        else:
-            self._set_item("sb_cal", "CAL", "--state-off")
-
-        # Smoothing
-        if result.smoothing_enabled is None:
-            self._set_item("sb_smooth", self._sb_state["sb_smooth"][0], "--stale")
-        elif result.smoothing_enabled and result.smoothing_aperture is not None:
-            self._set_item(
-                "sb_smooth", f"SMTH {result.smoothing_aperture:.1f}%", "--smo-on"
-            )
-        else:
-            self._set_item("sb_smooth", "SMTH", "--state-off")
-
-        # IF bandwidth
-        hz = result.if_bandwidth_hz
-        if hz is None:
-            self._set_item("sb_ifbw", self._sb_state["sb_ifbw"][0], "--stale")
-        elif hz >= 1e6:
-            self._set_item("sb_ifbw", f"{hz / 1e6:.3g} MHz")
-        elif hz >= 1e3:
-            self._set_item("sb_ifbw", f"{hz / 1e3:.3g} kHz")
-        else:
-            self._set_item("sb_ifbw", f"{hz:.3g} Hz")
-
-        # Port power
-        if result.port_power_dbm is None:
-            self._set_item("sb_power", self._sb_state["sb_power"][0], "--stale")
-        else:
-            self._set_item("sb_power", f"{result.port_power_dbm:+.1f} dBm")
-
-        # Trigger source
-        if result.trigger_source is None:
-            self._set_item("sb_trigger", self._sb_state["sb_trigger"][0], "--stale")
-        else:
-            src = result.trigger_source.strip().upper()
-            css = f"--trig-{src}" if f"--trig-{src}" in _ALL_SB_STATE_CLASSES else ""
-            self._set_item("sb_trigger", src, css)
-
-
 class VNAApp(App):
     """TINA - Terminal UI Network Analyzer"""
 
@@ -2495,9 +1554,9 @@ class VNAApp(App):
             welcome_cl, stable_fake, pre_fake = await loop.run_in_executor(
                 None, fetch_test_update_data, __version__
             )
-            await self.push_screen_wait(_welcome_screen(__version__, welcome_cl))
-            await self.push_screen_wait(_update_screen(stable_fake))
-            await self.push_screen_wait(_update_screen(pre_fake))
+            await self.push_screen_wait(build_welcome_screen(__version__, welcome_cl))
+            await self.push_screen_wait(build_update_screen(stable_fake))
+            await self.push_screen_wait(build_update_screen(pre_fake))
             return
 
         # --- Post-update welcome (shown once per version after upgrading) ---
@@ -2510,7 +1569,9 @@ class VNAApp(App):
                 changelog = await loop.run_in_executor(
                     None, get_changelogs_since, last_ack, __version__
                 )
-                await self.push_screen_wait(_welcome_screen(__version__, changelog))
+                await self.push_screen_wait(
+                    build_welcome_screen(__version__, changelog)
+                )
                 self.settings.last_acknowledged_version = __version__
                 self.settings_manager.save(self.settings)
             elif not last_ack:
@@ -2522,10 +1583,10 @@ class VNAApp(App):
         stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
 
         if stable:
-            await self.push_screen_wait(_update_screen(stable))
+            await self.push_screen_wait(build_update_screen(stable))
         elif pre:
             if self.settings.notified_prerelease != pre.version:
-                await self.push_screen_wait(_update_screen(pre))
+                await self.push_screen_wait(build_update_screen(pre))
                 if not self._dev_mode:
                     self.settings.notified_prerelease = pre.version
                     self.settings_manager.save(self.settings)
@@ -2806,10 +1867,10 @@ class VNAApp(App):
         preview.styles.border_bottom = ("round", border_color)
         preview.styles.border_left = ("round", border_color)
 
-    def _get_host_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+    def _get_host_autocomplete_choices(self) -> list[AutocompleteChoice]:
         """Build host autocomplete choices from persisted host history."""
         return [
-            _AutocompleteChoice(
+            AutocompleteChoice(
                 value=host,
                 kind="history",
                 label=host,
@@ -2819,10 +1880,10 @@ class VNAApp(App):
             if host
         ]
 
-    def _get_port_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+    def _get_port_autocomplete_choices(self) -> list[AutocompleteChoice]:
         """Build port autocomplete choices from persisted port history."""
         return [
-            _AutocompleteChoice(
+            AutocompleteChoice(
                 value=port,
                 kind="history",
                 label=port,
@@ -2832,7 +1893,7 @@ class VNAApp(App):
             if port
         ]
 
-    def _get_template_tag_choices(self) -> list[_AutocompleteChoice]:
+    def _get_template_tag_choices(self) -> list[AutocompleteChoice]:
         """Build autocomplete choices for supported export template tags."""
         tag_examples = {
             "date": "{date}",
@@ -2850,7 +1911,7 @@ class VNAApp(App):
         }
         time_formats = ("{%Y%m%d_%H%M%S}", "{%Y-%m-%d}", "{%H%M}")
         choices = [
-            _AutocompleteChoice(
+            AutocompleteChoice(
                 value=value,
                 kind="tag",
                 label=value,
@@ -2859,7 +1920,7 @@ class VNAApp(App):
             for value in tag_examples.values()
         ]
         choices.extend(
-            _AutocompleteChoice(
+            AutocompleteChoice(
                 value=value,
                 kind="tag",
                 label=value,
@@ -2869,10 +1930,10 @@ class VNAApp(App):
         )
         return choices
 
-    def _get_filename_template_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+    def _get_filename_template_autocomplete_choices(self) -> list[AutocompleteChoice]:
         """Build autocomplete choices for filename templates."""
         history = [
-            _AutocompleteChoice(
+            AutocompleteChoice(
                 value=template,
                 kind="history",
                 label=template,
@@ -2883,10 +1944,10 @@ class VNAApp(App):
         ]
         return history + self._get_template_tag_choices()
 
-    def _get_folder_template_autocomplete_choices(self) -> list[_AutocompleteChoice]:
+    def _get_folder_template_autocomplete_choices(self) -> list[AutocompleteChoice]:
         """Build autocomplete choices for folder templates."""
         history = [
-            _AutocompleteChoice(
+            AutocompleteChoice(
                 value=template,
                 kind="history",
                 label=template,
