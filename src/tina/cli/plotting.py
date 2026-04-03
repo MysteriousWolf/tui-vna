@@ -6,9 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config.settings import AppSettings
-
-# Import plotting functions from main module (will be refactored to gui.plotting later)
-from ..main import _create_matplotlib_plot, _get_plot_colors
+from ..gui.plotting import create_matplotlib_plot, get_plot_colors
 
 
 def export_plots_cli(
@@ -40,14 +38,14 @@ def export_plots_cli(
     dpi = 150 * render_scale  # 300 DPI for high quality
 
     # Get proper themed colors (use fallback colors which are already well-themed)
-    plot_colors = _get_plot_colors(None)  # This will use the nice fallback colors
+    plot_colors = get_plot_colors(None)  # This will use the nice fallback colors
 
     # Create magnitude plot using the same method as GUI
     plot_filename = f"{base_filename}_magnitude.png"
     plot_path = os.path.join(output_path, plot_filename)
 
     # Use the same matplotlib plotting function as the GUI
-    _create_matplotlib_plot(
+    create_matplotlib_plot(
         frequencies,
         s_parameters,
         plot_params,
@@ -68,7 +66,7 @@ def export_plots_cli(
     phase_plot_filename = f"{base_filename}_phase.png"
     phase_plot_path = os.path.join(output_path, phase_plot_filename)
 
-    _create_matplotlib_plot(
+    create_matplotlib_plot(
         frequencies,
         s_parameters,
         plot_params,
