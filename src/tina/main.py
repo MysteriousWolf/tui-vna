@@ -10,13 +10,11 @@ import queue
 import subprocess
 import sys
 import tkinter as tk
-from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
 
 import matplotlib
 import numpy as np
-from rich.markup import escape as rich_escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -66,6 +64,7 @@ from .gui.tabs import (
     delayed_tools_refresh,
     get_distortion_comp_enabled,
     get_tools_trace,
+    log_logic,
     rebuild_tools_params,
     refresh_tools_plot,
     run_tools_computation,
@@ -101,20 +100,6 @@ class VNAApp(App):
         "gui/styles/tools_tab.tcss",
         "gui/styles/log_tab.tcss",
     ]
-
-    # Maps log level names to their filter checkbox widget IDs.
-    # Both primary and secondary levels are listed here; composite levels
-    # (e.g. "tx/poll") require both halves to be enabled to show.
-    _LOG_FILTER_IDS: dict[str, str] = {
-        "tx": "#check_log_tx",
-        "rx": "#check_log_rx",
-        "info": "#check_log_info",
-        "progress": "#check_log_progress",
-        "success": "#check_log_success",
-        "error": "#check_log_error",
-        "debug": "#check_log_debug",
-        "poll": "#check_log_poll",
-    }
 
     COMMANDS = App.COMMANDS | {
         StatusPollProvider,
@@ -359,7 +344,7 @@ class VNAApp(App):
         Clears the cached style map, re-renders the log using the updated theme colors, and—if a measurement is loaded—schedules refreshed tools and results plots to run after the next render cycle.
         """
         self._cached_style_map = None
-        self._refresh_log_display()
+        log_logic.refresh_log_display(self)
         if self.last_measurement is not None:
             self.call_after_refresh(self._refresh_tools_plot)
             self.call_after_refresh(self._refresh_results_plot)
@@ -639,97 +624,16 @@ class VNAApp(App):
     )
     def on_log_filter_change(self, event: Checkbox.Changed) -> None:
         """Handle log filter checkbox changes."""
-        self._refresh_log_display()
+        del event
+        log_logic.handle_log_filter_change(self)
 
     # Cached level→(icon, Rich style) map; None means rebuild on next use.
     # Invalidated by on_app_theme_changed so colors always match the active theme.
     _cached_style_map: dict[str, tuple[str, str]] | None = None
 
-    def _build_style_map(self) -> dict[str, tuple[str, str]]:
-        """Build the level→(icon, style) map from current Textual theme variables."""
-        v = self.get_css_variables()
-        c_tx = v.get("accent", "#ffa62b")
-        c_rx = v.get("secondary", "#0178D4")
-        c_suc = v.get("success", "#4EBF71")
-        c_err = v.get("error", "#ba3c5b")
-        return {
-            "tx": ("↑", c_tx),
-            "rx": ("↓", c_rx),
-            "tx/poll": ("↑~", f"dim {c_tx}"),
-            "rx/poll": ("↓~", f"dim {c_rx}"),
-            "tx/debug": ("↑•", "dim"),
-            "rx/debug": ("↓•", "dim"),
-            "info": ("i", "default"),
-            "success": ("✓", f"bold {c_suc}"),
-            "error": ("✗", f"bold {c_err}"),
-            "progress": ("⋯", "dim italic"),
-            "debug": ("•", "dim"),
-        }
-
-    def _format_log_entry(self, entry: dict) -> str:
-        """Render a stored log entry to Rich markup.
-
-        The style map is cached after the first call and only rebuilt when the
-        theme changes, so ``get_css_variables()`` is not called per-entry
-        during a full log redraw.
-        """
-        if self._cached_style_map is None:
-            self._cached_style_map = self._build_style_map()
-        icon, style = self._cached_style_map.get(entry["level"], ("•", "default"))
-        safe_msg = rich_escape(entry["message"])
-        return f"[dim]{entry['timestamp']}[/dim] [{style}]{icon}[/] {safe_msg}"
-
     def log_message(self, message: str, level: str = "info"):
         """Add message to log."""
-        log_entry = {
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "level": level,
-            "message": message,
-        }
-        self.log_messages.append(log_entry)
-
-        if self._should_show_log(level):
-            log_content = self.query_one("#log_content", RichLog)
-            log_content.write(self._format_log_entry(log_entry))
-            log_content.scroll_end(animate=False)
-
-    def _should_show_log(self, level: str) -> bool:
-        """Return True if *level* passes all active log filter checkboxes.
-
-        Composite levels (e.g. ``"tx/poll"``) require both the primary and
-        secondary checkbox to be checked.  Unknown levels are shown by default.
-        """
-        try:
-            if "/" in level:
-                primary, secondary = level.split("/", 1)
-                primary_id = self._LOG_FILTER_IDS.get(primary)
-                secondary_id = self._LOG_FILTER_IDS.get(secondary)
-                primary_ok = (
-                    self.query_one(primary_id, Checkbox).value if primary_id else True
-                )
-                secondary_ok = (
-                    self.query_one(secondary_id, Checkbox).value
-                    if secondary_id
-                    else True
-                )
-                return primary_ok and secondary_ok
-
-            checkbox_id = self._LOG_FILTER_IDS.get(level)
-            if checkbox_id:
-                return self.query_one(checkbox_id, Checkbox).value
-            return True  # Unknown levels are always shown
-        except Exception:
-            # During initialization, show everything
-            return True
-
-    def _refresh_log_display(self):
-        """Rebuild log display from stored entries using current theme colors and filters."""
-        log_content = self.query_one("#log_content", RichLog)
-        log_content.clear()
-        for entry in self.log_messages:
-            if self._should_show_log(entry["level"]):
-                log_content.write(self._format_log_entry(entry))
-        log_content.scroll_end(animate=False)
+        log_logic.log_message(self, message, level)
 
     def set_progress(self, label: str, progress: float = 0):
         """Update progress bar and label. Progress is 0-100."""
@@ -815,14 +719,7 @@ class VNAApp(App):
 
     def action_copy_log(self) -> None:
         """Copy visible log entries as plain text to the system clipboard."""
-        style_map = self._cached_style_map or self._build_style_map()
-        lines = [
-            f"{e['timestamp']} {style_map.get(e['level'], ('•', ''))[0]} {e['message']}"
-            for e in self.log_messages
-            if self._should_show_log(e["level"])
-        ]
-        self.copy_to_clipboard("\n".join(lines))
-        self.notify("Log copied to clipboard", timeout=2)
+        log_logic.copy_log(self)
 
     @on(Button.Pressed, "#btn_connect")
     def handle_connect(self) -> None:
