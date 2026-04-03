@@ -15,7 +15,6 @@ from pathlib import Path
 from tkinter import filedialog
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 from rich.markup import escape as rich_escape
 from textual import on, work
@@ -29,7 +28,6 @@ from textual.widgets import (
     Input,
     Label,
     ProgressBar,
-    RadioButton,
     RadioSet,
     RichLog,
     Select,
@@ -60,8 +58,6 @@ from .gui.components import (
 from .gui.modals import HelpScreen, build_update_screen, build_welcome_screen
 from .gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
 from .gui.plotting import (
-    DISTORTION_OVERLAY_LABELS,
-    DISTORTION_OVERLAY_STYLES,
     calculate_plot_range_with_outlier_filtering,
     create_matplotlib_plot,
     create_smith_chart,
@@ -72,13 +68,21 @@ from .gui.plotting import (
 )
 from .gui.providers import CursorMarkerProvider, PlotBackendProvider, StatusPollProvider
 from .gui.tabs import (
+    apply_tool_ui,
     compose_log_tab,
     compose_measurement_tab,
     compose_setup_tab,
     compose_tools_tab,
+    delayed_redraw_tools_plot,
+    delayed_tools_refresh,
+    get_distortion_comp_enabled,
+    get_tools_trace,
+    rebuild_tools_params,
+    refresh_tools_plot,
+    run_tools_computation,
+    set_active_tool,
+    tools_logic,
 )
-from .tools import DistortionTool, MeasureTool
-from .tools.distortion import COMPONENT_NAMES as _DISTORTION_COMPONENT_NAMES
 from .utils import TouchstoneExporter
 from .utils.update_checker import (
     fetch_test_update_data,
@@ -1826,169 +1830,32 @@ class VNAApp(App):
     # ------------------------------------------------------------------ #
 
     def _get_tools_trace(self) -> str:
-        """
-        Get the currently selected S-parameter trace from the Tools radio buttons.
-
-        Checks the Tools RadioSet for a selected trace and returns its name; if no trace is selected or the widgets are unavailable, defaults to "S11".
-
-        Returns:
-            trace (str): One of "S11", "S21", "S12", or "S22" — the selected trace, or "S11" when none is selected.
-        """
-        for param in ("S11", "S21", "S12", "S22"):
-            try:
-                rb = self.query_one(f"#tools_radio_{param.lower()}", RadioButton)
-                if rb.value:
-                    return param
-            except Exception:
-                pass
-        return "S11"
+        """Return the currently selected tools trace."""
+        return get_tools_trace(self)
 
     def _apply_tool_ui(self) -> None:
-        """
-        Update the tool UI to reflect the currently selected tool.
-
-        Sets the visual variant of the Cursor and Distortion buttons according to
-        the current value of settings.tools_active_tool and schedules a rebuild of
-        the dynamic tool parameters panel after the UI refresh.
-        """
-        active = self.settings.tools_active_tool
-        try:
-            self.query_one("#btn_tool_measure", Button).variant = (
-                "success" if active == "cursor" else "primary"
-            )
-            self.query_one("#btn_tool_distortion", Button).variant = (
-                "success" if active == "distortion" else "primary"
-            )
-        except Exception:
-            pass
-        self.call_after_refresh(self._rebuild_tools_params)
+        """Update the tools button UI to reflect the active tool."""
+        apply_tool_ui(self)
 
     def _set_active_tool(self, tool_name: str) -> None:
-        """
-        Activate or deactivate a tools panel by name.
-
-        Parameters:
-            tool_name (str): Identifier of the tool to activate (for example "cursor" or "distortion").
-                If this tool is already active, it will be deactivated (cleared).
-                After changing the active tool the method updates the tool UI; if a measurement
-                is available it also runs tool computations and schedules a tools-plot refresh.
-        """
-        if self.settings.tools_active_tool == tool_name:
-            self.settings.tools_active_tool = ""
-        else:
-            self.settings.tools_active_tool = tool_name
-        self._apply_tool_ui()
-        if self.last_measurement is not None:
-            self._run_tools_computation()
-            self.call_after_refresh(self._refresh_tools_plot)
+        """Activate or deactivate a tools panel by name."""
+        set_active_tool(self, tool_name)
 
     def _get_distortion_comp_enabled(self) -> list[bool]:
-        """
-        Determine which of the six Legendre component overlays are enabled.
-
-        If a corresponding checkbox widget cannot be queried, a sensible default is used for that component (`[False, True, True, False, False, False]`).
-
-        Returns:
-            list[bool]: Six booleans where element `n` is `True` if Legendre component `n` overlay is enabled, `False` otherwise.
-        """
-        defaults = [False, True, True, False, False, False]
-        result = list(defaults)
-        for n in range(6):
-            try:
-                result[n] = self.query_one(
-                    f"#input_distortion_comp_{n}", Checkbox
-                ).value
-            except Exception:
-                pass
-        return result
+        """Return enabled state for distortion component overlays."""
+        return get_distortion_comp_enabled(self)
 
     async def _rebuild_tools_params(self) -> None:
-        """
-        Rebuild the tools parameter panel UI to reflect the currently selected tool.
-
-        When the active tool is "cursor" or "distortion", mounts input rows for Cursor 1 and Cursor 2 (with placeholders labeled by the current frequency unit) and, for "distortion", an additional row of six component checkboxes with appropriate default selections. When no tool is active, mounts a placeholder message prompting the user to activate a tool.
-        """
-        try:
-            container = self.query_one("#tools_params_container", Vertical)
-        except Exception:
-            return
-
-        await container.remove_children()
-
-        active = self.settings.tools_active_tool
-        freq_unit = (
-            self.last_measurement.get("freq_unit", "MHz")
-            if self.last_measurement
-            else "MHz"
-        )
-
-        if active in ("cursor", "distortion"):
-            unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-            mult = unit_multipliers.get(freq_unit, 1e6)
-            c1_val = (
-                str(round(self._tools_cursor1_hz / mult, 6))
-                if self._tools_cursor1_hz is not None
-                else ""
-            )
-            c2_val = (
-                str(round(self._tools_cursor2_hz / mult, 6))
-                if self._tools_cursor2_hz is not None
-                else ""
-            )
-            cursor1_row = Horizontal(classes="plot-controls")
-            cursor2_row = Horizontal(classes="plot-controls")
-            await container.mount(cursor1_row)
-            await container.mount(cursor2_row)
-            await cursor1_row.mount(
-                Label("Cursor 1:", classes="tools-cursor-1"),
-                Input(
-                    value=c1_val,
-                    placeholder=f"Frequency ({freq_unit})",
-                    id="input_tools_cursor1",
-                ),
-            )
-            await cursor2_row.mount(
-                Label("Cursor 2:", classes="tools-cursor-2"),
-                Input(
-                    value=c2_val,
-                    placeholder=f"Frequency ({freq_unit})",
-                    id="input_tools_cursor2",
-                ),
-            )
-            if active == "distortion":
-                comp_row = Horizontal(classes="distortion-row")
-                await container.mount(comp_row)
-                for n in range(6):
-                    await comp_row.mount(
-                        Checkbox(
-                            _DISTORTION_COMPONENT_NAMES[n],
-                            value=(n in (1, 2)),
-                            id=f"input_distortion_comp_{n}",
-                            classes="distortion-comp-check",
-                        )
-                    )
-        else:
-            await container.mount(
-                Static(
-                    "[dim]Activate a tool below to see options.[/dim]",
-                    id="tools_params_placeholder",
-                    markup=True,
-                )
-            )
+        """Rebuild the tools parameter panel UI."""
+        await rebuild_tools_params(self)
 
     async def _delayed_redraw_tools_plot(self) -> None:
-        """
-        Trigger a tools-tab plot refresh after a deferred period to allow container sizing to settle.
-
-        If a cached measurement exists, refreshes the tools plot; otherwise does nothing.
-        """
-        if self.last_measurement is not None:
-            await self._refresh_tools_plot()
+        """Trigger a deferred tools plot refresh after layout settles."""
+        await delayed_redraw_tools_plot(self)
 
     async def _delayed_tools_refresh(self) -> None:
         """Debounced handler: refresh tools plot then run computation."""
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+        await delayed_tools_refresh(self)
 
     async def _refresh_results_plot(self) -> None:
         """Re-render the Measurement tab plot from cached data (e.g. after a theme change)."""
@@ -2001,463 +1868,12 @@ class VNAApp(App):
         )
 
     async def _refresh_tools_plot(self) -> None:
-        """
-        Render the Tools tab plot for the currently selected trace, including optional cursor and distortion overlays.
-
-        This uses the cached measurement in self.last_measurement and the current tool/plot settings to choose data (magnitude, unwrapped phase, or raw phase), compute an automatic y-range, and draw the trace using either the terminal backend (textual_plotext) or the image backend (matplotlib). If cursor or distortion tools are active, corresponding horizontal/vertical markers and markers or distortion component overlays are added. The rendered plot is mounted into the "#tools_plot_container" in the UI; when using the image backend a PNG is written to the app's temporary plot directory and displayed if pixel image support is available. If no measurement or plot container is available, the function exits without error.
-        """
-        if self.last_measurement is None:
-            return
-
-        try:
-            container = self.query_one("#tools_plot_container", Container)
-        except Exception:
-            return
-
-        freqs = self.last_measurement["freqs"]
-        sparams = self.last_measurement["sparams"]
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-
-        trace = self._get_tools_trace()
-
-        try:
-            plot_type = self.query_one("#select_tools_plot_type", Select).value
-        except Exception:
-            plot_type = "magnitude"
-
-        if trace not in sparams:
-            await container.remove_children()
-            await container.mount(
-                Static(
-                    f"[yellow]Trace {trace} not available in current measurement.[/yellow]",
-                    markup=True,
-                )
-            )
-            return
-
-        mag, phase = sparams[trace]
-        if plot_type == "magnitude":
-            data = mag
-            y_label = "Magnitude (dB)"
-            plot_title = f"{trace} Magnitude"
-        elif plot_type == "phase":
-            data = unwrap_phase(phase)
-            y_label = "Phase (°)"
-            plot_title = f"{trace} Phase (Unwrapped)"
-        else:
-            data = phase
-            y_label = "Phase (°)"
-            plot_title = f"{trace} Phase (Raw)"
-
-        auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
-            data, outlier_percentile=1.0, safety_margin=0.05
-        )
-        freq_axis = freqs / multiplier
-        plot_colors = get_plot_colors(self.get_css_variables())
-        trace_color_rgb = plot_colors["traces_rgb"].get(trace, (255, 255, 255))
-        trace_color_hex = plot_colors["traces"].get(trace, "#ffffff")
-
-        cursor1_hz = self._tools_cursor1_hz
-        cursor2_hz = self._tools_cursor2_hz
-        active_tool = self.settings.tools_active_tool
-        marker_symbol = self.settings.cursor_marker_style
-
-        cursor1_hex = plot_colors["cursor1"]
-        cursor2_hex = plot_colors["cursor2"]
-        cursor1_rgb = plot_colors["cursor1_rgb"]
-        cursor2_rgb = plot_colors["cursor2_rgb"]
-
-        # Map Unicode marker to matplotlib marker code
-        mpl_markers = {"▼": "v", "✕": "x", "○": "o"}
-        mpl_marker = mpl_markers.get(marker_symbol, "v")
-
-        plot_backend = self.settings.plot_backend
-
-        if plot_backend == "terminal":
-            from textual_plotext import PlotextPlot
-
-            # Reuse an existing PlotextPlot to avoid a blank-container flash
-            existing = container.query(PlotextPlot)
-            if existing:
-                pw = existing.first()
-                for child in list(container.children):
-                    if child is not pw:
-                        await child.remove()
-            else:
-                await container.remove_children()
-                pw = PlotextPlot()
-                await container.mount(pw)
-            plt_term = pw.plt
-            plt_term.clf()
-
-            plt_term.plot(
-                freq_axis.tolist(),
-                data.tolist(),
-                label=trace,
-                marker="braille",
-                color=trace_color_rgb,
-            )
-            plt_term.ylim(auto_y_min, auto_y_max)
-
-            if active_tool in ("cursor", "distortion"):
-                freq_min, freq_max = freqs[0], freqs[-1]
-                if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max:
-                    v1 = float(np.interp(cursor1_hz, freqs, data))
-                    c1_axis = cursor1_hz / multiplier
-                    plt_term.plot(
-                        freq_axis.tolist(),
-                        [v1] * len(freq_axis),
-                        marker="·",
-                        color=cursor1_rgb,
-                    )
-                    plt_term.vline(c1_axis, color=cursor1_rgb)
-                    plt_term.scatter(
-                        [c1_axis], [v1], marker=marker_symbol, color=cursor1_rgb
-                    )
-
-                if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max:
-                    v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c2_axis = cursor2_hz / multiplier
-                    plt_term.plot(
-                        freq_axis.tolist(),
-                        [v2] * len(freq_axis),
-                        marker="·",
-                        color=cursor2_rgb,
-                    )
-                    plt_term.vline(c2_axis, color=cursor2_rgb)
-                    plt_term.scatter(
-                        [c2_axis], [v2], marker=marker_symbol, color=cursor2_rgb
-                    )
-
-                if (
-                    active_tool == "distortion"
-                    and cursor1_hz is not None
-                    and cursor2_hz is not None
-                ):
-                    _dist = DistortionTool().compute(
-                        freqs, sparams, trace, plot_type, cursor1_hz, cursor2_hz
-                    )
-                    if _dist.extra:
-                        _ex = _dist.extra
-                        _coeffs = _ex["coeffs"]
-                        _x = np.array(_ex["x_norm"])
-                        _f_band_axis = np.array(_ex["f_band_hz"]) / multiplier
-                        _comp_enabled = self._get_distortion_comp_enabled()
-                        _ov_rgb = plot_colors["distortion_overlays_rgb"]
-                        for _n in range(6):
-                            if not _comp_enabled[_n]:
-                                continue
-                            _cum = np.zeros(_n + 1)
-                            _cum[:] = _coeffs[: _n + 1]
-                            _cum_y = np.polynomial.legendre.legval(_x, _cum).tolist()
-                            plt_term.plot(
-                                _f_band_axis.tolist(),
-                                _cum_y,
-                                marker=".",
-                                color=_ov_rgb[_n],
-                            )
-
-            plt_term.title(plot_title)
-            plt_term.xlabel(f"Frequency ({freq_unit})")
-            plt_term.ylabel(y_label)
-            plt_term.theme("clear")
-            pw.refresh()
-
-        else:
-            # Image backend — matplotlib
-            plot_file = self.plot_temp_dir / "tools_plot.png"
-            dpi = 150
-            fixed_width_px = 1920
-            fixed_height_px = 1080
-
-            fig, ax = plt.subplots(
-                figsize=(fixed_width_px / dpi, fixed_height_px / dpi), dpi=dpi
-            )
-            fg = plot_colors["fg"]
-            fig.patch.set_alpha(0.0)
-            ax.set_facecolor("none")
-
-            ax.plot(freq_axis, data, label=trace, color=trace_color_hex, linewidth=1.5)
-            ax.set_ylim(auto_y_min, auto_y_max)
-
-            if active_tool in ("cursor", "distortion"):
-                freq_min, freq_max = freqs[0], freqs[-1]
-                if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max:
-                    v1 = float(np.interp(cursor1_hz, freqs, data))
-                    c1_axis = cursor1_hz / multiplier
-                    ax.axhline(
-                        y=v1, color=cursor1_hex, linestyle=":", linewidth=1, alpha=0.6
-                    )
-                    ax.axvline(
-                        x=c1_axis,
-                        color=cursor1_hex,
-                        linestyle="--",
-                        linewidth=1,
-                        alpha=0.8,
-                    )
-                    ax.plot(
-                        [c1_axis],
-                        [v1],
-                        marker=mpl_marker,
-                        color=cursor1_hex,
-                        markersize=10,
-                        linestyle="none",
-                        zorder=5,
-                    )
-
-                if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max:
-                    v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c2_axis = cursor2_hz / multiplier
-                    ax.axhline(
-                        y=v2, color=cursor2_hex, linestyle=":", linewidth=1, alpha=0.6
-                    )
-                    ax.axvline(
-                        x=c2_axis,
-                        color=cursor2_hex,
-                        linestyle="--",
-                        linewidth=1,
-                        alpha=0.8,
-                    )
-                    ax.plot(
-                        [c2_axis],
-                        [v2],
-                        marker=mpl_marker,
-                        color=cursor2_hex,
-                        markersize=10,
-                        linestyle="none",
-                        zorder=5,
-                    )
-
-                if (
-                    active_tool == "distortion"
-                    and cursor1_hz is not None
-                    and cursor2_hz is not None
-                ):
-                    _dist = DistortionTool().compute(
-                        freqs, sparams, trace, plot_type, cursor1_hz, cursor2_hz
-                    )
-                    if _dist.extra:
-                        _ex = _dist.extra
-                        _coeffs = _ex["coeffs"]
-                        _x = np.array(_ex["x_norm"])
-                        _f_band_axis = np.array(_ex["f_band_hz"]) / multiplier
-                        _c0 = _coeffs[0]
-                        _f_lo_axis = min(cursor1_hz, cursor2_hz) / multiplier
-                        _f_hi_axis = max(cursor1_hz, cursor2_hz) / multiplier
-                        # Shade the selected band
-                        ax.axvspan(
-                            _f_lo_axis,
-                            _f_hi_axis,
-                            alpha=0.08,
-                            color=fg,
-                            zorder=0,
-                        )
-                        _comp_enabled = self._get_distortion_comp_enabled()
-                        _ov_hex = plot_colors["distortion_overlays"]
-                        for _n in range(6):
-                            if not _comp_enabled[_n]:
-                                continue
-                            _cum = np.zeros(_n + 1)
-                            _cum[:] = _coeffs[: _n + 1]
-                            _cum_y = np.polynomial.legendre.legval(_x, _cum)
-                            ax.plot(
-                                _f_band_axis,
-                                _cum_y,
-                                color=_ov_hex[_n],
-                                linestyle=DISTORTION_OVERLAY_STYLES[_n],
-                                linewidth=1.5,
-                                label=DISTORTION_OVERLAY_LABELS[_n],
-                                zorder=4,
-                            )
-
-            _font_family, _base_size = get_terminal_font()
-            _base_size = _base_size or 10.0
-            ax.set_xlabel(f"Frequency ({freq_unit})", color=fg, fontsize=_base_size)
-            ax.set_ylabel(y_label, color=fg, fontsize=_base_size)
-            ax.set_title(plot_title, color=fg, fontsize=_base_size * 1.2, pad=15)
-            ax.tick_params(colors=fg, labelsize=_base_size * 0.85)
-            ax.grid(
-                True, alpha=0.2, color=plot_colors["grid"], linestyle="-", linewidth=0.5
-            )
-            legend = ax.legend(
-                edgecolor=plot_colors["grid"],
-                labelcolor=fg,
-                fontsize=_base_size * 0.9,
-            )
-            legend.get_frame().set_alpha(1.0)
-            legend.get_frame().set_facecolor("none")
-            for spine in ax.spines.values():
-                spine.set_edgecolor(plot_colors["grid"])
-                spine.set_linewidth(1)
-            plt.tight_layout()
-            plt.savefig(
-                plot_file,
-                dpi=dpi,
-                facecolor="none",
-                edgecolor="none",
-                bbox_inches="tight",
-            )
-            plt.close(fig)
-
-            if plot_file.exists() and TEXTUAL_IMAGE_AVAILABLE:
-                try:
-                    img_widget = ImageWidget(str(plot_file))
-                    container_w = container.content_size.width
-                    if container_w and container_w > 10:
-                        display_w = max(40, container_w - 4)
-                        aspect = (fixed_width_px / 8) / (fixed_height_px / 16)
-                        img_widget.styles.width = display_w
-                        img_widget.styles.height = max(10, int(display_w / aspect))
-                    else:
-                        img_widget.styles.width = 120
-                        img_widget.styles.height = 60
-                    # Mount new widget first, then remove stale ones to avoid blank flash
-                    await container.mount(img_widget)
-                    for child in list(container.children[:-1]):
-                        await child.remove()
-                except Exception as e:
-                    await container.remove_children()
-                    await container.mount(
-                        Static(f"[red]Image display error: {e}[/red]", markup=True)
-                    )
-            elif not TEXTUAL_IMAGE_AVAILABLE:
-                await container.remove_children()
-                await container.mount(
-                    Static(
-                        f"[dim]Plot saved to: {plot_file}[/dim]",
-                        markup=True,
-                    )
-                )
-            else:
-                await container.remove_children()
-                await container.mount(
-                    Static("[red]Could not generate tools plot.[/red]", markup=True)
-                )
+        """Render the Tools tab plot for the currently selected trace."""
+        await refresh_tools_plot(self)
 
     def _run_tools_computation(self) -> None:
-        """
-        Run the currently selected tools module (cursor or distortion) and populate the #tools_results_display widget with computed results.
-
-        If no tool is active or there is no cached measurement, shows a brief prompt. For the "cursor" tool, displays cursor frequencies, values, and deltas (clickable cells copy the raw numeric text). For the "distortion" tool, displays Legendre component rows with coefficients and delta-y values; disabled components are dimmed and enabled components are color-highlighted, and numeric cells are clickable to copy. The widget is updated in-place; errors locating the display widget are silently ignored.
-        """
-        active = self.settings.tools_active_tool
-        try:
-            display = self.query_one("#tools_results_display", Static)
-        except Exception:
-            return
-
-        if active == "" or self.last_measurement is None:
-            display.update("[dim]No tool active.[/dim]")
-            return
-
-        freqs = self.last_measurement["freqs"]
-        sparams = self.last_measurement["sparams"]
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-
-        trace = self._get_tools_trace()
-        try:
-            plot_type = self.query_one("#select_tools_plot_type", Select).value
-        except Exception:
-            plot_type = "magnitude"
-
-        if active == "cursor":
-            result = MeasureTool().compute(
-                freqs,
-                sparams,
-                trace,
-                plot_type,
-                self._tools_cursor1_hz,
-                self._tools_cursor2_hz,
-            )
-            if result.cursor1_value is None and result.cursor2_value is None:
-                display.update("[dim]Enter cursor frequencies above.[/dim]")
-                return
-            _pc = get_plot_colors(self.get_css_variables())
-            c1col = _pc["cursor1"]
-            c2col = _pc["cursor2"]
-            labelw, valw = 8, 9
-            hdr = (
-                f"[dim]{'':>{labelw}}  "
-                f"{'Freq (' + freq_unit + ')':>{valw}}  "
-                f"{result.unit_label:>{valw}}[/dim]"
-            )
-            sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
-            lines = [hdr, sep]
-            if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
-                f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
-                v1_raw = f"{result.cursor1_value:.4f}"
-                lines.append(
-                    f"[bold {c1col}]{'Cursor 1':>{labelw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{f1_raw}\")']{f1_raw:>{valw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{v1_raw}\")']{v1_raw:>{valw}}[/]"
-                )
-            if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
-                f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
-                v2_raw = f"{result.cursor2_value:.4f}"
-                lines.append(
-                    f"[bold {c2col}]{'Cursor 2':>{labelw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{f2_raw}\")']{f2_raw:>{valw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{v2_raw}\")']{v2_raw:>{valw}}[/]"
-                )
-            if result.delta_value is not None:
-                fd_raw = f"{abs(result.cursor2_freq_hz - result.cursor1_freq_hz) / multiplier:.4f}"
-                dv_raw = f"{result.delta_value:.4f}"
-                lines.append(
-                    f"[dim]{'Δ':>{labelw}}[/dim]  "
-                    f"[@click='app.copy_cell_value(\"{fd_raw}\")']{fd_raw:>{valw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{dv_raw}\")']{dv_raw:>{valw}}[/]"
-                )
-            display.update("\n".join(lines))
-
-        elif active == "distortion":
-            result = DistortionTool().compute(
-                freqs,
-                sparams,
-                trace,
-                plot_type,
-                self._tools_cursor1_hz,
-                self._tools_cursor2_hz,
-            )
-            if not result.extra:
-                display.update("[dim]Enter both cursor frequencies above.[/dim]")
-                return
-            ex = result.extra
-            coeffs = ex["coeffs"]
-            delta_y = ex["delta_y"]
-            unit = result.unit_label
-            _ov_hex = get_plot_colors(self.get_css_variables())["distortion_overlays"]
-            _comp_enabled = self._get_distortion_comp_enabled()
-            nw, namew, valw = 1, 10, 9
-            hdr = (
-                f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
-                f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
-            )
-            sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
-            lines = [hdr, sep]
-            for n, name in enumerate(_DISTORTION_COMPONENT_NAMES):
-                c_raw = f"{coeffs[n]:.4f}"
-                color = _ov_hex[n] if _comp_enabled[n] else None
-                name_cell = (
-                    f"[bold {color}]{name:<{namew}}[/]"
-                    if color
-                    else f"[dim]{name:<{namew}}[/dim]"
-                )
-                c_cell = (
-                    f"[@click='app.copy_cell_value(\"{c_raw}\")']{c_raw:>{valw}}[/]"
-                )
-                if n == 0:
-                    dy_cell = f"{'—':>{valw}}"
-                else:
-                    dy_raw = f"{delta_y[n]:.4f}"
-                    dy_cell = f"[@click='app.copy_cell_value(\"{dy_raw}\")']{dy_raw:>{valw}}[/]"
-                lines.append(
-                    f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}"
-                )
-            display.update("\n".join(lines))
+        """Run the currently selected tools module and populate the results display."""
+        run_tools_computation(self)
 
     def _update_output_path_label(self) -> None:
         """
@@ -2553,87 +1969,37 @@ class VNAApp(App):
 
     @on(Button.Pressed, "#btn_tool_measure")
     def handle_tool_measure_pressed(self) -> None:
-        """
-        Activate or deactivate the cursor tool.
-
-        Toggles the application's active tool state to the cursor tool, updating the UI and triggering any associated plot/metric refresh.
-        """
-        self._set_active_tool("cursor")
+        """Activate or deactivate the cursor tool."""
+        tools_logic.handle_tool_measure_pressed(self)
 
     @on(Button.Pressed, "#btn_tool_distortion")
     def handle_tool_distortion_pressed(self) -> None:
         """Toggle the Distortion tool."""
-        self._set_active_tool("distortion")
+        tools_logic.handle_tool_distortion_pressed(self)
 
     @on(Input.Changed, "#input_tools_cursor1, #input_tools_cursor2")
     def handle_tools_cursor_change(self, event: Input.Changed) -> None:
-        """
-        Update internal cursor frequencies from the tools input fields and schedule a debounced refresh.
-
-        Reads text values from widgets "#input_tools_cursor1" and "#input_tools_cursor2", interprets them according to the last measurement's frequency unit (Hz, kHz, MHz, GHz), and stores parsed frequencies in Hz on self._tools_cursor1_hz and self._tools_cursor2_hz (sets to None on empty or failed parse). Starts or restarts a 200 ms debounce timer that will invoke self._delayed_tools_refresh.
-        """
-        if self.last_measurement is None:
-            return
-
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-
-        def _parse(widget_id: str) -> float | None:
-            """
-            Parse the numeric value from an Input widget identified by `widget_id` and scale it by the surrounding `multiplier`.
-
-            Parameters:
-                widget_id (str): The selector/ID of an `Input` widget to query.
-
-            Returns:
-                float | None: The parsed numeric value multiplied by `multiplier` when the widget contains a valid number; `None` if the widget is empty or parsing fails.
-            """
-            try:
-                val = self.query_one(widget_id, Input).value.strip()
-                return float(val) * multiplier if val else None
-            except Exception:
-                return None
-
-        self._tools_cursor1_hz = _parse("#input_tools_cursor1")
-        self._tools_cursor2_hz = _parse("#input_tools_cursor2")
-
-        # Debounce: only redraw after 200 ms of no further input changes
-        if self._tools_input_timer is not None:
-            self._tools_input_timer.stop()
-        self._tools_input_timer = self.set_timer(0.2, self._delayed_tools_refresh)
+        """Update internal cursor frequencies from the tools input fields."""
+        del event
+        tools_logic.handle_tools_cursor_change(self)
 
     @on(Checkbox.Changed, ".distortion-comp-check")
     def handle_distortion_comp_change(self, event: Checkbox.Changed) -> None:
         """Refresh tools plot when a distortion component overlay checkbox changes."""
-        if self.last_measurement is None:
-            return
-        if self._tools_input_timer is not None:
-            self._tools_input_timer.stop()
-        self._tools_input_timer = self.set_timer(0.2, self._delayed_tools_refresh)
+        del event
+        tools_logic.handle_distortion_comp_change(self)
 
     @on(RadioSet.Changed, "#tools_trace_radioset")
     async def handle_tools_trace_changed(self, event: RadioSet.Changed) -> None:
         """Update tools plot and results when the trace selection changes."""
-        if self.last_measurement is None:
-            return
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+        del event
+        await tools_logic.handle_tools_trace_changed(self)
 
     @on(Select.Changed, "#select_tools_plot_type")
     async def on_tools_plot_type_change(self, event: Select.Changed) -> None:
-        """
-        Handle changes to the tools plot type by refreshing the tools plot and recomputing results.
-
-        If no measurement is loaded, the handler returns without action.
-
-        Parameters:
-            event (Select.Changed): The selection change event triggering the update.
-        """
-        if self.last_measurement is None:
-            return
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+        """Handle changes to the tools plot type by refreshing the tools plot and recomputing results."""
+        del event
+        await tools_logic.on_tools_plot_type_change(self)
 
     # ------------------------------------------------------------------ #
 
