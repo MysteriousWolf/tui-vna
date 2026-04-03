@@ -25,7 +25,10 @@ try:
     from textual_image.widget import Image as ImageWidget
 
     TEXTUAL_IMAGE_AVAILABLE = True
-except ImportError:
+except Exception:
+    # Importing textual-image can trigger terminal capability probing at import
+    # time. In non-interactive environments (such as test collection), that may
+    # fail with runtime terminal/TTY errors rather than ImportError.
     ImageWidget = None
     TEXTUAL_IMAGE_AVAILABLE = False
 
@@ -84,7 +87,10 @@ def _preprocess_inline_latex(text: str) -> str:
         Returns:
             str: The LaTeX expression converted to plain text, trimmed, and wrapped in backticks.
         """
-        return f"`{_latex_converter.latex_to_text(m.group(1)).strip()}`"
+        converter = _latex_converter
+        if converter is None:
+            return f"`{m.group(1)}`"
+        return f"`{converter.latex_to_text(m.group(1)).strip()}`"
 
     return re.sub(r"\$([^$\n]+?)\$", replace_inline, text)
 
@@ -248,7 +254,7 @@ class HelpScreen(ModalScreen):
                         if result is not None:
                             img_path, img_w_px, img_h_px = result
                             try:
-                                from textual_image.widget._base import (
+                                from textual_image._terminal import (
                                     get_cell_size as _gtcs,
                                 )
 
@@ -259,6 +265,8 @@ class HelpScreen(ModalScreen):
                                 cw, ch = 8, 16
                             w_cells = max(8, round(img_w_px / cw))
                             h_cells = max(1, round(img_h_px / ch))
+                            if ImageWidget is None:
+                                raise RuntimeError("textual-image widget unavailable")
                             img_widget = ImageWidget(str(img_path))
                             img_widget.styles.width = w_cells
                             img_widget.styles.height = h_cells

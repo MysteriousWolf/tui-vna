@@ -41,9 +41,14 @@ from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
 from .export import DEFAULT_TEMPLATE_TAGS, PATH_INVALID_CHARS, render_template
-from .gui.components import StatusFooter
+from .gui.components import (
+    StatusFooter,
+)
 from .gui.modals import HelpScreen, build_update_screen, build_welcome_screen
-from .gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
+from .gui.modals.help import (
+    TEXTUAL_IMAGE_AVAILABLE,
+    ImageWidget,
+)
 from .gui.plotting import (
     calculate_plot_range_with_outlier_filtering,
     create_matplotlib_plot,
@@ -371,7 +376,9 @@ class VNAApp(App):
             )
 
             # Measurement parameters
-            self.settings.freq_unit = self.query_one("#select_freq_unit", Select).value
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            if isinstance(freq_unit_value, str):
+                self.settings.freq_unit = freq_unit_value
             self.settings.start_freq_mhz = float(
                 self.query_one("#input_start_freq", Input).value or "1.0"
             )
@@ -408,8 +415,6 @@ class VNAApp(App):
                 "#input_filename_prefix", Input
             ).value
             self.settings.filename_template = self.settings.filename_prefix
-            self.settings.use_custom_filename = False
-            self.settings.custom_filename = ""
             self.settings.export_s11 = self.query_one(
                 "#check_export_s11", Checkbox
             ).value
@@ -448,14 +453,18 @@ class VNAApp(App):
             self.settings.plot_s21 = self.query_one("#check_plot_s21", Checkbox).value
             self.settings.plot_s12 = self.query_one("#check_plot_s12", Checkbox).value
             self.settings.plot_s22 = self.query_one("#check_plot_s22", Checkbox).value
-            self.settings.plot_type = self.query_one("#select_plot_type", Select).value
+            plot_type_value = self.query_one("#select_plot_type", Select).value
+            if isinstance(plot_type_value, str):
+                self.settings.plot_type = plot_type_value
 
             # Tools tab settings
             self.settings.tools_trace = self._get_tools_trace()
             try:
-                self.settings.tools_plot_type = self.query_one(
+                tools_plot_type_value = self.query_one(
                     "#select_tools_plot_type", Select
                 ).value
+                if isinstance(tools_plot_type_value, str):
+                    self.settings.tools_plot_type = tools_plot_type_value
             except Exception:
                 pass
 
@@ -542,25 +551,25 @@ class VNAApp(App):
             self._stop_status_polling()
 
         elif msg.type == MessageType.PARAMS_READ:
-            result: ParamsResult = msg.data
-            self._update_params_ui(result)
+            params_result: ParamsResult = msg.data
+            self._update_params_ui(params_result)
             self.log_message("Parameters retrieved successfully", "success")
             self.enable_buttons_for_state()
             self.reset_progress()
 
         elif msg.type == MessageType.MEASUREMENT_COMPLETE:
-            result: MeasurementResult = msg.data
+            measurement_result: MeasurementResult = msg.data
             self.log_message(
-                f"Received measurement complete with {len(result.frequencies)} points",
+                f"Received measurement complete with {len(measurement_result.frequencies)} points",
                 "debug",
             )
             # Schedule the async handler
-            asyncio.create_task(self._handle_measurement_complete(result))
+            asyncio.create_task(self._handle_measurement_complete(measurement_result))
 
         elif msg.type == MessageType.STATUS_UPDATE:
             self._status_poll_in_flight = False
-            result: StatusResult = msg.data
-            self.query_one(StatusFooter).update_status(result)
+            status_result: StatusResult = msg.data
+            self.query_one(StatusFooter).update_status(status_result)
 
         elif msg.type == MessageType.SCPI_ERROR_UPDATE:
             if self._debug_scpi:
@@ -583,7 +592,7 @@ class VNAApp(App):
     @on(Select.Changed, "#sb_poll_interval")
     def on_poll_interval_change(self, event: Select.Changed) -> None:
         """Handle status poll interval change."""
-        if event.value == Select.BLANK:
+        if event.value == Select.BLANK or not isinstance(event.value, int):
             return
         self.settings.status_poll_interval = event.value
         if self.connected:
@@ -800,9 +809,10 @@ class VNAApp(App):
         self.log_message("Reading VNA parameters...", "progress")
         self.worker.send_command(MessageType.READ_PARAMS)
 
-    def _update_params_ui(self, result):
+    def _update_params_ui(self, result: ParamsResult) -> None:
         """Update UI with parameters read from VNA."""
-        freq_unit = self.query_one("#select_freq_unit", Select).value
+        freq_unit_value = self.query_one("#select_freq_unit", Select).value
+        freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
         unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
         multiplier = unit_multipliers.get(freq_unit, 1e6)
 
@@ -826,7 +836,8 @@ class VNAApp(App):
 
         try:
             # Get frequency unit and convert to Hz
-            freq_unit = self.query_one("#select_freq_unit", Select).value
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
             unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
             multiplier = unit_multipliers.get(freq_unit, 1e6)
 
@@ -926,7 +937,8 @@ class VNAApp(App):
             self.set_progress("Exporting...", 80)
             self.log_message("Exporting to Touchstone format...", "progress")
 
-            freq_unit = self.query_one("#select_freq_unit", Select).value
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
             exporter = TouchstoneExporter(freq_unit=freq_unit)
 
             filename_template = self.query_one(
@@ -1006,7 +1018,7 @@ class VNAApp(App):
                     "info",
                 )
 
-            filename = rendered_filename.rendered.strip() or None
+            filename = rendered_filename.rendered.strip() or "measurement"
             output_folder = rendered_folder.rendered.strip() or "measurement"
 
             self.settings_manager.touch_template_history(
@@ -1019,14 +1031,17 @@ class VNAApp(App):
             )
             self.settings_manager.save(self.settings)
 
+            export_folder: str = output_folder
+            export_filename: str = filename
+            export_name: str = "measurement"
             output_path = await asyncio.get_event_loop().run_in_executor(
                 None,
                 exporter.export,
                 freqs,
                 export_params,
-                output_folder,
-                filename,
-                "measurement",
+                export_folder,
+                export_filename,
+                export_name,
             )
 
             self.log_message(f"Saved: {output_path}", "success")
@@ -1200,7 +1215,7 @@ class VNAApp(App):
                     self.last_measurement["freqs"],
                     self.last_measurement["sparams"],
                     plot_params,
-                    plot_type,
+                    str(plot_type),
                     Path(file_path),
                     dpi=300,  # High DPI for export
                     colors=get_plot_colors(self.get_css_variables()),
@@ -1271,7 +1286,7 @@ class VNAApp(App):
                     self.last_measurement["freqs"],
                     self.last_measurement["sparams"],
                     plot_params,
-                    plot_type,
+                    str(plot_type),
                     Path(file_path),
                     dpi=150,  # DPI doesn't matter much for vector
                     colors=get_plot_colors(self.get_css_variables()),
@@ -1629,7 +1644,11 @@ class VNAApp(App):
         )
 
         # Get frequency unit from measurement data
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        measurement = self.last_measurement or {}
+        measurement_freq_unit = measurement.get("freq_unit", "MHz")
+        freq_unit = (
+            measurement_freq_unit if isinstance(measurement_freq_unit, str) else "MHz"
+        )
         unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
         multiplier = unit_multipliers.get(freq_unit, 1e6)
 
@@ -1779,6 +1798,8 @@ class VNAApp(App):
                 all_y_data.append(param_data)
 
             # Calculate auto limits
+            auto_y_min = None
+            auto_y_max = None
             if all_y_data and plot_type != "smith":
                 combined_data = np.concatenate(all_y_data)
                 auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
@@ -1833,7 +1854,7 @@ class VNAApp(App):
                 plot_colors = get_plot_colors(self.get_css_variables())
 
                 # Calculate Y limits first (before plotting)
-                if all_y_data:
+                if all_y_data and auto_y_min is not None and auto_y_max is not None:
                     y_min = user_y_min if user_y_min is not None else auto_y_min
                     y_max = user_y_max if user_y_max is not None else auto_y_max
                 else:
@@ -1932,7 +1953,7 @@ class VNAApp(App):
                         filtered_freqs,
                         filtered_sparams,
                         plot_params,
-                        plot_type,
+                        str(plot_type),
                         plot_file,
                         dpi=dpi,
                         pixel_width=px_w,
@@ -1994,28 +2015,6 @@ class VNAApp(App):
                         )
 
                         img_widget = ImageWidget(str(plot_file))
-
-                        # Debug protocol detection
-                        if hasattr(img_widget, "_protocol"):
-                            self.log_message(
-                                f"Image widget using protocol: {img_widget._protocol}",
-                                "debug",
-                            )
-
-                        # Try to detect available protocols
-                        try:
-                            import textual_image.widget as tiw
-
-                            if hasattr(tiw, "_detect_image_support"):
-                                protocols = tiw._detect_image_support()
-                                self.log_message(
-                                    f"Available image protocols: {protocols}", "debug"
-                                )
-                        except (ImportError, AttributeError) as e:
-                            self.log_message(
-                                f"Could not detect available image protocols: {e}",
-                                "debug",
-                            )
 
                         # Calculate display size based on available container width
                         # and preserve the actual aspect ratio of the generated plot

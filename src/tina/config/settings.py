@@ -8,10 +8,14 @@ Provides cross-platform configuration storage following OS conventions:
 
 Settings are stored as YAML so the file is human-readable and comments
 are preserved across saves.
+
+This module owns persistence, normalization, and MRU history management for
+application settings. UI-specific presentation helpers should live closer to
+the UI layer rather than in this persistence module.
 """
 
 import warnings
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import get_type_hints
 
@@ -101,8 +105,8 @@ class AppSettings:
     filename_prefix: str = "measurement"
     filename_template: str = "measurement_{date}_{time}"
     folder_template: str = "measurement"
-    filename_template_history: list[str] | None = None
-    folder_template_history: list[str] | None = None
+    filename_template_history: list[str] = field(default_factory=list)
+    folder_template_history: list[str] = field(default_factory=list)
     export_bundle_s2p: bool = True
     export_bundle_csv: bool = False
     export_bundle_png: bool = True
@@ -120,20 +124,16 @@ class AppSettings:
 
     last_host: str = ""
     last_port: str = "inst0"
-    host_history: list[str] | None = None
-    port_history: list[str] | None = None
+    host_history: list[str] = field(default_factory=list)
+    port_history: list[str] = field(default_factory=list)
     last_acknowledged_version: str = ""
     notified_prerelease: str = ""
 
     def __post_init__(self):
-        """Initialize mutable defaults."""
-        if self.host_history is None:
-            self.host_history = []
-        if self.port_history is None:
-            self.port_history = []
-        if self.filename_template_history is None:
+        """Initialize mutable defaults and ensure current templates are present."""
+        if not self.filename_template_history:
             self.filename_template_history = [self.filename_template]
-        if self.folder_template_history is None:
+        if not self.folder_template_history:
             self.folder_template_history = [self.folder_template]
 
 
@@ -345,13 +345,6 @@ class SettingsManager:
 
         self._merge_port_history()
 
-    def get_port_options(self) -> list[tuple[str, str]]:
-        """Get port options for the dropdown as (value, label) tuples."""
-        return [
-            (port, port) if port in self.DEFAULT_PORTS else (port, f"{port} (recent)")
-            for port in self.settings.port_history
-        ]
-
     def add_host_to_history(self, host: str) -> None:
         """Add a host IP to history (most recent first)."""
         if not host or not host.strip():
@@ -368,10 +361,6 @@ class SettingsManager:
             self.settings.host_history = self.settings.host_history[
                 : self.MAX_HOST_HISTORY
             ]
-
-    def get_host_options(self) -> list[tuple[str, str]]:
-        """Get host options for the dropdown as (value, label) tuples."""
-        return [(host, host) for host in self.settings.host_history]
 
     def _normalize_template_history(self, field_name: str, current_value: str) -> None:
         """Normalize a template-history field into MRU order with the current value first."""
@@ -400,17 +389,3 @@ class SettingsManager:
             history.remove(normalized)
         history.insert(0, normalized)
         setattr(self.settings, field_name, history[: self.MAX_TEMPLATE_HISTORY])
-
-    def get_filename_template_options(self) -> list[tuple[str, str]]:
-        """Get filename template history entries as dropdown options."""
-        return [
-            (_truncate_history_label(template), template)
-            for template in (self.settings.filename_template_history or [])
-        ]
-
-    def get_folder_template_options(self) -> list[tuple[str, str]]:
-        """Get folder template history entries as dropdown options."""
-        return [
-            (_truncate_history_label(template), template)
-            for template in (self.settings.folder_template_history or [])
-        ]

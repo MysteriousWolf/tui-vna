@@ -218,19 +218,6 @@ class TestSettingsManager:
 
         assert len(settings_manager.settings.port_history) == original_length
 
-    def test_get_port_options(self, settings_manager):
-        """Test getting port options for UI."""
-        settings_manager.settings.port_history = ["inst0", "inst1", "custom_port"]
-        options = settings_manager.get_port_options()
-
-        assert len(options) >= 3
-        assert all(isinstance(opt, tuple) and len(opt) == 2 for opt in options)
-
-        # Check that custom ports are labeled
-        custom_options = [opt for opt in options if "custom_port" in opt[0]]
-        assert len(custom_options) == 1
-        assert "(recent)" in custom_options[0][1]
-
     def test_add_host_to_history_new(self, settings_manager):
         """Test adding new host to history."""
         settings_manager.add_host_to_history("192.168.1.100")
@@ -263,15 +250,6 @@ class TestSettingsManager:
         settings_manager.add_host_to_history("   ")
 
         assert len(settings_manager.settings.host_history) == 0
-
-    def test_get_host_options(self, settings_manager):
-        """Test getting host options for UI."""
-        settings_manager.settings.host_history = ["192.168.1.100", "192.168.1.101"]
-        options = settings_manager.get_host_options()
-
-        assert len(options) == 2
-        assert all(isinstance(opt, tuple) and len(opt) == 2 for opt in options)
-        assert options[0] == ("192.168.1.100", "192.168.1.100")
 
     def test_settings_persistence_with_history(self, settings_manager):
         """Test that history is properly persisted."""
@@ -371,26 +349,6 @@ class TestSettingsManager:
         assert loaded.folder_template_history == [
             "exports/{model}",
             "measurement",
-        ]
-
-    def test_template_history_options(self, settings_manager):
-        """Test template history option helpers for UI selectors."""
-        settings_manager.settings.filename_template_history = [
-            "measurement_{date}_{time}",
-            "run_{host}",
-        ]
-        settings_manager.settings.folder_template_history = [
-            "measurement",
-            "exports/{vend}_{model}",
-        ]
-
-        assert settings_manager.get_filename_template_options() == [
-            ("measurement_{date}_...", "measurement_{date}_{time}"),
-            ("run_{host}", "run_{host}"),
-        ]
-        assert settings_manager.get_folder_template_options() == [
-            ("measurement", "measurement"),
-            ("exports/{vend}_{model}", "exports/{vend}_{model}"),
         ]
 
     def test_load_restores_default_filename_history_when_empty(self, settings_manager):

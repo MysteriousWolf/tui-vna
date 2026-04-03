@@ -1,9 +1,16 @@
 """Tests for setup autocomplete behavior."""
 
-from src.tina.main import (
+from typing import cast
+
+from textual.widgets import Input
+from textual_autocomplete._autocomplete import TargetState
+
+from src.tina.gui.components.autocomplete import (
+    AutocompleteChoice as _AutocompleteChoice,
+)
+from src.tina.gui.components.autocomplete import (
     HistoryReplaceAutoComplete,
     TemplateAutoComplete,
-    _AutocompleteChoice,
 )
 
 
@@ -32,11 +39,11 @@ class _HistoryReplaceAutoCompleteUnderTest(HistoryReplaceAutoComplete):
         self, choices: list[_AutocompleteChoice], target_value: str = ""
     ) -> None:
         self._fake_target = _FakeTarget(target_value)
-        super().__init__(self._fake_target, lambda: choices)
+        super().__init__(cast(Input, self._fake_target), lambda: choices)
 
     @property
-    def target(self) -> _FakeTarget:
-        return self._fake_target
+    def target(self) -> Input:
+        return cast(Input, self._fake_target)
 
 
 class _TemplateAutoCompleteUnderTest(TemplateAutoComplete):
@@ -46,14 +53,17 @@ class _TemplateAutoCompleteUnderTest(TemplateAutoComplete):
         self, choices: list[_AutocompleteChoice], target_value: str = ""
     ) -> None:
         self._fake_target = _FakeTarget(target_value)
-        super().__init__(self._fake_target, lambda: choices)
+        super().__init__(cast(Input, self._fake_target), lambda: choices)
 
     @property
-    def target(self) -> _FakeTarget:
-        return self._fake_target
+    def target(self) -> Input:
+        return cast(Input, self._fake_target)
 
-    def _get_target_state(self) -> _FakeState:
-        return _FakeState(self.target.value, self.target.cursor_position)
+    def _get_target_state(self) -> TargetState:
+        return cast(
+            TargetState,
+            _FakeState(self._fake_target.value, self._fake_target.cursor_position),
+        )
 
     def _rebuild_options(self, *_args, **_kwargs) -> None:
         """No-op rebuild for unit tests."""
@@ -80,7 +90,9 @@ class TestHistoryReplaceAutoComplete:
         ]
         autocomplete = _HistoryReplaceAutoCompleteUnderTest(choices)
 
-        candidates = autocomplete.get_candidates(_FakeState("lab", 3))
+        candidates = autocomplete.get_candidates(
+            cast(TargetState, _FakeState("lab", 3))
+        )
 
         assert [item.value for item in candidates] == ["lab-vna.local"]
 
@@ -101,7 +113,9 @@ class TestHistoryReplaceAutoComplete:
         ]
         autocomplete = _HistoryReplaceAutoCompleteUnderTest(choices)
 
-        candidates = autocomplete.get_candidates(_FakeState("inst", 4))
+        candidates = autocomplete.get_candidates(
+            cast(TargetState, _FakeState("inst", 4))
+        )
 
         assert [item.value for item in candidates] == ["inst0"]
 
@@ -113,7 +127,7 @@ class TestTemplateAutoComplete:
         autocomplete = _TemplateAutoCompleteUnderTest([])
 
         search = autocomplete.get_search_string(
-            _FakeState("measurement_{da", len("measurement_{da"))
+            cast(TargetState, _FakeState("measurement_{da", len("measurement_{da")))
         )
 
         assert search == "{da"
@@ -121,7 +135,9 @@ class TestTemplateAutoComplete:
     def test_get_search_string_falls_back_to_full_text_without_token(self):
         autocomplete = _TemplateAutoCompleteUnderTest([])
 
-        search = autocomplete.get_search_string(_FakeState("measure", len("measure")))
+        search = autocomplete.get_search_string(
+            cast(TargetState, _FakeState("measure", len("measure")))
+        )
 
         assert search == "measure"
 
@@ -149,7 +165,7 @@ class TestTemplateAutoComplete:
         autocomplete = _TemplateAutoCompleteUnderTest(choices)
 
         candidates = autocomplete.get_candidates(
-            _FakeState("measurement_{da", len("measurement_{da"))
+            cast(TargetState, _FakeState("measurement_{da", len("measurement_{da")))
         )
 
         assert [item.value for item in candidates] == [
@@ -179,7 +195,7 @@ class TestTemplateAutoComplete:
 
         autocomplete.apply_completion(
             "measurement_{date}_{time}",
-            _FakeState("partial_name", len("partial_name")),
+            cast(TargetState, _FakeState("partial_name", len("partial_name"))),
         )
 
         assert autocomplete.target.value == "measurement_{date}_{time}"
@@ -202,7 +218,10 @@ class TestTemplateAutoComplete:
 
         autocomplete.apply_completion(
             "{date}",
-            _FakeState("measurement_{da}_suffix", len("measurement_{da")),
+            cast(
+                TargetState,
+                _FakeState("measurement_{da}_suffix", len("measurement_{da")),
+            ),
         )
 
         assert autocomplete.target.value == "measurement_{date}_suffix"
@@ -225,7 +244,7 @@ class TestTemplateAutoComplete:
 
         autocomplete.apply_completion(
             "{host}",
-            _FakeState("prefix ", len("prefix ")),
+            cast(TargetState, _FakeState("prefix ", len("prefix "))),
         )
 
         assert autocomplete.target.value == "prefix {host}"
@@ -254,6 +273,8 @@ class TestTemplateAutoComplete:
         ]
         autocomplete = _TemplateAutoCompleteUnderTest(choices)
 
-        candidates = autocomplete.get_candidates(_FakeState("{da", 3))
+        candidates = autocomplete.get_candidates(
+            cast(TargetState, _FakeState("{da", 3))
+        )
 
         assert [item.value for item in candidates] == ["{date}", "measurement_{date}"]

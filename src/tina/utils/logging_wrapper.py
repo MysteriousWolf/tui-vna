@@ -5,6 +5,7 @@ Automatically logs all SCPI commands sent to the VNA for debugging and monitorin
 """
 
 from collections.abc import Callable
+from typing import Any, cast
 
 from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
 from ..drivers.base import VNABase
@@ -33,7 +34,7 @@ class LoggingVNAWrapper:
 
     def __init__(
         self,
-        vna: VNABase,
+        vna: VNABase | Any,
         log_callback: Callable[[str, str], None],
         on_scpi_error: Callable[[str, str], None] | None = None,
     ):
@@ -61,9 +62,12 @@ class LoggingVNAWrapper:
         ``_raw_query`` is stored separately so the ``SYST:ERR?`` debug check
         can bypass the wrapper and avoid recursive logging.
         """
-        original_send = self._vna._send_command
-        original_query = self._vna._query
-        original_query_ascii = self._vna._query_ascii_values
+        original_send = cast(Callable[[str], Any], getattr(self._vna, "_send_command"))
+        original_query = cast(Callable[[str], str], getattr(self._vna, "_query"))
+        original_query_ascii = cast(
+            Callable[[str], list[float]],
+            getattr(self._vna, "_query_ascii_values"),
+        )
 
         # Must not route SYST:ERR? back through the patched _query — that would
         # trigger another debug check, causing infinite recursion.
@@ -130,9 +134,9 @@ class LoggingVNAWrapper:
             _check_error(command)
             return result
 
-        self._vna._send_command = logged_send_command
-        self._vna._query = logged_query
-        self._vna._query_ascii_values = logged_query_ascii
+        setattr(self._vna, "_send_command", logged_send_command)
+        setattr(self._vna, "_query", logged_query)
+        setattr(self._vna, "_query_ascii_values", logged_query_ascii)
 
     def __getattr__(self, name):
         """Delegate all attribute lookups not found on the wrapper to the driver."""
