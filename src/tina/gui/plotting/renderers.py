@@ -229,20 +229,24 @@ def create_matplotlib_plot(
 
     freq_mhz = freqs / 1e6
 
+    if plot_type == "magnitude":
+        ylabel = "Magnitude (dB)"
+        title = "S-Parameter Magnitude"
+    elif plot_type == "phase":
+        ylabel = "Phase (degrees)"
+        title = "S-Parameter Phase (Unwrapped)"
+    else:
+        ylabel = "Phase (degrees)"
+        title = "S-Parameter Phase (Raw)"
+
     all_y_data = []
     for param in plot_params:
         if plot_type == "magnitude":
             data = sparams[param][0]
-            ylabel = "Magnitude (dB)"
-            title = "S-Parameter Magnitude"
         elif plot_type == "phase":
             data = unwrap_phase(sparams[param][1])
-            ylabel = "Phase (degrees)"
-            title = "S-Parameter Phase (Unwrapped)"
         else:
             data = sparams[param][1]
-            ylabel = "Phase (degrees)"
-            title = "S-Parameter Phase (Raw)"
 
         all_y_data.append(data)
         ax.plot(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -75,7 +75,14 @@ class _FakeApp:
     ) -> None:
         self.last_measurement = measurement
         self.last_output_path = last_output_path
+        self.measurement_notes = (
+            str(measurement.get("notes", "")) if measurement is not None else ""
+        )
         self.settings = SimpleNamespace(output_folder=output_folder)
+        self.settings_manager = SimpleNamespace(
+            touch_template_history=MagicMock(),
+            save=MagicMock(),
+        )
         self._plot_type = plot_type
         self._selected_params = set(selected_params)
         self._freq_unit = freq_unit
@@ -91,6 +98,25 @@ class _FakeApp:
                 "measurement": {"exported_traces": list(kwargs["exported_traces"])},
             },
         )
+        self._build_image_export_metadata = cast(
+            Any,
+            lambda **kwargs: {
+                "metadata_version": 1,
+                "setup": {"host": "lab-vna", "freq_unit": self._freq_unit},
+                "measurement": {
+                    "exported_traces": list(kwargs["exported_traces"]),
+                    "plot_type": kwargs["plot_type"],
+                    "raw_data": {
+                        "freqs_hz": (
+                            self.last_measurement["freqs"].tolist()
+                            if self.last_measurement is not None
+                            else []
+                        ),
+                        "sparams": {},
+                    },
+                },
+            },
+        )
         self._notify_export_result = MagicMock()
         self._notify_import_result = MagicMock()
         self._load_measurement_notes_into_editor = MagicMock()
@@ -100,6 +126,14 @@ class _FakeApp:
         self._rebuild_tools_params = MagicMock()
         self.call_after_refresh = MagicMock()
         self._update_results = MagicMock(return_value=None)
+        self._write_image_export = MagicMock()
+        self.set_progress = MagicMock()
+        self.enable_buttons_for_state = MagicMock()
+        self.reset_progress = MagicMock()
+        self._filename_template_validation = None
+        self._folder_template_validation = None
+        self.sub_title = ""
+        self.measuring = False
 
     def query_one(self, selector: str, _widget_type=None):
         """Return minimal widget stubs for selectors used by export handlers."""
@@ -123,6 +157,12 @@ class _FakeApp:
             return _FakeCheckbox("S12" in self._selected_params)
         if selector == "#check_export_s22":
             return _FakeCheckbox("S22" in self._selected_params)
+        if selector == "#check_export_bundle_csv":
+            return _FakeCheckbox(False)
+        if selector == "#check_export_bundle_png":
+            return _FakeCheckbox(False)
+        if selector == "#check_export_bundle_svg":
+            return _FakeCheckbox(False)
         raise AssertionError(f"Unexpected selector: {selector}")
 
 
@@ -168,20 +208,25 @@ class TestDirectMeasurementPlotExports:
         with (
             patch("src.tina.main.tk.Tk", return_value=fake_root),
             patch("src.tina.main.filedialog.asksaveasfilename", fake_dialog),
-            patch("src.tina.main.create_matplotlib_plot") as create_plot,
-            patch("src.tina.main.get_plot_colors", return_value={"fg": "#fff"}),
         ):
             VNAApp.handle_export_png(cast(Any, app))
 
-        create_plot.assert_called_once()
-        args = create_plot.call_args.args
-        assert np.array_equal(args[0], sample_measurement["freqs"])
-        assert args[1] is sample_measurement["sparams"]
-        assert args[2] == ["S11", "S22"]
-        assert args[3] == "magnitude"
-        assert args[4] == chosen_path
+        write_image_export = app._write_image_export
+
+        write_image_export.assert_called_once_with(
+            file_path=str(chosen_path),
+            plot_type="magnitude",
+            plot_params=["S11", "S22"],
+            dpi=300,
+            metadata_writer=ANY,
+        )
         app.log_message.assert_called_once_with(
             f"Exported PNG: {chosen_path}", "success"
+        )
+        app._notify_export_result.assert_called_once_with(
+            kind="PNG",
+            path=str(chosen_path),
+            exported_items="S11, S22",
         )
 
     def test_export_svg_uses_smith_chart_renderer_for_smith_plot(
@@ -202,19 +247,25 @@ class TestDirectMeasurementPlotExports:
         with (
             patch("src.tina.main.tk.Tk", return_value=fake_root),
             patch("src.tina.main.filedialog.asksaveasfilename", fake_dialog),
-            patch("src.tina.main.create_smith_chart") as create_smith,
-            patch("src.tina.main.get_plot_colors", return_value={"fg": "#fff"}),
         ):
             VNAApp.handle_export_svg(cast(Any, app))
 
-        create_smith.assert_called_once()
-        args = create_smith.call_args.args
-        assert np.array_equal(args[0], sample_measurement["freqs"])
-        assert args[1] is sample_measurement["sparams"]
-        assert args[2] == ["S21"]
-        assert args[3] == chosen_path
+        write_image_export = app._write_image_export
+
+        write_image_export.assert_called_once_with(
+            file_path=str(chosen_path),
+            plot_type="smith",
+            plot_params=["S21"],
+            dpi=150,
+            metadata_writer=ANY,
+        )
         app.log_message.assert_called_once_with(
             f"Exported SVG: {chosen_path}", "success"
+        )
+        app._notify_export_result.assert_called_once_with(
+            kind="SVG",
+            path=str(chosen_path),
+            exported_items="S21",
         )
 
     def test_export_png_returns_quietly_when_dialog_is_cancelled(
@@ -233,6 +284,367 @@ class TestDirectMeasurementPlotExports:
 
         create_plot.assert_not_called()
         app.log_message.assert_not_called()
+
+    def test_export_png_embeds_metadata_after_plot_render(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """PNG export should embed notes and recovery metadata after rendering."""
+        app = _FakeApp(
+            sample_measurement,
+            plot_type="magnitude",
+            selected_params=("S11", "S22"),
+            output_folder=str(tmp_path),
+        )
+        chosen_path = tmp_path / "manual_plot.png"
+
+        fake_root = MagicMock()
+        fake_dialog = MagicMock(return_value=str(chosen_path))
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch("src.tina.main.filedialog.asksaveasfilename", fake_dialog),
+        ):
+            VNAApp.handle_export_png(cast(Any, app))
+
+        write_image_export = app._write_image_export
+
+        write_image_export.assert_called_once_with(
+            file_path=str(chosen_path),
+            plot_type="magnitude",
+            plot_params=["S11", "S22"],
+            dpi=300,
+            metadata_writer=ANY,
+        )
+        app._notify_export_result.assert_called_once_with(
+            kind="PNG",
+            path=str(chosen_path),
+            exported_items="S11, S22",
+        )
+
+    def test_export_svg_embeds_metadata_after_plot_render(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """SVG export should embed notes and recovery metadata after rendering."""
+        app = _FakeApp(
+            sample_measurement,
+            plot_type="smith",
+            selected_params=("S21",),
+            output_folder=str(tmp_path),
+        )
+        chosen_path = tmp_path / "manual_plot.svg"
+
+        fake_root = MagicMock()
+        fake_dialog = MagicMock(return_value=str(chosen_path))
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch("src.tina.main.filedialog.asksaveasfilename", fake_dialog),
+        ):
+            VNAApp.handle_export_svg(cast(Any, app))
+
+        write_image_export = app._write_image_export
+
+        write_image_export.assert_called_once_with(
+            file_path=str(chosen_path),
+            plot_type="smith",
+            plot_params=["S21"],
+            dpi=150,
+            metadata_writer=ANY,
+        )
+        app._notify_export_result.assert_called_once_with(
+            kind="SVG",
+            path=str(chosen_path),
+            exported_items="S21",
+        )
+
+
+@pytest.mark.unit
+class TestMeasurementCompletionBundleExports:
+    """Tests for bundle image exports during measurement completion."""
+
+    @pytest.mark.asyncio
+    async def test_measurement_complete_exports_bundle_png_with_metadata(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Measurement completion should write bundled PNG exports with metadata."""
+        app = _FakeApp(
+            None,
+            selected_params=("S11", "S21"),
+            output_folder=str(tmp_path),
+        )
+        app.measurement_notes = sample_measurement["notes"]
+        app.settings = SimpleNamespace(
+            filename_template="measurement_{date}_{time}",
+            folder_template="measurement",
+            freq_unit="MHz",
+            plot_type="magnitude",
+        )
+        app.settings_manager = SimpleNamespace(
+            touch_template_history=MagicMock(),
+            save=MagicMock(),
+        )
+        app._build_touchstone_export_metadata = cast(
+            Any,
+            lambda **kwargs: {
+                "setup": {"host": "lab-vna", "freq_unit": "MHz"},
+                "measurement": {"exported_traces": list(kwargs["exported_traces"])},
+            },
+        )
+        app._build_image_export_metadata = cast(
+            Any,
+            lambda **kwargs: {
+                "metadata_version": 1,
+                "setup": {"host": "lab-vna", "freq_unit": "MHz"},
+                "measurement": {
+                    "exported_traces": list(kwargs["exported_traces"]),
+                    "plot_type": kwargs["plot_type"],
+                    "raw_data": {
+                        "freqs_hz": sample_measurement["freqs"].tolist(),
+                        "sparams": {},
+                    },
+                },
+            },
+        )
+        app.notify = MagicMock()
+        app._write_image_export = MagicMock()
+        app._refresh_tools_plot = MagicMock()
+        app._run_tools_computation = MagicMock()
+        app._rebuild_tools_params = MagicMock()
+        app._update_results = MagicMock()
+        app.log_message = MagicMock()
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#check_export_s11": _FakeCheckbox(True),
+                "#check_export_s21": _FakeCheckbox(True),
+                "#check_export_s12": _FakeCheckbox(False),
+                "#check_export_s22": _FakeCheckbox(False),
+                "#check_export_bundle_csv": _FakeCheckbox(False),
+                "#check_export_bundle_png": _FakeCheckbox(True),
+                "#check_export_bundle_svg": _FakeCheckbox(False),
+                "#check_plot_s11": _FakeCheckbox(True),
+                "#check_plot_s21": _FakeCheckbox(True),
+                "#check_plot_s12": _FakeCheckbox(False),
+                "#check_plot_s22": _FakeCheckbox(False),
+                "#select_freq_unit": _FakeSelect("MHz"),
+                "#input_filename_prefix": SimpleNamespace(value="bundle_run"),
+                "#input_output_folder": SimpleNamespace(value=str(tmp_path)),
+            }[selector],
+        )
+
+        result = SimpleNamespace(
+            frequencies=sample_measurement["freqs"],
+            sparams=sample_measurement["sparams"],
+        )
+
+        with (
+            patch(
+                "src.tina.main.setup_logic.validate_export_template_for_app",
+                side_effect=lambda *args, **kwargs: SimpleNamespace(
+                    has_errors=False,
+                    has_warnings=False,
+                    unknown_tags=(),
+                ),
+            ),
+            patch("src.tina.main.setup_logic.apply_template_input_state"),
+            patch(
+                "src.tina.main.setup_logic.build_export_template_context_for_app",
+                return_value={},
+            ),
+            patch(
+                "src.tina.main.render_template",
+                side_effect=[
+                    SimpleNamespace(
+                        rendered="bundle_run",
+                        validation=SimpleNamespace(
+                            has_warnings=False,
+                            unknown_tags=(),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        rendered=str(tmp_path),
+                        validation=SimpleNamespace(
+                            has_warnings=False,
+                            unknown_tags=(),
+                        ),
+                    ),
+                ],
+            ),
+            patch.object(
+                TouchstoneExporter,
+                "export",
+                return_value=str(tmp_path / "bundle_run.s2p"),
+            ),
+            patch("src.tina.main.asyncio.get_event_loop") as get_loop,
+        ):
+            loop = MagicMock()
+
+            async def run_in_executor(_executor, func, *args):
+                if callable(func):
+                    return func(*args)
+                return None
+
+            loop.run_in_executor.side_effect = run_in_executor
+            get_loop.return_value = loop
+
+            await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+
+        app._write_image_export.assert_called_once_with(
+            file_path=str(tmp_path / "bundle_run.png"),
+            plot_type="magnitude",
+            plot_params=["S11", "S21"],
+            dpi=300,
+            metadata_writer=ANY,
+        )
+        assert app.last_measurement is not None
+        assert app.last_measurement["png_path"] == str(tmp_path / "bundle_run.png")
+        app._notify_export_result.assert_any_call(
+            kind="PNG",
+            path=str(tmp_path / "bundle_run.png"),
+            exported_items="S11, S21",
+        )
+
+    @pytest.mark.asyncio
+    async def test_measurement_complete_exports_bundle_svg_with_metadata(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Measurement completion should write bundled SVG exports with metadata."""
+        app = _FakeApp(
+            None,
+            selected_params=("S21",),
+            output_folder=str(tmp_path),
+        )
+        app.measurement_notes = sample_measurement["notes"]
+        app.settings = SimpleNamespace(
+            filename_template="measurement_{date}_{time}",
+            folder_template="measurement",
+            freq_unit="MHz",
+            plot_type="smith",
+        )
+        app.settings_manager = SimpleNamespace(
+            touch_template_history=MagicMock(),
+            save=MagicMock(),
+        )
+        app._build_touchstone_export_metadata = cast(
+            Any,
+            lambda **kwargs: {
+                "setup": {"host": "lab-vna", "freq_unit": "MHz"},
+                "measurement": {"exported_traces": list(kwargs["exported_traces"])},
+            },
+        )
+        app._build_image_export_metadata = cast(
+            Any,
+            lambda **kwargs: {
+                "metadata_version": 1,
+                "setup": {"host": "lab-vna", "freq_unit": "MHz"},
+                "measurement": {
+                    "exported_traces": list(kwargs["exported_traces"]),
+                    "plot_type": kwargs["plot_type"],
+                    "raw_data": {
+                        "freqs_hz": sample_measurement["freqs"].tolist(),
+                        "sparams": {},
+                    },
+                },
+            },
+        )
+        app.notify = MagicMock()
+        app._write_image_export = MagicMock()
+        app._refresh_tools_plot = MagicMock()
+        app._run_tools_computation = MagicMock()
+        app._rebuild_tools_params = MagicMock()
+        app._update_results = MagicMock()
+        app.log_message = MagicMock()
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#check_export_s11": _FakeCheckbox(False),
+                "#check_export_s21": _FakeCheckbox(True),
+                "#check_export_s12": _FakeCheckbox(False),
+                "#check_export_s22": _FakeCheckbox(False),
+                "#check_export_bundle_csv": _FakeCheckbox(False),
+                "#check_export_bundle_png": _FakeCheckbox(False),
+                "#check_export_bundle_svg": _FakeCheckbox(True),
+                "#check_plot_s11": _FakeCheckbox(False),
+                "#check_plot_s21": _FakeCheckbox(True),
+                "#check_plot_s12": _FakeCheckbox(False),
+                "#check_plot_s22": _FakeCheckbox(False),
+                "#select_freq_unit": _FakeSelect("MHz"),
+                "#input_filename_prefix": SimpleNamespace(value="bundle_run"),
+                "#input_output_folder": SimpleNamespace(value=str(tmp_path)),
+            }[selector],
+        )
+
+        result = SimpleNamespace(
+            frequencies=sample_measurement["freqs"],
+            sparams=sample_measurement["sparams"],
+        )
+
+        with (
+            patch(
+                "src.tina.main.setup_logic.validate_export_template_for_app",
+                side_effect=lambda *args, **kwargs: SimpleNamespace(
+                    has_errors=False,
+                    has_warnings=False,
+                    unknown_tags=(),
+                ),
+            ),
+            patch("src.tina.main.setup_logic.apply_template_input_state"),
+            patch(
+                "src.tina.main.setup_logic.build_export_template_context_for_app",
+                return_value={},
+            ),
+            patch(
+                "src.tina.main.render_template",
+                side_effect=[
+                    SimpleNamespace(
+                        rendered="bundle_run",
+                        validation=SimpleNamespace(
+                            has_warnings=False,
+                            unknown_tags=(),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        rendered=str(tmp_path),
+                        validation=SimpleNamespace(
+                            has_warnings=False,
+                            unknown_tags=(),
+                        ),
+                    ),
+                ],
+            ),
+            patch.object(
+                TouchstoneExporter,
+                "export",
+                return_value=str(tmp_path / "bundle_run.s2p"),
+            ),
+            patch("src.tina.main.asyncio.get_event_loop") as get_loop,
+        ):
+            loop = MagicMock()
+
+            async def run_in_executor(_executor, func, *args):
+                if callable(func):
+                    return func(*args)
+                return None
+
+            loop.run_in_executor.side_effect = run_in_executor
+            get_loop.return_value = loop
+
+            await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+
+        app._write_image_export.assert_called_once_with(
+            file_path=str(tmp_path / "bundle_run.svg"),
+            plot_type="smith",
+            plot_params=["S21"],
+            dpi=150,
+            metadata_writer=ANY,
+        )
+        assert app.last_measurement is not None
+        assert app.last_measurement["svg_path"] == str(tmp_path / "bundle_run.svg")
+        app._notify_export_result.assert_any_call(
+            kind="SVG",
+            path=str(tmp_path / "bundle_run.svg"),
+            exported_items="S21",
+        )
 
 
 @pytest.mark.unit

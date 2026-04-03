@@ -46,6 +46,9 @@ from .export import (
     DEFAULT_TEMPLATE_TAGS,
     PATH_INVALID_CHARS,
     CsvExporter,
+    build_image_export_metadata,
+    embed_png_metadata,
+    embed_svg_metadata,
     render_template,
 )
 from .gui.components import (
@@ -560,6 +563,92 @@ class VNAApp(App):
             f"Loaded {Path(path).name} — {imported_items}",
             severity="information",
             timeout=4,
+        )
+
+    def _build_image_export_metadata(
+        self,
+        *,
+        exported_traces: list[str],
+        plot_type: str,
+        output_path: str,
+    ) -> dict[str, object]:
+        """Build image-export metadata including raw measurement payload for recovery."""
+        metadata = self._build_touchstone_export_metadata(
+            exported_traces=exported_traces,
+            output_path=output_path,
+        )
+        measurement_data = metadata.get("measurement", {})
+        measurement = (
+            dict(measurement_data) if isinstance(measurement_data, dict) else {}
+        )
+        measurement["plot_type"] = plot_type
+        measurement["raw_data"] = {
+            "freqs_hz": (
+                self.last_measurement["freqs"].tolist()
+                if self.last_measurement is not None
+                else []
+            ),
+            "sparams": {
+                name: {
+                    "magnitude_db": values[0].tolist(),
+                    "phase_deg": values[1].tolist(),
+                }
+                for name, values in (
+                    self.last_measurement.get("sparams", {}).items()
+                    if self.last_measurement is not None
+                    else []
+                )
+            },
+        }
+        metadata["measurement"] = measurement
+        return build_image_export_metadata(
+            notes_markdown=self.measurement_notes,
+            machine_settings=metadata,
+        ).machine_settings
+
+    def _write_image_export(
+        self,
+        *,
+        file_path: str,
+        plot_type: str,
+        plot_params: list[str],
+        dpi: int,
+        metadata_writer,
+    ) -> None:
+        """Render an image export, then embed TINA metadata into the saved file."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement data available for image export")
+
+        measurement = self.last_measurement
+
+        if plot_type == "smith":
+            create_smith_chart(
+                measurement["freqs"],
+                measurement["sparams"],
+                plot_params,
+                Path(file_path),
+                dpi=dpi,
+                colors=get_plot_colors(self.get_css_variables()),
+            )
+        else:
+            create_matplotlib_plot(
+                measurement["freqs"],
+                measurement["sparams"],
+                plot_params,
+                str(plot_type),
+                Path(file_path),
+                dpi=dpi,
+                colors=get_plot_colors(self.get_css_variables()),
+            )
+
+        metadata_writer(
+            file_path,
+            notes_markdown=str(measurement.get("notes", "")),
+            machine_settings=self._build_image_export_metadata(
+                exported_traces=plot_params,
+                plot_type=str(plot_type),
+                output_path=file_path,
+            ),
         )
 
     def _start_message_polling(self):
@@ -1165,6 +1254,46 @@ class VNAApp(App):
                     exported_items=", ".join(exported_trace_names),
                 )
 
+            png_path = None
+            if self.query_one("#check_export_bundle_png", Checkbox).value:
+                png_path = str(Path(export_folder) / f"{export_filename}.png")
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self._write_image_export(
+                        file_path=png_path,
+                        plot_type=str(self.settings.plot_type),
+                        plot_params=exported_trace_names,
+                        dpi=300,
+                        metadata_writer=embed_png_metadata,
+                    ),
+                )
+                self.log_message(f"Saved: {png_path}", "success")
+                self._notify_export_result(
+                    kind="PNG",
+                    path=png_path,
+                    exported_items=", ".join(exported_trace_names),
+                )
+
+            svg_path = None
+            if self.query_one("#check_export_bundle_svg", Checkbox).value:
+                svg_path = str(Path(export_folder) / f"{export_filename}.svg")
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self._write_image_export(
+                        file_path=svg_path,
+                        plot_type=str(self.settings.plot_type),
+                        plot_params=exported_trace_names,
+                        dpi=150,
+                        metadata_writer=embed_svg_metadata,
+                    ),
+                )
+                self.log_message(f"Saved: {svg_path}", "success")
+                self._notify_export_result(
+                    kind="SVG",
+                    path=svg_path,
+                    exported_items=", ".join(exported_trace_names),
+                )
+
             # Store measurement data with frequency unit
             freq_unit = self.query_one("#select_freq_unit", Select).value
             self.last_measurement = {
@@ -1173,6 +1302,8 @@ class VNAApp(App):
                 "output_path": output_path,
                 "touchstone_path": output_path,
                 "csv_path": csv_path,
+                "png_path": png_path,
+                "svg_path": svg_path,
                 "freq_unit": freq_unit,
                 "notes": self.measurement_notes,
             }
@@ -1513,28 +1644,20 @@ class VNAApp(App):
             if self.query_one("#check_plot_s22", Checkbox).value:
                 plot_params.append("S22")
 
-            # Generate plot
-            if plot_type == "smith":
-                create_smith_chart(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    Path(file_path),
-                    dpi=300,  # High DPI for export
-                    colors=get_plot_colors(self.get_css_variables()),
-                )
-            else:
-                create_matplotlib_plot(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    str(plot_type),
-                    Path(file_path),
-                    dpi=300,  # High DPI for export
-                    colors=get_plot_colors(self.get_css_variables()),
-                )
+            self._write_image_export(
+                file_path=file_path,
+                plot_type=str(plot_type),
+                plot_params=plot_params,
+                dpi=300,
+                metadata_writer=embed_png_metadata,
+            )
 
             self.log_message(f"Exported PNG: {file_path}", "success")
+            self._notify_export_result(
+                kind="PNG",
+                path=file_path,
+                exported_items=", ".join(plot_params),
+            )
 
         except Exception as e:
             self.log_message(f"PNG export failed: {e}", "error")
@@ -1584,28 +1707,20 @@ class VNAApp(App):
             if self.query_one("#check_plot_s22", Checkbox).value:
                 plot_params.append("S22")
 
-            # SVG export - matplotlib will detect .svg and use SVG backend
-            if plot_type == "smith":
-                create_smith_chart(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    Path(file_path),
-                    dpi=150,  # DPI doesn't matter much for vector
-                    colors=get_plot_colors(self.get_css_variables()),
-                )
-            else:
-                create_matplotlib_plot(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    str(plot_type),
-                    Path(file_path),
-                    dpi=150,  # DPI doesn't matter much for vector
-                    colors=get_plot_colors(self.get_css_variables()),
-                )
+            self._write_image_export(
+                file_path=file_path,
+                plot_type=str(plot_type),
+                plot_params=plot_params,
+                dpi=150,
+                metadata_writer=embed_svg_metadata,
+            )
 
             self.log_message(f"Exported SVG: {file_path}", "success")
+            self._notify_export_result(
+                kind="SVG",
+                path=file_path,
+                exported_items=", ".join(plot_params),
+            )
 
         except Exception as e:
             self.log_message(f"SVG export failed: {e}", "error")

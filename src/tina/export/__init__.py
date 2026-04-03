@@ -1,6 +1,12 @@
-"""Export helpers for filename/folder templating, validation, and CSV output."""
+"""Export helpers for filename/folder templating, validation, CSV, and image metadata."""
 
 from .csv import CsvExporter, CsvExportResult
+from .image_metadata import (
+    ImageExportMetadata,
+    build_image_export_metadata,
+    embed_png_metadata,
+    embed_svg_metadata,
+)
 from .templates import (
     SUPPORTED_SHORT_TAGS,
     RenderedTemplate,
@@ -26,6 +32,7 @@ __all__ = [
     "CsvExporter",
     "CsvExportResult",
     "DEFAULT_TEMPLATE_TAGS",
+    "ImageExportMetadata",
     "PATH_INVALID_CHARS",
     "RenderedTemplate",
     "RenderedTemplateResult",
@@ -36,6 +43,9 @@ __all__ = [
     "TemplateValidation",
     "TemplateValidationResult",
     "build_export_template_context",
+    "build_image_export_metadata",
+    "embed_png_metadata",
+    "embed_svg_metadata",
     "render_export_template",
     "render_template",
     "validate_export_template",
