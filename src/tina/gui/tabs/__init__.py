@@ -1,6 +1,6 @@
 """Tab composition and logic helpers for the TINA GUI."""
 
-from . import tools_logic
+from . import setup_logic, tools_logic
 from .log import compose_log_tab
 from .measurement import compose_measurement_tab
 from .setup import compose_setup_tab
@@ -31,5 +31,6 @@ __all__ = [
     "refresh_tools_plot",
     "run_tools_computation",
     "set_active_tool",
+    "setup_logic",
     "tools_logic",
 ]
