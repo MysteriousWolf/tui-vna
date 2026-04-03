@@ -88,13 +88,10 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
             freq_unit=settings.freq_unit, reference_impedance=50.0
         )
 
-        filename = None
-
         s2p_path = exporter.export(
             frequencies,
             export_params,
             settings.output_folder,
-            filename=filename,
             prefix=settings.filename_prefix,
         )
         print(f"S2P file saved: {s2p_path}")

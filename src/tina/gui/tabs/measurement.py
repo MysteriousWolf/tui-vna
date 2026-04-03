@@ -22,6 +22,20 @@ def compose_measurement_tab(app) -> ComposeResult:
                 flat=True,
             )
             yield Button(
+                "⇩\nSxP",
+                id="btn_export_touchstone",
+                variant="success",
+                disabled=True,
+                flat=True,
+            )
+            yield Button(
+                "≣\nCSV",
+                id="btn_export_csv",
+                variant="success",
+                disabled=True,
+                flat=True,
+            )
+            yield Button(
                 "◐\nPNG",
                 id="btn_export_png",
                 variant="success",

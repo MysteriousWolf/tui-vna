@@ -1,5 +1,6 @@
-"""Export helpers for filename/folder templating and validation."""
+"""Export helpers for filename/folder templating, validation, and CSV output."""
 
+from .csv import CsvExporter, CsvExportResult
 from .templates import (
     SUPPORTED_SHORT_TAGS,
     RenderedTemplate,
@@ -18,8 +19,12 @@ TemplateValidationResult = TemplateValidation
 RenderedTemplateResult = RenderedTemplate
 render_export_template = render_template
 validate_export_template = validate_template
+CSVExporter = CsvExporter
 
 __all__ = [
+    "CSVExporter",
+    "CsvExporter",
+    "CsvExportResult",
     "DEFAULT_TEMPLATE_TAGS",
     "PATH_INVALID_CHARS",
     "RenderedTemplate",

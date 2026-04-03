@@ -32,7 +32,7 @@ class TouchstoneExporter:
         frequencies_hz: np.ndarray,
         s_parameters: dict[str, tuple[np.ndarray, np.ndarray]],
         output_path: str,
-        filename: str = None,
+        filename: str | None = None,
         prefix: str = "measurement",
     ) -> str:
         """

@@ -193,5 +193,4 @@ def consume_worker_messages_until(
     return None
 
 
-# Make helper available to tests
-pytest.consume_worker_messages_until = consume_worker_messages_until
+# Make helper available to tests via import from this module.
