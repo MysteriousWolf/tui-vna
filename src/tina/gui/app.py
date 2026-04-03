@@ -1,6 +1,23 @@
-"""GUI application module - imports VNAApp from main.py."""
+"""Lazy GUI application entry points for the TINA Textual interface."""
 
-# For now, the main VNAApp class lives in main.py
-# This module will be populated as we refactor GUI code out of main.py
+from __future__ import annotations
 
-__all__ = []
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..main import VNAApp, main, run_gui
+else:
+    VNAApp = None
+    run_gui = None
+    main = None
+
+__all__ = ["VNAApp", "run_gui", "main"]
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve GUI app exports lazily to avoid circular imports with ``tina.main``."""
+    if name in __all__:
+        from .. import main as main_module
+
+        return getattr(main_module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
