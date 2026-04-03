@@ -103,7 +103,7 @@ class HelpScreen(ModalScreen):
     ($...$) is always converted to Unicode via pylatexenc.
     """
 
-    CSS_PATH = ["gui/styles/help.tcss"]
+    CSS_PATH = ["../styles/help.tcss"]
 
     BINDINGS = [
         ("escape", "close", "Close"),
