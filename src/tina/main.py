@@ -484,6 +484,84 @@ class VNAApp(App):
             # Silently fail during shutdown to avoid errors
             pass
 
+    def _build_touchstone_export_metadata(
+        self,
+        *,
+        exported_traces: list[str],
+        output_path: str | None = None,
+    ) -> dict[str, object]:
+        """Build machine-readable metadata for Touchstone export and recovery."""
+        metadata: dict[str, object] = {
+            "setup": {
+                "host": self.settings.last_host,
+                "port": self.settings.last_port,
+                "freq_unit": self.settings.freq_unit,
+                "start_freq_mhz": self.settings.start_freq_mhz,
+                "stop_freq_mhz": self.settings.stop_freq_mhz,
+                "sweep_points": self.settings.sweep_points,
+                "averaging_count": self.settings.averaging_count,
+                "set_freq_range": self.settings.set_freq_range,
+                "set_sweep_points": self.settings.set_sweep_points,
+                "enable_averaging": self.settings.enable_averaging,
+                "set_averaging_count": self.settings.set_averaging_count,
+                "output_folder": self.settings.output_folder,
+                "filename_template": self.settings.filename_template,
+                "folder_template": self.settings.folder_template,
+                "export_bundle_s2p": self.settings.export_bundle_s2p,
+                "export_bundle_csv": self.settings.export_bundle_csv,
+                "export_bundle_png": self.settings.export_bundle_png,
+                "export_bundle_svg": self.settings.export_bundle_svg,
+                "export_s11": self.settings.export_s11,
+                "export_s21": self.settings.export_s21,
+                "export_s12": self.settings.export_s12,
+                "export_s22": self.settings.export_s22,
+            },
+            "measurement": {
+                "plot_type": self.settings.plot_type,
+                "plot_s11": self.settings.plot_s11,
+                "plot_s21": self.settings.plot_s21,
+                "plot_s12": self.settings.plot_s12,
+                "plot_s22": self.settings.plot_s22,
+                "exported_traces": exported_traces,
+                "notes_present": bool(self.measurement_notes.strip()),
+            },
+            "tools": {
+                "trace": self.settings.tools_trace,
+                "plot_type": self.settings.tools_plot_type,
+                "active_tool": self.settings.tools_active_tool,
+            },
+        }
+        if output_path:
+            metadata["export"] = {"path": output_path}
+        return metadata
+
+    def _notify_export_result(
+        self,
+        *,
+        kind: str,
+        path: str,
+        exported_items: str,
+    ) -> None:
+        """Show a toaster notification summarizing a completed export."""
+        self.notify(
+            f"Saved {kind}: {Path(path).name} — {exported_items}",
+            severity="information",
+            timeout=4,
+        )
+
+    def _notify_import_result(
+        self,
+        *,
+        path: str,
+        imported_items: str,
+    ) -> None:
+        """Show a toaster notification summarizing a completed import."""
+        self.notify(
+            f"Loaded {Path(path).name} — {imported_items}",
+            severity="information",
+            timeout=4,
+        )
+
     def _start_message_polling(self):
         """Start polling worker thread for messages."""
         self._message_check_timer = self.set_interval(0.05, self._check_worker_messages)
@@ -1044,17 +1122,29 @@ class VNAApp(App):
             export_folder: str = output_folder
             export_filename: str = filename
             export_name: str = "measurement"
+            exported_trace_names = list(export_params.keys())
+            touchstone_metadata = self._build_touchstone_export_metadata(
+                exported_traces=exported_trace_names,
+            )
             output_path = await asyncio.get_event_loop().run_in_executor(
                 None,
-                exporter.export,
-                freqs,
-                export_params,
-                export_folder,
-                export_filename,
-                export_name,
+                lambda: exporter.export(
+                    freqs,
+                    export_params,
+                    export_folder,
+                    export_filename,
+                    export_name,
+                    notes_markdown=self.measurement_notes,
+                    metadata=touchstone_metadata,
+                ),
             )
 
             self.log_message(f"Saved: {output_path}", "success")
+            self._notify_export_result(
+                kind="Touchstone",
+                path=output_path,
+                exported_items=", ".join(exported_trace_names),
+            )
 
             csv_path = None
             if self.query_one("#check_export_bundle_csv", Checkbox).value:
@@ -1069,6 +1159,11 @@ class VNAApp(App):
                     export_name,
                 )
                 self.log_message(f"Saved: {csv_path}", "success")
+                self._notify_export_result(
+                    kind="CSV",
+                    path=csv_path,
+                    exported_items=", ".join(exported_trace_names),
+                )
 
             # Store measurement data with frequency unit
             freq_unit = self.query_one("#select_freq_unit", Select).value
@@ -1147,30 +1242,58 @@ class VNAApp(App):
             self.log_message(f"Importing: {file_path}", "progress")
 
             # Import file using TouchstoneExporter
-            freqs, sparams = TouchstoneExporter.import_file(file_path)
+            import_result = TouchstoneExporter.import_with_metadata(file_path)
+            freqs = import_result.frequencies_hz
+            sparams = import_result.s_parameters
 
             self.log_message(
                 f"Imported {len(freqs)} points, {len(sparams)} S-parameters", "success"
             )
 
-            # Store measurement data (imported files use MHz by default)
-            self.measurement_notes = ""
+            imported_metadata = import_result.metadata.machine_settings or {}
+            imported_setup = imported_metadata.get("setup", {})
+            imported_measurement = imported_metadata.get("measurement", {})
+
+            imported_freq_unit = "MHz"
+            if isinstance(imported_setup, dict):
+                imported_freq_unit_value = imported_setup.get("freq_unit")
+                if isinstance(imported_freq_unit_value, str):
+                    imported_freq_unit = imported_freq_unit_value
+
+            # Store measurement data and imported notes
+            self.measurement_notes = import_result.metadata.notes_markdown
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
                 "output_path": file_path,
-                "freq_unit": "MHz",  # Touchstone files typically use MHz
+                "touchstone_path": file_path,
+                "freq_unit": imported_freq_unit,
                 "notes": self.measurement_notes,
+                "metadata": imported_metadata,
             }
             self.last_output_path = file_path
             self._load_measurement_notes_into_editor()
             self._refresh_measurement_notes_preview()
 
-            # Update plot checkboxes based on available parameters
-            self.query_one("#check_plot_s11", Checkbox).value = "S11" in sparams
-            self.query_one("#check_plot_s21", Checkbox).value = "S21" in sparams
-            self.query_one("#check_plot_s12", Checkbox).value = "S12" in sparams
-            self.query_one("#check_plot_s22", Checkbox).value = "S22" in sparams
+            # Update plot checkboxes based on imported metadata when available
+            if isinstance(imported_measurement, dict):
+                self.query_one("#check_plot_s11", Checkbox).value = bool(
+                    imported_measurement.get("plot_s11", "S11" in sparams)
+                )
+                self.query_one("#check_plot_s21", Checkbox).value = bool(
+                    imported_measurement.get("plot_s21", "S21" in sparams)
+                )
+                self.query_one("#check_plot_s12", Checkbox).value = bool(
+                    imported_measurement.get("plot_s12", "S12" in sparams)
+                )
+                self.query_one("#check_plot_s22", Checkbox).value = bool(
+                    imported_measurement.get("plot_s22", "S22" in sparams)
+                )
+            else:
+                self.query_one("#check_plot_s11", Checkbox).value = "S11" in sparams
+                self.query_one("#check_plot_s21", Checkbox).value = "S21" in sparams
+                self.query_one("#check_plot_s12", Checkbox).value = "S12" in sparams
+                self.query_one("#check_plot_s22", Checkbox).value = "S22" in sparams
 
             # Display results
             asyncio.create_task(self._update_results(freqs, sparams, file_path))
@@ -1178,6 +1301,10 @@ class VNAApp(App):
             asyncio.create_task(self._refresh_tools_plot())
             self._run_tools_computation()
             self.call_after_refresh(self._rebuild_tools_params)
+            self._notify_import_result(
+                path=file_path,
+                imported_items=f"{len(sparams)} traces, {len(freqs)} points",
+            )
 
         except FileNotFoundError as e:
             self.log_message(str(e), "error")
@@ -1269,15 +1396,28 @@ class VNAApp(App):
             freq_unit_value = self.query_one("#select_freq_unit", Select).value
             freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
             exporter = TouchstoneExporter(freq_unit=freq_unit)
+            exported_trace_names = list(export_params.keys())
+            notes_markdown = str(self.last_measurement.get("notes", ""))
+            metadata = self._build_touchstone_export_metadata(
+                exported_traces=exported_trace_names,
+                output_path=file_path,
+            )
             exporter.export(
                 self.last_measurement["freqs"],
                 export_params,
                 str(Path(file_path).parent),
                 filename=Path(file_path).name,
+                notes_markdown=notes_markdown,
+                metadata=metadata,
             )
 
             self.last_measurement["touchstone_path"] = file_path
             self.log_message(f"Exported Touchstone (SxP): {file_path}", "success")
+            self._notify_export_result(
+                kind="Touchstone",
+                path=file_path,
+                exported_items=", ".join(exported_trace_names),
+            )
 
         except Exception as e:
             self.log_message(f"Touchstone export failed: {e}", "error")
@@ -1319,6 +1459,11 @@ class VNAApp(App):
 
             self.last_measurement["csv_path"] = file_path
             self.log_message(f"Exported CSV: {file_path}", "success")
+            self._notify_export_result(
+                kind="CSV",
+                path=file_path,
+                exported_items=", ".join(export_params.keys()),
+            )
 
         except Exception as e:
             self.log_message(f"CSV export failed: {e}", "error")
