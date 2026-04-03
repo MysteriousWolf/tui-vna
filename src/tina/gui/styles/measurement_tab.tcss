@@ -1,3 +1,67 @@
+#measurement_controls_row {
+    width: 100%;
+    height: auto;
+    max-height: 20;
+    align: left top;
+}
+
+#measurement_options_container {
+    width: 5fr;
+    margin-right: 1;
+    height: auto;
+}
+
+#measurement_notes_container {
+    width: 4fr;
+    min-width: 40;
+    height: auto;
+    padding: 0;
+}
+
+#measurement_notes_split {
+    width: 100%;
+    height: 1fr;
+}
+
+#measurement_notes_editor_wrap,
+#measurement_notes_preview_wrap {
+    width: 1fr;
+    height: 1fr;
+}
+
+#measurement_notes_editor_wrap {
+    width: 1fr;
+    height: 1fr;
+}
+
+#measurement_notes_separator {
+    width: 1;
+    height: 100%;
+    color: $panel;
+    background: transparent;
+    border: none;
+    margin: 0;
+    padding: 0;
+}
+
+#measurement_notes_preview_wrap {
+    width: 1fr;
+    height: 1fr;
+    padding: 0;
+    margin: 0;
+}
+
+.measurement-options-row {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+.measurement-options-row:last-child {
+    margin-bottom: 0;
+}
+
 .span-axis-group {
     width: 1fr;
     height: auto;
@@ -50,6 +114,36 @@
 #results_container {
     width: 100%;
     align: center top;
+}
+
+#measurement_notes_editor {
+    width: 1fr;
+    height: 1fr;
+    min-height: 12;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+}
+
+#measurement_notes_editor .text-area--gutter {
+    display: none;
+}
+
+#measurement_notes_editor .text-area--cursor-line {
+    background: transparent;
+}
+
+#measurement_notes_preview {
+    width: 1fr;
+    height: 1fr;
+    min-height: 12;
+    padding: 0;
+    margin: 0;
+    overflow-y: auto;
+    background: transparent;
+    content-align: center middle;
+    color: $text-muted;
 }
 
 #results_plot_placeholder {

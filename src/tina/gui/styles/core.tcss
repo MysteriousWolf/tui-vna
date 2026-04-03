@@ -1,5 +1,13 @@
 Screen {
     background: $surface;
+    scrollbar-size: 1 1;
+    scrollbar-background: $surface;
+    scrollbar-background-hover: $surface;
+    scrollbar-background-active: $surface;
+    scrollbar-color: $panel;
+    scrollbar-color-hover: $border;
+    scrollbar-color-active: $accent;
+    scrollbar-corner-color: $surface;
 }
 
 TabbedContent {

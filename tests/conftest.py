@@ -5,6 +5,7 @@ Provides mocks, fixtures, and helpers for testing without hardware.
 """
 
 import queue
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -194,3 +195,4 @@ def consume_worker_messages_until(
 
 
 # Make helper available to tests via import from this module.
+cast(Any, pytest).consume_worker_messages_until = consume_worker_messages_until
