@@ -7,7 +7,6 @@ import importlib.resources
 import os
 import platform
 import queue
-import re
 import subprocess
 import sys
 import tkinter as tk
@@ -18,7 +17,6 @@ from tkinter import filedialog
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-import skrf as rf
 from rich.markup import escape as rich_escape
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -61,6 +59,17 @@ from .gui.components import (
 )
 from .gui.modals import HelpScreen, build_update_screen, build_welcome_screen
 from .gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
+from .gui.plotting import (
+    DISTORTION_OVERLAY_LABELS,
+    DISTORTION_OVERLAY_STYLES,
+    calculate_plot_range_with_outlier_filtering,
+    create_matplotlib_plot,
+    create_smith_chart,
+    get_plot_colors,
+    get_terminal_font,
+    truncate_path_intelligently,
+    unwrap_phase,
+)
 from .gui.providers import CursorMarkerProvider, PlotBackendProvider, StatusPollProvider
 from .tools import DistortionTool, MeasureTool
 from .tools.distortion import COMPONENT_NAMES as _DISTORTION_COMPONENT_NAMES
@@ -79,874 +88,6 @@ from .worker import (
     ProgressUpdate,
     StatusResult,
 )
-
-# S-parameter to theme variable mapping.
-# Each S-param maps to a Textual CSS variable name.
-# These must be distinct colors across all built-in Textual themes.
-SPARAM_THEME_KEYS = {
-    "S11": "error",
-    "S21": "primary",
-    "S12": "accent",
-    "S22": "success",
-}
-
-# Fallback colors if theme variables are not available.
-SPARAM_FALLBACK_COLORS = {
-    "S11": "#ff6b6b",
-    "S21": "#4ecdc4",
-    "S12": "#ffe66d",
-    "S22": "#c77dff",
-}
-TRACE_COLOR_DEFAULT = "#ffffff"
-
-# Fixed hue-wheel palette for distortion overlays — guaranteed distinct regardless of theme.
-DISTORTION_OVERLAY_COLORS: list[str] = [
-    "#888888",  # n=0 constant  (~0° sat, neutral gray)
-    "#cc8800",  # n=1 linear    (~45°,  amber)
-    "#22aa44",  # n=2 parabolic (~135°, green)
-    "#cc2233",  # n=3 cubic     (~350°, red)
-    "#00aacc",  # n=4 quartic   (~190°, cyan)
-    "#7733cc",  # n=5 quintic   (~275°, violet)
-]
-_DISTORTION_OVERLAY_STYLES: list = [
-    "-",
-    "--",
-    "-.",
-    ":",
-    (0, (5, 2)),
-    (0, (3, 1, 1, 1)),
-]
-_DISTORTION_OVERLAY_LABELS: list[str] = [
-    "constant",
-    "linear",
-    "parabolic",
-    "cubic",
-    "quartic",
-    "quintic",
-]
-
-
-def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """
-    Convert a hex color string into an (R, G, B) tuple of integers.
-
-    Accepts strings in the forms "#RRGGBB", "RRGGBB", "#RGB", or "RGB". A leading '#' is optional;
-    3-digit shorthand is expanded to 6-digit form. Each returned component is in the range 0–255.
-
-    Parameters:
-        hex_color (str): Hex color string to convert.
-
-    Returns:
-        tuple[int, int, int]: RGB components as integers (red, green, blue).
-    """
-    h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
-def _get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
-    """
-    Constructs a plotting color scheme from Textual theme variables.
-
-    Parameters:
-        theme_vars (dict[str, str] | None): Mapping of Textual theme variable names to hex color strings.
-            When None, a set of sensible fallback colors is used.
-
-    Returns:
-        dict: A dictionary containing plotting colors and RGB tuples with the following keys:
-            - 'traces': dict[str, str] — hex color per S-parameter (e.g., 'S11', 'S21').
-            - 'traces_rgb': dict[str, tuple[int, int, int]] — (R, G, B) tuples for each S-parameter.
-            - 'fg': str — foreground hex color.
-            - 'bg': str — background hex color.
-            - 'surface': str — surface/panel hex color.
-            - 'grid': str — grid/secondary hex color.
-            - 'default_trace': str — fallback hex color for traces.
-            - 'distortion_overlays': list[str] — fixed hex colors for distortion overlay components.
-            - 'distortion_overlays_rgb': list[tuple[int, int, int]] — RGB tuples for distortion overlays.
-            - 'cursor1': str — hex color for cursor 1.
-            - 'cursor1_rgb': tuple[int, int, int] — RGB tuple for cursor 1.
-            - 'cursor2': str — hex color for cursor 2.
-            - 'cursor2_rgb': tuple[int, int, int] — RGB tuple for cursor 2.
-    """
-    if theme_vars:
-        traces = {}
-        for param, key in SPARAM_THEME_KEYS.items():
-            hex_val = theme_vars.get(key)
-            traces[param] = hex_val if hex_val else SPARAM_FALLBACK_COLORS[param]
-        fg = theme_vars.get("foreground", theme_vars.get("text", "#e6e1dc"))
-        bg = theme_vars.get("background", "#0e1419")
-        surface = theme_vars.get("surface", bg)
-        grid = theme_vars.get("panel", theme_vars.get("surface-darken-1", "#2d3640"))
-    else:
-        traces = dict(SPARAM_FALLBACK_COLORS)
-        fg = "#e6e1dc"
-        bg = "#0e1419"
-        surface = bg
-        grid = "#2d3640"
-
-    # Build RGB tuples for plotext (which doesn't support hex strings)
-    traces_rgb = {}
-    for param, hex_val in traces.items():
-        try:
-            traces_rgb[param] = _hex_to_rgb(hex_val)
-        except (ValueError, IndexError):
-            traces_rgb[param] = (255, 255, 255)
-
-    def _resolve_color(
-        theme_color: str | None, fallback: str
-    ) -> tuple[str, tuple[int, int, int]]:
-        """
-        Resolve a theme hex color string and return the chosen hex value together with its RGB tuple.
-
-        If `theme_color` is a valid hex color string it is used; otherwise `fallback` is used.
-
-        Parameters:
-            theme_color (str | None): Optional theme-provided color (e.g. "#RRGGBB" or "#RGB").
-            fallback (str): Fallback hex color string to use when `theme_color` is missing or invalid.
-
-        Returns:
-            tuple[str, tuple[int, int, int]]: (hex_color, (R, G, B)) where `hex_color` is the resolved hex string and `(R, G, B)` are integer channels in the range 0–255.
-        """
-        if theme_color:
-            try:
-                return theme_color, _hex_to_rgb(theme_color)
-            except (ValueError, IndexError):
-                pass
-        return fallback, _hex_to_rgb(fallback)
-
-    # Distortion overlay colors are fixed — guaranteed distinct across the hue wheel.
-    distortion_overlays = list(DISTORTION_OVERLAY_COLORS)
-    distortion_overlays_rgb = [_hex_to_rgb(h) for h in DISTORTION_OVERLAY_COLORS]
-
-    # Cursor colors: cursor1 = warning, cursor2 = primary (matches CSS .tools-cursor-1/2)
-    cursor1_hex, cursor1_rgb = _resolve_color(
-        theme_vars.get("warning") if theme_vars else None, "#ffa500"
-    )
-    cursor2_hex, cursor2_rgb = _resolve_color(
-        theme_vars.get("primary") if theme_vars else None, "#00d7ff"
-    )
-
-    return {
-        "traces": traces,
-        "traces_rgb": traces_rgb,
-        "fg": fg,
-        "bg": bg,
-        "surface": surface,
-        "grid": grid,
-        "default_trace": TRACE_COLOR_DEFAULT,
-        "distortion_overlays": distortion_overlays,
-        "distortion_overlays_rgb": distortion_overlays_rgb,
-        "cursor1": cursor1_hex,
-        "cursor1_rgb": cursor1_rgb,
-        "cursor2": cursor2_hex,
-        "cursor2_rgb": cursor2_rgb,
-    }
-
-
-def _get_terminal_font() -> tuple[str, float | None]:
-    """Detect the terminal's font family and size by parsing its config file.
-
-    Uses TERM_PROGRAM to identify the terminal emulator, then reads its
-    configuration file to extract the font family and size.
-    Falls back to ('monospace', None).
-
-    Supported terminals: Ghostty, Kitty, Alacritty, WezTerm, iTerm2,
-    Windows Terminal.
-    """
-    import json
-
-    import matplotlib.font_manager as fm
-
-    available_fonts = {f.name for f in fm.fontManager.ttflist}
-    term = os.environ.get("TERM_PROGRAM", "").lower()
-    home = Path.home()
-    font_name = None
-    font_size = None
-
-    def _parse_ghostty_config() -> None:
-        """Read font-family and font-size from the Ghostty config file if present."""
-        nonlocal font_name, font_size
-        cfg = home / ".config" / "ghostty" / "config"
-        if cfg.exists():
-            for line in cfg.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("#"):
-                    continue
-                if line.startswith("font-family") and not font_name:
-                    font_name = line.split("=", 1)[1].strip().strip("\"'")
-                elif line.startswith("font-size") and not font_size:
-                    try:
-                        font_size = float(line.split("=", 1)[1].strip().strip("\"'"))
-                    except ValueError:
-                        pass
-            # Ghostty default font-size is 13
-            if not font_size:
-                font_size = 13.0
-
-    try:
-        if "ghostty" in term:
-            _parse_ghostty_config()
-
-        elif "kitty" in term:
-            # ~/.config/kitty/kitty.conf:
-            #   font_family Font Name
-            #   font_size 12.0
-            cfg = home / ".config" / "kitty" / "kitty.conf"
-            if cfg.exists():
-                for line in cfg.read_text().splitlines():
-                    line = line.strip()
-                    if line.startswith("font_family") and not font_name:
-                        font_name = line.split(None, 1)[1].strip().strip("\"'")
-                    elif line.startswith("font_size") and not font_size:
-                        try:
-                            font_size = float(line.split(None, 1)[1].strip())
-                        except (ValueError, IndexError):
-                            pass
-
-        elif "alacritty" in term:
-            # ~/.config/alacritty/alacritty.toml:
-            #   [font] size = 12.0
-            #   [font.normal] family = "Font"
-            for name in ("alacritty.toml", "alacritty.yml"):
-                cfg = home / ".config" / "alacritty" / name
-                if cfg.exists():
-                    text = cfg.read_text()
-                    if name.endswith(".toml"):
-                        m = re.search(
-                            r'\[font\.normal\]\s*\n\s*family\s*=\s*["\']([^"\']+)',
-                            text,
-                        )
-                        if m:
-                            font_name = m.group(1)
-                        m = re.search(
-                            r"\[font\]\s*\n(?:.*\n)*?\s*size\s*=\s*([\d.]+)", text
-                        )
-                        if m:
-                            font_size = float(m.group(1))
-                    else:
-                        m = re.search(
-                            r'font:\s*\n\s*normal:\s*\n\s*family:\s*["\']?([^\n"\']+)',
-                            text,
-                        )
-                        if m:
-                            font_name = m.group(1).strip()
-                        m = re.search(r"font:\s*\n(?:.*\n)*?\s*size:\s*([\d.]+)", text)
-                        if m:
-                            font_size = float(m.group(1))
-                    if font_name:
-                        break
-
-        elif "wezterm" in term:
-            # ~/.config/wezterm/wezterm.lua or ~/.wezterm.lua:
-            #   font = wezterm.font("Font Name")
-            #   font_size = 12.0
-            for cfg in (
-                home / ".config" / "wezterm" / "wezterm.lua",
-                home / ".wezterm.lua",
-            ):
-                if cfg.exists():
-                    text = cfg.read_text()
-                    m = re.search(
-                        r'font\s*=\s*wezterm\.font\s*\(\s*["\']([^"\']+)', text
-                    )
-                    if m:
-                        font_name = m.group(1)
-                    m = re.search(r"font_size\s*=\s*([\d.]+)", text)
-                    if m:
-                        font_size = float(m.group(1))
-                    if font_name:
-                        break
-
-        elif "iterm" in term:
-            # macOS: defaults read com.googlecode.iterm2
-            if platform.system() == "Darwin":
-                result = subprocess.run(
-                    ["defaults", "read", "com.googlecode.iterm2", "Normal Font"],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                if result.returncode == 0:
-                    # Output like: "HackNF-Regular 13"
-                    raw = result.stdout.strip()
-                    parts = raw.rsplit(" ", 1)
-                    font_name = parts[0].replace("-Regular", "")
-                    if len(parts) == 2:
-                        try:
-                            font_size = float(parts[1])
-                        except ValueError:
-                            pass
-
-        elif platform.system() == "Windows":
-            # Windows Terminal: settings.json
-            local_app = os.environ.get("LOCALAPPDATA", "")
-            if local_app:
-                wt_dir = Path(local_app) / "Packages"
-                if wt_dir.exists():
-                    for pkg in wt_dir.iterdir():
-                        if "WindowsTerminal" in pkg.name:
-                            settings = pkg / "LocalState" / "settings.json"
-                            if settings.exists():
-                                data = json.loads(settings.read_text())
-                                profiles = data.get("profiles", {})
-                                defaults = profiles.get("defaults", {})
-                                font_cfg = defaults.get("font", {})
-                                face = font_cfg.get("face")
-                                if face:
-                                    font_name = face
-                                size = font_cfg.get("size")
-                                if size:
-                                    font_size = float(size)
-                                break
-
-        # Fallback: if TERM_PROGRAM didn't match any known terminal,
-        # try detecting from config files that exist on disk.
-        if not font_name:
-            _parse_ghostty_config()
-
-    except Exception:
-        pass
-
-    resolved_name = "monospace"
-    if font_name:
-        # Exact match first
-        if font_name in available_fonts:
-            resolved_name = font_name
-        else:
-            # Fuzzy match: try case-insensitive, then substring matching.
-            # Nerd Font variants often register under slightly different names
-            # (e.g. "SauceCodePro Nerd Font" vs "SauceCodePro Nerd Font Mono").
-            lower_name = font_name.lower()
-            for af in available_fonts:
-                if af.lower() == lower_name:
-                    resolved_name = af
-                    break
-            else:
-                # Substring: pick the shortest available name that contains
-                # the config name (or vice versa) to find the closest match
-                candidates = [
-                    af
-                    for af in available_fonts
-                    if lower_name in af.lower() or af.lower() in lower_name
-                ]
-                if candidates:
-                    resolved_name = min(candidates, key=len)
-
-    return resolved_name, font_size
-
-
-def _truncate_path_intelligently(path_str: str, max_width: int) -> str:
-    """
-    Intelligently truncate a file path to fit within a given width.
-
-    Strategy:
-    1. If path fits, return as-is
-    2. Progressively drop folders from the left (e.g., /a/b/c/file.txt -> .../b/c/file.txt -> .../c/file.txt)
-    3. Try showing only first letter of remaining folders
-    4. Try showing only filename (no folders)
-    5. Truncate filename with ellipsis
-
-    Args:
-        path_str: The full path string
-        max_width: Maximum character width
-
-    Returns:
-        Truncated path string
-    """
-    # Account for the 📁 emoji (2 chars) + space
-    effective_width = max_width - 2
-
-    if len(path_str) <= effective_width:
-        return path_str
-
-    path = Path(path_str)
-    parts = list(path.parts)
-
-    if len(parts) <= 1:
-        # Just a filename, truncate with ellipsis
-        filename = path.name
-        if len(filename) > effective_width and effective_width > 3:
-            return filename[: effective_width - 3] + "..."
-        return filename[:effective_width]
-
-    # Strategy 2: Progressively drop folders from the left
-    for i in range(1, len(parts) - 1):
-        truncated = ".../" + "/".join(parts[i:])
-        if len(truncated) <= effective_width:
-            return truncated
-
-    # Strategy 3: First letter of remaining folders + full filename
-    if len(parts) > 1:
-        abbreviated = "/".join(p[0] for p in parts[:-1]) + "/" + parts[-1]
-        if len(abbreviated) <= effective_width:
-            return abbreviated
-        # Try with ellipsis prefix
-        abbreviated_with_ellipsis = (
-            ".../"
-            + "/".join(p[0] for p in parts[1:-1])
-            + ("/" if len(parts) > 2 else "")
-            + parts[-1]
-        )
-        if len(abbreviated_with_ellipsis) <= effective_width:
-            return abbreviated_with_ellipsis
-
-    # Strategy 4: Just the filename
-    filename = path.name
-    if len(filename) <= effective_width:
-        return filename
-
-    # Strategy 5: Truncate filename with ellipsis
-    if effective_width > 3:
-        return filename[: effective_width - 3] + "..."
-    else:
-        return filename[:effective_width]
-
-
-def _calculate_plot_range_with_outlier_filtering(
-    data: np.ndarray, outlier_percentile: float = 1.0, safety_margin: float = 0.05
-) -> tuple[float, float]:
-    """
-    Calculate plot range while filtering out outliers.
-
-    This prevents extreme outliers from compressing the useful data range.
-
-    Args:
-        data: Array of values to analyze
-        outlier_percentile: Percentage of outliers to ignore on each end (default 2%)
-        safety_margin: Additional margin beyond filtered range (default 5%)
-
-    Returns:
-        Tuple of (min_value, max_value) for plot range
-    """
-    if len(data) == 0:
-        return (0.0, 1.0)
-
-    # Calculate percentiles to filter outliers
-    lower_percentile = outlier_percentile
-    upper_percentile = 100.0 - outlier_percentile
-
-    min_val = np.percentile(data, lower_percentile)
-    max_val = np.percentile(data, upper_percentile)
-
-    # Add safety margin
-    data_range = max_val - min_val
-    if data_range == 0:
-        # Handle case where all values are the same
-        data_range = abs(min_val) * 0.1 if min_val != 0 else 1.0
-
-    margin = data_range * safety_margin
-    min_val -= margin
-    max_val += margin
-
-    return (float(min_val), float(max_val))
-
-
-def _unwrap_phase(phase_deg: np.ndarray) -> np.ndarray:
-    """
-    Unwrap phase data to remove discontinuities.
-
-    Converts phase from [-180, 180] range to continuous values by removing
-    360-degree jumps.
-
-    Args:
-        phase_deg: Phase data in degrees
-
-    Returns:
-        Unwrapped phase in degrees
-    """
-    # Convert to radians for numpy's unwrap function
-    phase_rad = np.deg2rad(phase_deg)
-
-    # Unwrap phase (removes 2*pi discontinuities)
-    unwrapped_rad = np.unwrap(phase_rad)
-
-    # Convert back to degrees
-    unwrapped_deg = np.rad2deg(unwrapped_rad)
-
-    return unwrapped_deg
-
-
-def _create_matplotlib_plot(
-    freqs: np.ndarray,
-    sparams: dict,
-    plot_params: list,
-    plot_type: str,
-    output_path: Path,
-    dpi: int = 150,
-    pixel_width: int | None = None,
-    pixel_height: int | None = None,
-    transparent: bool = False,
-    render_scale: int = 1,
-    colors: dict | None = None,
-    y_min: float | None = None,
-    y_max: float | None = None,
-    font_family: str = "monospace",
-    font_size: float | None = None,
-) -> None:
-    """
-    Create a plot using matplotlib with dark theme matching terminal UI.
-
-    Args:
-        freqs: Frequency array in Hz
-        sparams: Dictionary of S-parameters {param_name: (magnitude_db, phase_deg)}
-        plot_params: List of parameters to plot (e.g., ['S11', 'S21'])
-        plot_type: 'magnitude', 'phase', or 'phase_raw'
-        output_path: Path to save the plot
-        dpi: DPI for the output image
-        pixel_width: Desired image width in pixels
-        pixel_height: Desired image height in pixels
-        transparent: If True, use transparent background
-    """
-
-    # Use the same font as the terminal for visual consistency
-    font_family, font_size = _get_terminal_font()
-    plt.rcParams["font.family"] = font_family
-    # Base font size: use detected terminal size, or default to 10pt.
-    # Divide by render_scale since we render at higher resolution and
-    # the image gets scaled down for display.
-    base_size = (font_size if font_size else 10.0) / render_scale
-
-    if colors is None:
-        colors = _get_plot_colors()
-    fg_color = colors["fg"]
-    grid_color = colors["grid"]
-
-    # Calculate figure size in inches from pixel dimensions
-    if pixel_width and pixel_height:
-        fig_width = pixel_width / dpi
-        fig_height = pixel_height / dpi
-    else:
-        fig_width = 10
-        fig_height = 5
-
-    # Create figure
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.patch.set_alpha(0.0 if transparent else 1.0)
-    if not transparent:
-        fig.patch.set_facecolor(colors["bg"])
-    ax.set_facecolor("none" if transparent else colors["bg"])
-
-    # Convert frequency to MHz
-    freq_mhz = freqs / 1e6
-
-    # Plot data based on plot type and collect all Y data for outlier filtering
-    all_y_data = []
-    for param in plot_params:
-        if plot_type == "magnitude":
-            data = sparams[param][0]  # Magnitude in dB
-            ylabel = "Magnitude (dB)"
-            title = "S-Parameter Magnitude"
-        elif plot_type == "phase":
-            data = _unwrap_phase(sparams[param][1])  # Unwrapped phase
-            ylabel = "Phase (degrees)"
-            title = "S-Parameter Phase (Unwrapped)"
-        else:  # phase_raw
-            data = sparams[param][1]  # Raw phase
-            ylabel = "Phase (degrees)"
-            title = "S-Parameter Phase (Raw)"
-
-        all_y_data.append(data)
-        ax.plot(
-            freq_mhz,
-            data,
-            label=param,
-            color=colors["traces"].get(param, colors["default_trace"]),
-            linewidth=1.5,
-        )
-
-    # Apply outlier filtering to Y-axis range or use provided limits
-    if all_y_data:
-        combined_data = np.concatenate(all_y_data)
-        if y_min is None or y_max is None:
-            # Auto-detect if not provided
-            auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
-                combined_data, outlier_percentile=1.0, safety_margin=0.05
-            )
-            final_y_min = y_min if y_min is not None else auto_y_min
-            final_y_max = y_max if y_max is not None else auto_y_max
-        else:
-            final_y_min = y_min
-            final_y_max = y_max
-        ax.set_ylim(final_y_min, final_y_max)
-
-    # Styling — scale font sizes relative to detected terminal font
-    ax.set_xlabel("Frequency (MHz)", color=fg_color, fontsize=base_size)
-    ax.set_ylabel(ylabel, color=fg_color, fontsize=base_size)
-    ax.set_title(title, color=fg_color, fontsize=base_size * 1.2, pad=15)
-    ax.tick_params(colors=fg_color, labelsize=base_size * 0.85)
-    ax.grid(True, alpha=0.2, color=grid_color, linestyle="-", linewidth=0.5)
-    legend = ax.legend(
-        edgecolor=grid_color,
-        labelcolor=fg_color,
-        fontsize=base_size * 0.9,
-    )
-    legend.get_frame().set_alpha(0.5 if transparent else 1.0)
-    if not transparent:
-        legend.get_frame().set_facecolor(colors["bg"])
-    else:
-        legend.get_frame().set_facecolor("none")
-
-    # Spine colors
-    for spine in ax.spines.values():
-        spine.set_edgecolor(grid_color)
-        spine.set_linewidth(1)
-
-    # Tight layout
-    plt.tight_layout()
-
-    # Save figure
-    plt.savefig(
-        output_path,
-        dpi=dpi,
-        facecolor=fig.get_facecolor(),
-        edgecolor="none",
-        bbox_inches="tight",
-        transparent=transparent,
-    )
-    plt.close(fig)
-
-
-def _create_smith_chart(
-    freqs: np.ndarray,
-    sparams: dict,
-    plot_params: list,
-    output_path: Path,
-    dpi: int = 150,
-    pixel_width: int | None = None,
-    pixel_height: int | None = None,
-    transparent: bool = False,
-    render_scale: int = 1,
-    colors: dict | None = None,
-) -> None:
-    """
-    Create a Smith chart using scikit-rf with dark theme matching terminal UI.
-
-    Args:
-        freqs: Frequency array in Hz
-        sparams: Dictionary of S-parameters {param_name: (magnitude_db, phase_deg)}
-        plot_params: List of parameters to plot (e.g., ['S11', 'S21'])
-        output_path: Path to save the plot
-        dpi: DPI for the output image
-        pixel_width: Desired image width in pixels
-        pixel_height: Desired image height in pixels
-        transparent: If True, use transparent background
-        render_scale: Scale factor for rendering (for high-DPI displays)
-        colors: Color scheme dictionary
-    """
-    # Use the same font as the terminal for visual consistency
-    font_family, font_size = _get_terminal_font()
-    plt.rcParams["font.family"] = font_family
-    base_size = (font_size if font_size else 10.0) / render_scale
-
-    if colors is None:
-        colors = _get_plot_colors()
-    fg_color = colors["fg"]
-    grid_color = colors["grid"]
-
-    # Calculate figure size in inches from pixel dimensions
-    # Smith charts MUST be square to display correctly
-    if pixel_width and pixel_height:
-        # Use the smaller dimension to create a square
-        square_size_px = min(pixel_width, pixel_height)
-        fig_width = square_size_px / dpi
-        fig_height = square_size_px / dpi
-    else:
-        fig_width = 10
-        fig_height = 10  # Square for Smith chart
-
-    # Create figure with regular axes (scikit-rf doesn't use matplotlib projection)
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.patch.set_alpha(0.0 if transparent else 1.0)
-    if not transparent:
-        fig.patch.set_facecolor(colors["bg"])
-    ax.set_facecolor("none" if transparent else colors["bg"])
-
-    # Force square aspect ratio for Smith chart
-    ax.set_aspect("equal")
-
-    # Draw Smith chart grid with labels
-    # chart_type: 'z' for impedance (default), 'y' for admittance
-    # ref_imm: reference impedance (50 ohms standard)
-    # draw_labels: show impedance/admittance values on grid
-    rf.plotting.smith(
-        ax=ax,
-        chart_type="z",  # Impedance Smith chart
-        draw_labels=True,  # Show grid labels
-        ref_imm=50.0,  # 50 ohm reference impedance
-        draw_vswr=None,  # Don't draw VSWR circles by default
-    )
-
-    # Mark special points on Smith chart
-    # Open circuit (Γ = 1+0j, at right edge)
-    # Short circuit (Γ = -1+0j, at left edge)
-    # Matched load (Γ = 0+0j, at center)
-    ax.scatter(
-        [1.0],
-        [0.0],
-        marker="o",
-        s=50,
-        color=grid_color,
-        edgecolor=fg_color,
-        linewidth=1.5,
-        zorder=10,
-        label="Open",
-    )
-    ax.scatter(
-        [-1.0],
-        [0.0],
-        marker="s",
-        s=50,
-        color=grid_color,
-        edgecolor=fg_color,
-        linewidth=1.5,
-        zorder=10,
-        label="Short",
-    )
-    ax.scatter(
-        [0.0],
-        [0.0],
-        marker="*",
-        s=100,
-        color="gold",
-        edgecolor=fg_color,
-        linewidth=1.5,
-        zorder=10,
-        label="Match (50Ω)",
-    )
-
-    # Plot each S-parameter on Smith chart
-    for param in plot_params:
-        # Convert magnitude (dB) and phase (degrees) to complex reflection coefficient
-        mag_db = sparams[param][0]
-        phase_deg = sparams[param][1]
-
-        # Convert dB to linear magnitude
-        mag_linear = 10 ** (mag_db / 20)
-
-        # Convert to complex reflection coefficient
-        phase_rad = np.deg2rad(phase_deg)
-        s_complex = mag_linear * np.exp(1j * phase_rad)
-
-        # Create Network object from S-parameter data
-        # scikit-rf expects frequency in Hz and S-parameters as complex arrays
-        network = rf.Network(
-            frequency=rf.Frequency.from_f(freqs, unit="Hz"),
-            s=s_complex.reshape(-1, 1, 1),  # Shape: (n_freqs, n_ports, n_ports)
-            name=param,
-        )
-
-        # Plot on Smith chart using scikit-rf's method
-        trace_color = colors["traces"].get(param, colors["default_trace"])
-        network.plot_s_smith(
-            m=0,
-            n=0,  # Plot S[0,0] (first port to first port)
-            ax=ax,
-            label=param,
-            color=trace_color,
-            linewidth=1.5,
-            draw_labels=False,  # Don't draw frequency labels (too cluttered)
-            show_legend=False,  # We'll create our own legend
-        )
-
-        # Add start/end frequency markers on the trace
-        # Start frequency marker (triangle pointing right)
-        ax.scatter(
-            s_complex[0].real,
-            s_complex[0].imag,
-            marker=">",
-            s=80,
-            color=trace_color,
-            edgecolor=fg_color,
-            linewidth=1,
-            zorder=15,
-        )
-        # End frequency marker (square)
-        ax.scatter(
-            s_complex[-1].real,
-            s_complex[-1].imag,
-            marker="s",
-            s=60,
-            color=trace_color,
-            edgecolor=fg_color,
-            linewidth=1,
-            zorder=15,
-        )
-
-        # Annotate start frequency
-        freq_start_mhz = freqs[0] / 1e6
-        freq_end_mhz = freqs[-1] / 1e6
-        ax.annotate(
-            f"{freq_start_mhz:.0f} MHz",
-            (s_complex[0].real, s_complex[0].imag),
-            xytext=(10, 10),
-            textcoords="offset points",
-            color=trace_color,
-            fontsize=base_size * 0.7,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=colors["bg"],
-                edgecolor=trace_color,
-                alpha=0.8,
-            ),
-        )
-        # Annotate end frequency
-        ax.annotate(
-            f"{freq_end_mhz:.0f} MHz",
-            (s_complex[-1].real, s_complex[-1].imag),
-            xytext=(-10, -10),
-            textcoords="offset points",
-            color=trace_color,
-            fontsize=base_size * 0.7,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=colors["bg"],
-                edgecolor=trace_color,
-                alpha=0.8,
-            ),
-        )
-
-    # Customize Smith chart appearance
-    ax.set_title("Smith Chart", color=fg_color, fontsize=base_size * 1.2, pad=15)
-
-    # Update Smith chart grid colors to match theme
-    # The Smith chart uses matplotlib collections for grid
-    for collection in ax.collections:
-        collection.set_edgecolor(grid_color)
-        collection.set_alpha(0.3)
-
-    # Update text colors
-    for text in ax.texts:
-        text.set_color(fg_color)
-        text.set_fontsize(base_size * 0.7)
-
-    # Create legend
-    if len(plot_params) > 0:
-        legend = ax.legend(
-            edgecolor=grid_color,
-            labelcolor=fg_color,
-            fontsize=base_size * 0.9,
-            loc="upper right",
-        )
-        legend.get_frame().set_alpha(0.5 if transparent else 1.0)
-        if not transparent:
-            legend.get_frame().set_facecolor(colors["bg"])
-        else:
-            legend.get_frame().set_facecolor("none")
-
-    # Tight layout
-    plt.tight_layout()
-
-    # Save figure
-    plt.savefig(
-        output_path,
-        dpi=dpi,
-        facecolor=fig.get_facecolor(),
-        edgecolor="none",
-        bbox_inches="tight",
-        transparent=transparent,
-    )
-    plt.close(fig)
 
 
 class VNAApp(App):
@@ -1040,7 +181,7 @@ class VNAApp(App):
         self.plot_temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Detect terminal and font once at boot
-        self.terminal_font, self.terminal_font_size = _get_terminal_font()
+        self.terminal_font, self.terminal_font_size = get_terminal_font()
         self.terminal_program = os.getenv("TERM_PROGRAM", "unknown")
 
     def compose(self) -> ComposeResult:
@@ -2846,23 +1987,23 @@ class VNAApp(App):
 
             # Generate plot
             if plot_type == "smith":
-                _create_smith_chart(
+                create_smith_chart(
                     self.last_measurement["freqs"],
                     self.last_measurement["sparams"],
                     plot_params,
                     Path(file_path),
                     dpi=300,  # High DPI for export
-                    colors=_get_plot_colors(self.get_css_variables()),
+                    colors=get_plot_colors(self.get_css_variables()),
                 )
             else:
-                _create_matplotlib_plot(
+                create_matplotlib_plot(
                     self.last_measurement["freqs"],
                     self.last_measurement["sparams"],
                     plot_params,
                     plot_type,
                     Path(file_path),
                     dpi=300,  # High DPI for export
-                    colors=_get_plot_colors(self.get_css_variables()),
+                    colors=get_plot_colors(self.get_css_variables()),
                 )
 
             self.log_message(f"Exported PNG: {file_path}", "success")
@@ -2917,23 +2058,23 @@ class VNAApp(App):
 
             # SVG export - matplotlib will detect .svg and use SVG backend
             if plot_type == "smith":
-                _create_smith_chart(
+                create_smith_chart(
                     self.last_measurement["freqs"],
                     self.last_measurement["sparams"],
                     plot_params,
                     Path(file_path),
                     dpi=150,  # DPI doesn't matter much for vector
-                    colors=_get_plot_colors(self.get_css_variables()),
+                    colors=get_plot_colors(self.get_css_variables()),
                 )
             else:
-                _create_matplotlib_plot(
+                create_matplotlib_plot(
                     self.last_measurement["freqs"],
                     self.last_measurement["sparams"],
                     plot_params,
                     plot_type,
                     Path(file_path),
                     dpi=150,  # DPI doesn't matter much for vector
-                    colors=_get_plot_colors(self.get_css_variables()),
+                    colors=get_plot_colors(self.get_css_variables()),
                 )
 
             self.log_message(f"Exported SVG: {file_path}", "success")
@@ -3309,7 +2450,7 @@ class VNAApp(App):
             y_label = "Magnitude (dB)"
             plot_title = f"{trace} Magnitude"
         elif plot_type == "phase":
-            data = _unwrap_phase(phase)
+            data = unwrap_phase(phase)
             y_label = "Phase (°)"
             plot_title = f"{trace} Phase (Unwrapped)"
         else:
@@ -3317,11 +2458,11 @@ class VNAApp(App):
             y_label = "Phase (°)"
             plot_title = f"{trace} Phase (Raw)"
 
-        auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
+        auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
             data, outlier_percentile=1.0, safety_margin=0.05
         )
         freq_axis = freqs / multiplier
-        plot_colors = _get_plot_colors(self.get_css_variables())
+        plot_colors = get_plot_colors(self.get_css_variables())
         trace_color_rgb = plot_colors["traces_rgb"].get(trace, (255, 255, 255))
         trace_color_hex = plot_colors["traces"].get(trace, "#ffffff")
 
@@ -3532,13 +2673,13 @@ class VNAApp(App):
                                 _f_band_axis,
                                 _cum_y,
                                 color=_ov_hex[_n],
-                                linestyle=_DISTORTION_OVERLAY_STYLES[_n],
+                                linestyle=DISTORTION_OVERLAY_STYLES[_n],
                                 linewidth=1.5,
-                                label=_DISTORTION_OVERLAY_LABELS[_n],
+                                label=DISTORTION_OVERLAY_LABELS[_n],
                                 zorder=4,
                             )
 
-            _font_family, _base_size = _get_terminal_font()
+            _font_family, _base_size = get_terminal_font()
             _base_size = _base_size or 10.0
             ax.set_xlabel(f"Frequency ({freq_unit})", color=fg, fontsize=_base_size)
             ax.set_ylabel(y_label, color=fg, fontsize=_base_size)
@@ -3642,7 +2783,7 @@ class VNAApp(App):
             if result.cursor1_value is None and result.cursor2_value is None:
                 display.update("[dim]Enter cursor frequencies above.[/dim]")
                 return
-            _pc = _get_plot_colors(self.get_css_variables())
+            _pc = get_plot_colors(self.get_css_variables())
             c1col = _pc["cursor1"]
             c2col = _pc["cursor2"]
             labelw, valw = 8, 9
@@ -3695,7 +2836,7 @@ class VNAApp(App):
             coeffs = ex["coeffs"]
             delta_y = ex["delta_y"]
             unit = result.unit_label
-            _ov_hex = _get_plot_colors(self.get_css_variables())["distortion_overlays"]
+            _ov_hex = get_plot_colors(self.get_css_variables())["distortion_overlays"]
             _comp_enabled = self._get_distortion_comp_enabled()
             nw, namew, valw = 1, 10, 9
             hdr = (
@@ -3731,7 +2872,7 @@ class VNAApp(App):
 
         If `self.last_output_path` is None the method returns immediately. The method measures the widths of
         the output container and the three export/show buttons (#btn_open_output, #btn_export_png, #btn_export_svg),
-        computes the remaining width, and uses `_truncate_path_intelligently` to produce a shortened path
+        computes the remaining width, and uses `truncate_path_intelligently` to produce a shortened path
         prefixed with "📁 ". If the computed available width is too small (<= 10) the label is not updated.
         The method ignores exceptions raised while querying widgets (e.g., widgets not yet mounted).
         """
@@ -3759,7 +2900,7 @@ class VNAApp(App):
             available_width = container.size.width - buttons_width - 4
 
             if available_width > 10:
-                truncated_path = _truncate_path_intelligently(
+                truncated_path = truncate_path_intelligently(
                     str(self.last_output_path), available_width
                 )
                 output_file_label.update(f"📁 {truncated_path}")
@@ -4070,7 +3211,7 @@ class VNAApp(App):
                 if plot_type == "magnitude":
                     param_data = filtered_sparams[param][0]
                 elif plot_type == "phase":
-                    param_data = _unwrap_phase(filtered_sparams[param][1])
+                    param_data = unwrap_phase(filtered_sparams[param][1])
                 else:  # phase_raw
                     param_data = filtered_sparams[param][1]
                 all_y_data.append(param_data)
@@ -4078,7 +3219,7 @@ class VNAApp(App):
             # Calculate auto limits
             if all_y_data and plot_type != "smith":
                 combined_data = np.concatenate(all_y_data)
-                auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
+                auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
                     combined_data, outlier_percentile=1.0, safety_margin=0.05
                 )
 
@@ -4127,7 +3268,7 @@ class VNAApp(App):
 
                 # Plot data as line with braille markers (use filtered data)
                 freq_mhz = filtered_freqs / 1e6
-                plot_colors = _get_plot_colors(self.get_css_variables())
+                plot_colors = get_plot_colors(self.get_css_variables())
 
                 # Calculate Y limits first (before plotting)
                 if all_y_data:
@@ -4143,7 +3284,7 @@ class VNAApp(App):
                     if plot_type == "magnitude":
                         param_data = filtered_sparams[param][0]
                     elif plot_type == "phase":
-                        param_data = _unwrap_phase(filtered_sparams[param][1])
+                        param_data = unwrap_phase(filtered_sparams[param][1])
                     else:  # phase_raw
                         param_data = filtered_sparams[param][1]
 
@@ -4208,11 +3349,11 @@ class VNAApp(App):
                 px_w = fixed_width_px
                 px_h = fixed_height_px
 
-                plot_colors = _get_plot_colors(self.get_css_variables())
+                plot_colors = get_plot_colors(self.get_css_variables())
 
                 # Use Smith chart plotter if smith type selected (use filtered data)
                 if plot_type == "smith":
-                    _create_smith_chart(
+                    create_smith_chart(
                         filtered_freqs,
                         filtered_sparams,
                         plot_params,
@@ -4225,7 +3366,7 @@ class VNAApp(App):
                         colors=plot_colors,
                     )
                 else:
-                    _create_matplotlib_plot(
+                    create_matplotlib_plot(
                         filtered_freqs,
                         filtered_sparams,
                         plot_params,
