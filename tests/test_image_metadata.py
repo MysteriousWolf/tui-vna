@@ -1,4 +1,4 @@
-"""Unit tests for PNG and SVG metadata embedding helpers."""
+"""Unit tests for PNG and SVG metadata embedding and reading helpers."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from src.tina.export.image_metadata import (
     build_image_export_metadata,
     embed_png_metadata,
     embed_svg_metadata,
+    read_png_metadata,
+    read_svg_metadata,
 )
 
 
@@ -249,3 +251,127 @@ class TestEmbedSvgMetadata:
                 notes_markdown="notes",
                 machine_settings=sample_machine_settings,
             )
+
+
+@pytest.mark.unit
+class TestReadPngMetadata:
+    """Tests for reading PNG metadata back from exported images."""
+
+    def test_read_png_metadata_returns_notes_and_machine_settings(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """PNG reader should recover both notes and YAML metadata."""
+        image_path = tmp_path / "plot.png"
+        Image.new("RGB", (16, 16), color="black").save(image_path)
+
+        embed_png_metadata(
+            image_path,
+            notes_markdown="# DUT notes\n- calibrated",
+            machine_settings=sample_machine_settings,
+        )
+
+        metadata = read_png_metadata(image_path)
+
+        assert isinstance(metadata, ImageExportMetadata)
+        assert metadata.notes_markdown == "# DUT notes\n- calibrated"
+        assert metadata.machine_settings["metadata_version"] == 1
+        assert metadata.machine_settings["setup"]["host"] == "192.168.1.50"
+        assert metadata.machine_settings["measurement"]["plot_type"] == "magnitude"
+
+    def test_read_png_metadata_returns_empty_payload_when_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """PNG reader should tolerate files without TINA metadata."""
+        image_path = tmp_path / "plain.png"
+        Image.new("RGB", (8, 8), color="white").save(image_path)
+
+        metadata = read_png_metadata(image_path)
+
+        assert metadata.notes_markdown == ""
+        assert metadata.machine_settings == {}
+
+
+@pytest.mark.unit
+class TestReadSvgMetadata:
+    """Tests for reading SVG metadata back from exported images."""
+
+    def test_read_svg_metadata_returns_notes_and_machine_settings(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """SVG reader should recover both notes and YAML metadata."""
+        image_path = tmp_path / "plot.svg"
+        image_path.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>',
+            encoding="utf-8",
+        )
+
+        embed_svg_metadata(
+            image_path,
+            notes_markdown="# DUT notes\nMeasured after warm-up.",
+            machine_settings=sample_machine_settings,
+        )
+
+        metadata = read_svg_metadata(image_path)
+
+        assert isinstance(metadata, ImageExportMetadata)
+        assert metadata.notes_markdown == "# DUT notes\nMeasured after warm-up."
+        assert metadata.machine_settings["metadata_version"] == 1
+        assert metadata.machine_settings["setup"]["host"] == "192.168.1.50"
+        assert metadata.machine_settings["measurement"]["plot_type"] == "magnitude"
+
+    def test_read_svg_metadata_returns_empty_payload_when_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """SVG reader should tolerate files without TINA metadata."""
+        image_path = tmp_path / "plain.svg"
+        image_path.write_text("<svg></svg>", encoding="utf-8")
+
+        metadata = read_svg_metadata(image_path)
+
+        assert metadata.notes_markdown == ""
+        assert metadata.machine_settings == {}
+
+
+@pytest.mark.unit
+class TestImageBasedImportPayloads:
+    """Tests for image-export metadata carrying recoverable measurement payloads."""
+
+    def test_png_metadata_can_carry_recoverable_measurement_payload(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """PNG metadata should preserve raw measurement payload for future import."""
+        image_path = tmp_path / "recoverable.png"
+        Image.new("RGB", (12, 12), color="navy").save(image_path)
+
+        embed_png_metadata(
+            image_path,
+            notes_markdown="notes",
+            machine_settings=sample_machine_settings,
+        )
+
+        metadata = read_png_metadata(image_path)
+
+        raw_data = metadata.machine_settings["measurement"]["raw_data"]
+        assert raw_data["freqs_hz"] == [1.0e6, 2.0e6, 3.0e6]
+        assert raw_data["sparams"]["S11"]["magnitude_db"] == [-10.0, -11.0, -12.0]
+        assert raw_data["sparams"]["S11"]["phase_deg"] == [5.0, 6.0, 7.0]
+
+    def test_svg_metadata_can_carry_recoverable_measurement_payload(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """SVG metadata should preserve raw measurement payload for future import."""
+        image_path = tmp_path / "recoverable.svg"
+        image_path.write_text("<svg></svg>", encoding="utf-8")
+
+        embed_svg_metadata(
+            image_path,
+            notes_markdown="notes",
+            machine_settings=sample_machine_settings,
+        )
+
+        metadata = read_svg_metadata(image_path)
+
+        raw_data = metadata.machine_settings["measurement"]["raw_data"]
+        assert raw_data["freqs_hz"] == [1.0e6, 2.0e6, 3.0e6]
+        assert raw_data["sparams"]["S11"]["magnitude_db"] == [-10.0, -11.0, -12.0]
+        assert raw_data["sparams"]["S11"]["phase_deg"] == [5.0, 6.0, 7.0]

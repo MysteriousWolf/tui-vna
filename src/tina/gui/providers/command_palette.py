@@ -3,9 +3,38 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import TYPE_CHECKING, Protocol, cast
 
 from textual.command import Hit, Hits, Provider
 from textual.widgets import Select
+
+if TYPE_CHECKING:
+    from tina.config.settings import AppSettings, SettingsManager
+
+
+class _VNAAppProtocol(Protocol):
+    """Protocol describing the VNA app attributes used by command providers."""
+
+    settings: AppSettings
+    settings_manager: SettingsManager
+    connected: bool
+    last_measurement: dict | None
+
+    def _start_status_polling(self, value: int) -> None:
+        """Restart status polling with the given interval."""
+
+    def _update_plot_type_options(self) -> None:
+        """Refresh plot type options after backend changes."""
+
+    def _update_results(self, freqs, sparams, output_path):
+        """Refresh the measurement results view."""
+
+    def _refresh_tools_plot(self) -> None:
+        """Refresh the tools plot."""
+
+    def action_import_setup_from_measurement_output(self) -> None:
+        """Import only setup state from a measurement output."""
+
 
 _POLL_OPTIONS = [
     ("Status poll: Off", 0),
@@ -26,6 +55,8 @@ _CURSOR_MARKER_OPTIONS = [
     ("Cursor marker: ✕ (cross)", "✕"),
     ("Cursor marker: ○ (circle)", "○"),
 ]
+
+_SETUP_IMPORT_COMMAND = "Import setup from measurement output"
 
 
 class StatusPollProvider(Provider):
@@ -56,9 +87,9 @@ class StatusPollProvider(Provider):
         Parameters:
             value: Poll interval in seconds.
         """
-        app = self.app
+        app = cast(_VNAAppProtocol, self.app)
         app.settings.status_poll_interval = value
-        app.query_one("#sb_poll_interval", Select).value = value
+        self.app.query_one("#sb_poll_interval", Select).value = value
         if app.connected:
             app._start_status_polling(value)
 
@@ -96,18 +127,18 @@ class PlotBackendProvider(Provider):
         Parameters:
             value: Plot backend identifier, e.g. "terminal" or "image".
         """
-        app = self.app
+        app = cast(_VNAAppProtocol, self.app)
         app.settings.plot_backend = value
         app._update_plot_type_options()
         app.settings_manager.save(app.settings)
         if app.last_measurement is not None:
-            app.call_after_refresh(
+            self.app.call_after_refresh(
                 app._update_results,
                 app.last_measurement["freqs"],
                 app.last_measurement["sparams"],
                 app.last_measurement["output_path"],
             )
-            app.call_after_refresh(app._refresh_tools_plot)
+            self.app.call_after_refresh(app._refresh_tools_plot)
 
 
 class CursorMarkerProvider(Provider):
@@ -148,8 +179,38 @@ class CursorMarkerProvider(Provider):
         Parameters:
             value: Cursor marker symbol to apply.
         """
-        app = self.app
+        app = cast(_VNAAppProtocol, self.app)
         app.settings.cursor_marker_style = value
         app.settings_manager.save(app.settings)
         if app.last_measurement is not None:
-            app.call_after_refresh(app._refresh_tools_plot)
+            self.app.call_after_refresh(app._refresh_tools_plot)
+
+
+class SetupImportProvider(Provider):
+    """Command palette provider for setup-only restoration from measurement outputs."""
+
+    async def discover(self) -> Hits:
+        """Yield the setup-only import command unconditionally."""
+        yield Hit(
+            1.0,
+            _SETUP_IMPORT_COMMAND,
+            self._apply,
+            help="Restore only the Setup tab from an exported measurement file",
+        )
+
+    async def search(self, query: str) -> Hits:
+        """Yield the setup-only import command when it matches *query*."""
+        matcher = self.matcher(query)
+        score = matcher.match(_SETUP_IMPORT_COMMAND)
+        if score > 0:
+            yield Hit(
+                score,
+                matcher.highlight(_SETUP_IMPORT_COMMAND),
+                self._apply,
+                help="Restore only the Setup tab from an exported measurement file",
+            )
+
+    def _apply(self) -> None:
+        """Trigger setup-only import from a measurement output file."""
+        app = cast(_VNAAppProtocol, self.app)
+        app.action_import_setup_from_measurement_output()
