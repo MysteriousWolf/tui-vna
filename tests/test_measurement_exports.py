@@ -9,8 +9,14 @@ from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
 import pytest
+from PIL import Image
+from textual.widgets import TabbedContent
 
-from src.tina.export import CsvExporter
+from src.tina.export import (
+    CsvExporter,
+    embed_png_metadata,
+    embed_svg_metadata,
+)
 from src.tina.main import VNAApp
 from src.tina.utils.touchstone import TouchstoneExporter
 
@@ -82,6 +88,8 @@ class _FakeApp:
         self.settings_manager = SimpleNamespace(
             touch_template_history=MagicMock(),
             save=MagicMock(),
+            add_host_to_history=MagicMock(),
+            add_port_to_history=MagicMock(),
         )
         self._plot_type = plot_type
         self._selected_params = set(selected_params)
@@ -127,6 +135,25 @@ class _FakeApp:
         self.call_after_refresh = MagicMock()
         self._update_results = MagicMock(return_value=None)
         self._write_image_export = MagicMock()
+        self._import_measurement_output = MagicMock()
+        self._restore_setup_from_metadata = cast(
+            Any,
+            lambda metadata: VNAApp._restore_setup_from_metadata(
+                cast(Any, self), metadata
+            ),
+        )
+        self._restore_measurement_view_from_metadata = cast(
+            Any,
+            lambda metadata, *, sparams=None: (
+                VNAApp._restore_measurement_view_from_metadata(
+                    cast(Any, self), metadata, sparams=sparams
+                )
+            ),
+        )
+        self._activate_measurement_tab = cast(
+            Any,
+            lambda: VNAApp._activate_measurement_tab(cast(Any, self)),
+        )
         self.set_progress = MagicMock()
         self.enable_buttons_for_state = MagicMock()
         self.reset_progress = MagicMock()
@@ -134,6 +161,7 @@ class _FakeApp:
         self._folder_template_validation = None
         self.sub_title = ""
         self.measuring = False
+        self._tabbed_content = SimpleNamespace(active="tab_measure")
 
     def query_one(self, selector: str, _widget_type=None):
         """Return minimal widget stubs for selectors used by export handlers."""
@@ -163,6 +191,8 @@ class _FakeApp:
             return _FakeCheckbox(False)
         if selector == "#check_export_bundle_svg":
             return _FakeCheckbox(False)
+        if selector == TabbedContent:
+            return self._tabbed_content
         raise AssertionError(f"Unexpected selector: {selector}")
 
 
@@ -852,21 +882,28 @@ class TestMeasurementImportNotifications:
 
         with (
             patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch("src.tina.main.filedialog.askopenfilename", return_value=chosen_path),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=chosen_path,
+            ),
             patch(
                 "src.tina.main.TouchstoneExporter.import_with_metadata",
                 return_value=import_result,
             ),
             patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
         ):
-            VNAApp.handle_import_results(cast(Any, app))
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=True,
+            )
 
         assert app.last_measurement is not None
         assert app.last_measurement["touchstone_path"] == chosen_path
         assert app.last_measurement["notes"] == "## Imported notes"
         app._notify_import_result.assert_called_once_with(
             path=chosen_path,
-            imported_items="2 traces, 3 points",
+            imported_items="2 traces, 3 points; restored Setup, Measurement",
         )
         app.log_message.assert_any_call("Imported 3 points, 2 S-parameters", "success")
 
@@ -895,16 +932,766 @@ class TestMeasurementImportNotifications:
 
         with (
             patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch("src.tina.main.filedialog.askopenfilename", return_value=chosen_path),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=chosen_path,
+            ),
             patch(
                 "src.tina.main.TouchstoneExporter.import_with_metadata",
                 return_value=import_result,
             ),
             patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
         ):
-            VNAApp.handle_import_results(cast(Any, app))
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=True,
+            )
 
         app._notify_import_result.assert_called_once_with(
             path=chosen_path,
-            imported_items="1 traces, 2 points",
+            imported_items="1 traces, 2 points; restored Setup, Measurement",
         )
+
+    def test_import_restores_setup_fields_from_metadata(self) -> None:
+        """Normal import should restore Setup tab widgets from metadata."""
+        app = _FakeApp(None)
+        chosen_path = "/tmp/restored_setup.s2p"
+        freqs = np.array([1.0e6, 2.0e6], dtype=float)
+        sparams = {
+            "S11": (
+                np.array([-10.0, -11.0], dtype=float),
+                np.array([5.0, 6.0], dtype=float),
+            ),
+        }
+
+        host_input = SimpleNamespace(value="")
+        port_input = SimpleNamespace(value="")
+        start_input = SimpleNamespace(value="")
+        stop_input = SimpleNamespace(value="")
+        points_input = SimpleNamespace(value="")
+        avg_input = SimpleNamespace(value="")
+        filename_input = SimpleNamespace(value="")
+        folder_input = SimpleNamespace(value="")
+        freq_unit_select = _FakeSelect("MHz")
+        plot_type_select = _FakeSelect("magnitude")
+        set_freq = _FakeCheckbox(False)
+        set_points = _FakeCheckbox(False)
+        averaging = _FakeCheckbox(False)
+        set_avg = _FakeCheckbox(False)
+        export_s11 = _FakeCheckbox(False)
+        export_s21 = _FakeCheckbox(False)
+        export_s12 = _FakeCheckbox(False)
+        export_s22 = _FakeCheckbox(False)
+        bundle_s2p = _FakeCheckbox(False)
+        bundle_csv = _FakeCheckbox(False)
+        bundle_png = _FakeCheckbox(False)
+        bundle_svg = _FakeCheckbox(False)
+        plot_s11 = _FakeCheckbox(False)
+        plot_s21 = _FakeCheckbox(False)
+        plot_s12 = _FakeCheckbox(False)
+        plot_s22 = _FakeCheckbox(False)
+
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#input_host": host_input,
+                "#input_port": port_input,
+                "#input_start_freq": start_input,
+                "#input_stop_freq": stop_input,
+                "#input_points": points_input,
+                "#input_avg_count": avg_input,
+                "#input_filename_prefix": filename_input,
+                "#input_output_folder": folder_input,
+                "#select_freq_unit": freq_unit_select,
+                "#select_plot_type": plot_type_select,
+                "#check_set_freq": set_freq,
+                "#check_set_points": set_points,
+                "#check_averaging": averaging,
+                "#check_set_avg_count": set_avg,
+                "#check_export_s11": export_s11,
+                "#check_export_s21": export_s21,
+                "#check_export_s12": export_s12,
+                "#check_export_s22": export_s22,
+                "#check_export_bundle_s2p": bundle_s2p,
+                "#check_export_bundle_csv": bundle_csv,
+                "#check_export_bundle_png": bundle_png,
+                "#check_export_bundle_svg": bundle_svg,
+                "#check_plot_s11": plot_s11,
+                "#check_plot_s21": plot_s21,
+                "#check_plot_s12": plot_s12,
+                "#check_plot_s22": plot_s22,
+                TabbedContent: app._tabbed_content,
+            }[selector],
+        )
+
+        import_result = SimpleNamespace(
+            frequencies_hz=freqs,
+            s_parameters=sparams,
+            metadata=SimpleNamespace(
+                notes_markdown="## Imported notes",
+                machine_settings={
+                    "setup": {
+                        "host": "192.168.1.50",
+                        "port": "inst0",
+                        "freq_unit": "GHz",
+                        "start_freq_mhz": 100.0,
+                        "stop_freq_mhz": 200.0,
+                        "sweep_points": 401,
+                        "averaging_count": 8,
+                        "set_freq_range": True,
+                        "set_sweep_points": True,
+                        "enable_averaging": True,
+                        "set_averaging_count": True,
+                        "output_folder": "exports/run42",
+                        "folder_template": "exports/by_host/{host}",
+                        "filename_template": "run42_{date}",
+                        "export_s11": True,
+                        "export_s21": False,
+                        "export_s12": False,
+                        "export_s22": True,
+                        "export_bundle_s2p": True,
+                        "export_bundle_csv": True,
+                        "export_bundle_png": True,
+                        "export_bundle_svg": False,
+                    },
+                    "measurement": {
+                        "plot_type": "phase",
+                        "plot_s11": True,
+                        "plot_s21": False,
+                        "plot_s12": False,
+                        "plot_s22": True,
+                    },
+                },
+            ),
+        )
+
+        fake_root = MagicMock()
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=chosen_path,
+            ),
+            patch(
+                "src.tina.main.TouchstoneExporter.import_with_metadata",
+                return_value=import_result,
+            ),
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=True,
+            )
+
+        assert host_input.value == "192.168.1.50"
+        assert port_input.value == "inst0"
+        assert freq_unit_select.value == "GHz"
+        assert start_input.value == "100.0"
+        assert stop_input.value == "200.0"
+        assert points_input.value == "401"
+        assert avg_input.value == "8"
+        assert filename_input.value == "run42_{date}"
+        assert folder_input.value == "exports/by_host/{host}"
+        assert set_freq.value is True
+        assert set_points.value is True
+        assert averaging.value is True
+        assert set_avg.value is True
+        assert export_s11.value is True
+        assert export_s21.value is False
+        assert export_s22.value is True
+        assert bundle_s2p.value is True
+        assert bundle_csv.value is True
+        assert bundle_png.value is True
+        assert bundle_svg.value is False
+        assert plot_type_select.value == "phase"
+        assert plot_s11.value is True
+        assert plot_s21.value is False
+        assert plot_s22.value is True
+        assert app._tabbed_content.active == "tab_results"
+
+    def test_setup_only_import_restores_setup_without_measurement_state(self) -> None:
+        """Setup-only import should restore Setup widgets without replacing measurement data."""
+        existing_measurement = {
+            "freqs": np.array([9.0e6], dtype=float),
+            "sparams": {},
+            "output_path": "measurement/existing.s2p",
+            "notes": "keep me",
+        }
+        app = _FakeApp(existing_measurement)
+        chosen_path = "/tmp/setup_only.s2p"
+
+        host_input = SimpleNamespace(value="")
+        port_input = SimpleNamespace(value="")
+        start_input = SimpleNamespace(value="")
+        stop_input = SimpleNamespace(value="")
+        points_input = SimpleNamespace(value="")
+        avg_input = SimpleNamespace(value="")
+        filename_input = SimpleNamespace(value="")
+        folder_input = SimpleNamespace(value="")
+        freq_unit_select = _FakeSelect("MHz")
+        plot_type_select = _FakeSelect("magnitude")
+        set_freq = _FakeCheckbox(False)
+        set_points = _FakeCheckbox(False)
+        averaging = _FakeCheckbox(False)
+        set_avg = _FakeCheckbox(False)
+        export_s11 = _FakeCheckbox(False)
+        export_s21 = _FakeCheckbox(False)
+        export_s12 = _FakeCheckbox(False)
+        export_s22 = _FakeCheckbox(False)
+        bundle_s2p = _FakeCheckbox(False)
+        bundle_csv = _FakeCheckbox(False)
+        bundle_png = _FakeCheckbox(False)
+        bundle_svg = _FakeCheckbox(False)
+
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#input_host": host_input,
+                "#input_port": port_input,
+                "#input_start_freq": start_input,
+                "#input_stop_freq": stop_input,
+                "#input_points": points_input,
+                "#input_avg_count": avg_input,
+                "#input_filename_prefix": filename_input,
+                "#input_output_folder": folder_input,
+                "#select_freq_unit": freq_unit_select,
+                "#select_plot_type": plot_type_select,
+                "#check_set_freq": set_freq,
+                "#check_set_points": set_points,
+                "#check_averaging": averaging,
+                "#check_set_avg_count": set_avg,
+                "#check_export_s11": export_s11,
+                "#check_export_s21": export_s21,
+                "#check_export_s12": export_s12,
+                "#check_export_s22": export_s22,
+                "#check_export_bundle_s2p": bundle_s2p,
+                "#check_export_bundle_csv": bundle_csv,
+                "#check_export_bundle_png": bundle_png,
+                "#check_export_bundle_svg": bundle_svg,
+                TabbedContent: app._tabbed_content,
+            }[selector],
+        )
+
+        import_result = SimpleNamespace(
+            frequencies_hz=np.array([1.0e6, 2.0e6], dtype=float),
+            s_parameters={
+                "S21": (
+                    np.array([-1.0, -2.0], dtype=float),
+                    np.array([45.0, 46.0], dtype=float),
+                )
+            },
+            metadata=SimpleNamespace(
+                notes_markdown="ignored",
+                machine_settings={
+                    "setup": {
+                        "host": "10.0.0.5",
+                        "port": "hislip0",
+                        "freq_unit": "kHz",
+                        "start_freq_mhz": 1.5,
+                        "stop_freq_mhz": 2.5,
+                        "sweep_points": 201,
+                        "averaging_count": 4,
+                        "set_freq_range": True,
+                        "set_sweep_points": False,
+                        "enable_averaging": True,
+                        "set_averaging_count": False,
+                        "output_folder": "restored/setup",
+                        "folder_template": "restored/templates/{date}",
+                        "filename_template": "setup_only_{time}",
+                        "export_s11": False,
+                        "export_s21": True,
+                        "export_s12": False,
+                        "export_s22": False,
+                        "export_bundle_s2p": True,
+                        "export_bundle_csv": False,
+                        "export_bundle_png": False,
+                        "export_bundle_svg": True,
+                    }
+                },
+            ),
+        )
+
+        fake_root = MagicMock()
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=chosen_path,
+            ),
+            patch(
+                "src.tina.main.TouchstoneExporter.import_with_metadata",
+                return_value=import_result,
+            ),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=False,
+            )
+
+        assert host_input.value == "10.0.0.5"
+        assert port_input.value == "hislip0"
+        assert freq_unit_select.value == "kHz"
+        assert start_input.value == "1.5"
+        assert stop_input.value == "2.5"
+        assert points_input.value == "201"
+        assert avg_input.value == "4"
+        assert filename_input.value == "setup_only_{time}"
+        assert folder_input.value == "restored/templates/{date}"
+        assert export_s21.value is True
+        assert bundle_s2p.value is True
+        assert bundle_svg.value is True
+        assert app.last_measurement is existing_measurement
+        app._notify_import_result.assert_not_called()
+        app.notify.assert_called_once_with(
+            "Loaded setup from setup_only.s2p — restored Setup",
+            severity="information",
+            timeout=4,
+        )
+
+
+@pytest.mark.integration
+class TestMeasurementOutputRoundTrips:
+    """End-to-end roundtrip tests for exported measurement outputs."""
+
+    def test_touchstone_export_then_import_restores_measurement_state(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Touchstone export should roundtrip through app import with metadata."""
+        export_path = TouchstoneExporter().export(
+            sample_measurement["freqs"],
+            {
+                "S11": sample_measurement["sparams"]["S11"],
+                "S21": sample_measurement["sparams"]["S21"],
+            },
+            str(tmp_path),
+            filename="roundtrip.s2p",
+            notes_markdown=sample_measurement["notes"],
+            metadata={
+                "setup": {
+                    "host": "192.168.1.50",
+                    "port": "inst0",
+                    "freq_unit": "MHz",
+                    "start_freq_mhz": 1.0,
+                    "stop_freq_mhz": 3.0,
+                    "sweep_points": 3,
+                    "averaging_count": 4,
+                    "set_freq_range": True,
+                    "set_sweep_points": True,
+                    "enable_averaging": True,
+                    "set_averaging_count": True,
+                    "output_folder": "exports/from_touchstone",
+                    "folder_template": "exports/{host}",
+                    "filename_template": "roundtrip_{date}",
+                    "export_s11": True,
+                    "export_s21": True,
+                    "export_s12": False,
+                    "export_s22": False,
+                    "export_bundle_s2p": True,
+                    "export_bundle_csv": False,
+                    "export_bundle_png": True,
+                    "export_bundle_svg": True,
+                },
+                "measurement": {
+                    "plot_type": "phase",
+                    "plot_s11": True,
+                    "plot_s21": True,
+                    "plot_s12": False,
+                    "plot_s22": False,
+                },
+            },
+        )
+
+        app = _FakeApp(None)
+
+        host_input = SimpleNamespace(value="")
+        port_input = SimpleNamespace(value="")
+        start_input = SimpleNamespace(value="")
+        stop_input = SimpleNamespace(value="")
+        points_input = SimpleNamespace(value="")
+        avg_input = SimpleNamespace(value="")
+        filename_input = SimpleNamespace(value="")
+        folder_input = SimpleNamespace(value="")
+        freq_unit_select = _FakeSelect("GHz")
+        plot_type_select = _FakeSelect("magnitude")
+        set_freq = _FakeCheckbox(False)
+        set_points = _FakeCheckbox(False)
+        averaging = _FakeCheckbox(False)
+        set_avg = _FakeCheckbox(False)
+        export_s11 = _FakeCheckbox(False)
+        export_s21 = _FakeCheckbox(False)
+        export_s12 = _FakeCheckbox(False)
+        export_s22 = _FakeCheckbox(False)
+        bundle_s2p = _FakeCheckbox(False)
+        bundle_csv = _FakeCheckbox(False)
+        bundle_png = _FakeCheckbox(False)
+        bundle_svg = _FakeCheckbox(False)
+        plot_s11 = _FakeCheckbox(False)
+        plot_s21 = _FakeCheckbox(False)
+        plot_s12 = _FakeCheckbox(False)
+        plot_s22 = _FakeCheckbox(False)
+
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#input_host": host_input,
+                "#input_port": port_input,
+                "#input_start_freq": start_input,
+                "#input_stop_freq": stop_input,
+                "#input_points": points_input,
+                "#input_avg_count": avg_input,
+                "#input_filename_prefix": filename_input,
+                "#input_output_folder": folder_input,
+                "#select_freq_unit": freq_unit_select,
+                "#select_plot_type": plot_type_select,
+                "#check_set_freq": set_freq,
+                "#check_set_points": set_points,
+                "#check_averaging": averaging,
+                "#check_set_avg_count": set_avg,
+                "#check_export_s11": export_s11,
+                "#check_export_s21": export_s21,
+                "#check_export_s12": export_s12,
+                "#check_export_s22": export_s22,
+                "#check_export_bundle_s2p": bundle_s2p,
+                "#check_export_bundle_csv": bundle_csv,
+                "#check_export_bundle_png": bundle_png,
+                "#check_export_bundle_svg": bundle_svg,
+                "#check_plot_s11": plot_s11,
+                "#check_plot_s21": plot_s21,
+                "#check_plot_s12": plot_s12,
+                "#check_plot_s22": plot_s22,
+                TabbedContent: app._tabbed_content,
+            }[selector],
+        )
+
+        fake_root = MagicMock()
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=export_path,
+            ),
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=True,
+            )
+
+        assert app.last_measurement is not None
+        np.testing.assert_allclose(
+            app.last_measurement["freqs"], sample_measurement["freqs"]
+        )
+        assert set(app.last_measurement["sparams"]) == {"S11", "S21"}
+        assert app.last_measurement["notes"] == sample_measurement["notes"]
+        assert app.last_measurement["touchstone_path"] == export_path
+        assert host_input.value == "192.168.1.50"
+        assert folder_input.value == "exports/{host}"
+        assert filename_input.value == "roundtrip_{date}"
+        assert plot_type_select.value == "phase"
+        assert plot_s11.value is True
+        assert plot_s21.value is True
+        assert app._tabbed_content.active == "tab_results"
+
+    def test_png_export_then_import_restores_measurement_state(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """PNG export metadata should roundtrip through app import."""
+        export_path = tmp_path / "roundtrip.png"
+        Image.new("RGB", (16, 16), color="black").save(export_path)
+
+        embed_png_metadata(
+            export_path,
+            notes_markdown=sample_measurement["notes"],
+            machine_settings={
+                "setup": {
+                    "host": "10.0.0.5",
+                    "port": "hislip0",
+                    "freq_unit": "MHz",
+                    "start_freq_mhz": 1.0,
+                    "stop_freq_mhz": 3.0,
+                    "sweep_points": 3,
+                    "averaging_count": 2,
+                    "set_freq_range": True,
+                    "set_sweep_points": True,
+                    "enable_averaging": False,
+                    "set_averaging_count": False,
+                    "output_folder": "exports/from_png",
+                    "folder_template": "exports/png/{date}",
+                    "filename_template": "png_roundtrip_{time}",
+                    "export_s11": True,
+                    "export_s21": True,
+                    "export_s12": False,
+                    "export_s22": False,
+                    "export_bundle_s2p": True,
+                    "export_bundle_csv": False,
+                    "export_bundle_png": True,
+                    "export_bundle_svg": False,
+                },
+                "measurement": {
+                    "plot_type": "magnitude",
+                    "plot_s11": True,
+                    "plot_s21": True,
+                    "plot_s12": False,
+                    "plot_s22": False,
+                    "raw_data": {
+                        "freqs_hz": sample_measurement["freqs"].tolist(),
+                        "sparams": {
+                            name: {
+                                "magnitude_db": values[0].tolist(),
+                                "phase_deg": values[1].tolist(),
+                            }
+                            for name, values in sample_measurement["sparams"].items()
+                        },
+                    },
+                },
+            },
+        )
+
+        app = _FakeApp(None)
+
+        host_input = SimpleNamespace(value="")
+        port_input = SimpleNamespace(value="")
+        start_input = SimpleNamespace(value="")
+        stop_input = SimpleNamespace(value="")
+        points_input = SimpleNamespace(value="")
+        avg_input = SimpleNamespace(value="")
+        filename_input = SimpleNamespace(value="")
+        folder_input = SimpleNamespace(value="")
+        freq_unit_select = _FakeSelect("GHz")
+        plot_type_select = _FakeSelect("phase")
+        set_freq = _FakeCheckbox(False)
+        set_points = _FakeCheckbox(False)
+        averaging = _FakeCheckbox(False)
+        set_avg = _FakeCheckbox(False)
+        export_s11 = _FakeCheckbox(False)
+        export_s21 = _FakeCheckbox(False)
+        export_s12 = _FakeCheckbox(False)
+        export_s22 = _FakeCheckbox(False)
+        bundle_s2p = _FakeCheckbox(False)
+        bundle_csv = _FakeCheckbox(False)
+        bundle_png = _FakeCheckbox(False)
+        bundle_svg = _FakeCheckbox(False)
+        plot_s11 = _FakeCheckbox(False)
+        plot_s21 = _FakeCheckbox(False)
+        plot_s12 = _FakeCheckbox(False)
+        plot_s22 = _FakeCheckbox(False)
+
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#input_host": host_input,
+                "#input_port": port_input,
+                "#input_start_freq": start_input,
+                "#input_stop_freq": stop_input,
+                "#input_points": points_input,
+                "#input_avg_count": avg_input,
+                "#input_filename_prefix": filename_input,
+                "#input_output_folder": folder_input,
+                "#select_freq_unit": freq_unit_select,
+                "#select_plot_type": plot_type_select,
+                "#check_set_freq": set_freq,
+                "#check_set_points": set_points,
+                "#check_averaging": averaging,
+                "#check_set_avg_count": set_avg,
+                "#check_export_s11": export_s11,
+                "#check_export_s21": export_s21,
+                "#check_export_s12": export_s12,
+                "#check_export_s22": export_s22,
+                "#check_export_bundle_s2p": bundle_s2p,
+                "#check_export_bundle_csv": bundle_csv,
+                "#check_export_bundle_png": bundle_png,
+                "#check_export_bundle_svg": bundle_svg,
+                "#check_plot_s11": plot_s11,
+                "#check_plot_s21": plot_s21,
+                "#check_plot_s12": plot_s12,
+                "#check_plot_s22": plot_s22,
+                TabbedContent: app._tabbed_content,
+            }[selector],
+        )
+
+        fake_root = MagicMock()
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=str(export_path),
+            ),
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=True,
+            )
+
+        assert app.last_measurement is not None
+        np.testing.assert_allclose(
+            app.last_measurement["freqs"], sample_measurement["freqs"]
+        )
+        assert set(app.last_measurement["sparams"]) == {"S11", "S21", "S12", "S22"}
+        assert app.last_measurement["png_path"] == str(export_path)
+        assert app.last_measurement["notes"] == sample_measurement["notes"]
+        assert host_input.value == "10.0.0.5"
+        assert folder_input.value == "exports/png/{date}"
+        assert filename_input.value == "png_roundtrip_{time}"
+        assert plot_type_select.value == "magnitude"
+        assert plot_s11.value is True
+        assert plot_s21.value is True
+        assert app._tabbed_content.active == "tab_results"
+
+    def test_svg_export_then_import_restores_measurement_state(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """SVG export metadata should roundtrip through app import."""
+        export_path = tmp_path / "roundtrip.svg"
+        export_path.write_text("<svg></svg>", encoding="utf-8")
+
+        embed_svg_metadata(
+            export_path,
+            notes_markdown=sample_measurement["notes"],
+            machine_settings={
+                "setup": {
+                    "host": "172.16.0.10",
+                    "port": "inst0",
+                    "freq_unit": "MHz",
+                    "start_freq_mhz": 1.0,
+                    "stop_freq_mhz": 3.0,
+                    "sweep_points": 3,
+                    "averaging_count": 1,
+                    "set_freq_range": True,
+                    "set_sweep_points": True,
+                    "enable_averaging": True,
+                    "set_averaging_count": False,
+                    "output_folder": "exports/from_svg",
+                    "folder_template": "exports/svg/{model}",
+                    "filename_template": "svg_roundtrip_{date}",
+                    "export_s11": False,
+                    "export_s21": True,
+                    "export_s12": False,
+                    "export_s22": True,
+                    "export_bundle_s2p": True,
+                    "export_bundle_csv": False,
+                    "export_bundle_png": False,
+                    "export_bundle_svg": True,
+                },
+                "measurement": {
+                    "plot_type": "phase",
+                    "plot_s11": False,
+                    "plot_s21": True,
+                    "plot_s12": False,
+                    "plot_s22": True,
+                    "raw_data": {
+                        "freqs_hz": sample_measurement["freqs"].tolist(),
+                        "sparams": {
+                            name: {
+                                "magnitude_db": values[0].tolist(),
+                                "phase_deg": values[1].tolist(),
+                            }
+                            for name, values in sample_measurement["sparams"].items()
+                        },
+                    },
+                },
+            },
+        )
+
+        app = _FakeApp(None)
+
+        host_input = SimpleNamespace(value="")
+        port_input = SimpleNamespace(value="")
+        start_input = SimpleNamespace(value="")
+        stop_input = SimpleNamespace(value="")
+        points_input = SimpleNamespace(value="")
+        avg_input = SimpleNamespace(value="")
+        filename_input = SimpleNamespace(value="")
+        folder_input = SimpleNamespace(value="")
+        freq_unit_select = _FakeSelect("GHz")
+        plot_type_select = _FakeSelect("magnitude")
+        set_freq = _FakeCheckbox(False)
+        set_points = _FakeCheckbox(False)
+        averaging = _FakeCheckbox(False)
+        set_avg = _FakeCheckbox(False)
+        export_s11 = _FakeCheckbox(False)
+        export_s21 = _FakeCheckbox(False)
+        export_s12 = _FakeCheckbox(False)
+        export_s22 = _FakeCheckbox(False)
+        bundle_s2p = _FakeCheckbox(False)
+        bundle_csv = _FakeCheckbox(False)
+        bundle_png = _FakeCheckbox(False)
+        bundle_svg = _FakeCheckbox(False)
+        plot_s11 = _FakeCheckbox(False)
+        plot_s21 = _FakeCheckbox(False)
+        plot_s12 = _FakeCheckbox(False)
+        plot_s22 = _FakeCheckbox(False)
+
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#input_host": host_input,
+                "#input_port": port_input,
+                "#input_start_freq": start_input,
+                "#input_stop_freq": stop_input,
+                "#input_points": points_input,
+                "#input_avg_count": avg_input,
+                "#input_filename_prefix": filename_input,
+                "#input_output_folder": folder_input,
+                "#select_freq_unit": freq_unit_select,
+                "#select_plot_type": plot_type_select,
+                "#check_set_freq": set_freq,
+                "#check_set_points": set_points,
+                "#check_averaging": averaging,
+                "#check_set_avg_count": set_avg,
+                "#check_export_s11": export_s11,
+                "#check_export_s21": export_s21,
+                "#check_export_s12": export_s12,
+                "#check_export_s22": export_s22,
+                "#check_export_bundle_s2p": bundle_s2p,
+                "#check_export_bundle_csv": bundle_csv,
+                "#check_export_bundle_png": bundle_png,
+                "#check_export_bundle_svg": bundle_svg,
+                "#check_plot_s11": plot_s11,
+                "#check_plot_s21": plot_s21,
+                "#check_plot_s12": plot_s12,
+                "#check_plot_s22": plot_s22,
+                TabbedContent: app._tabbed_content,
+            }[selector],
+        )
+
+        fake_root = MagicMock()
+
+        with (
+            patch("src.tina.main.tk.Tk", return_value=fake_root),
+            patch(
+                "src.tina.main.filedialog.askopenfilename",
+                return_value=str(export_path),
+            ),
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._import_measurement_output(
+                cast(Any, app),
+                restore_measurement=True,
+            )
+
+        assert app.last_measurement is not None
+        np.testing.assert_allclose(
+            app.last_measurement["freqs"], sample_measurement["freqs"]
+        )
+        assert set(app.last_measurement["sparams"]) == {"S11", "S21", "S12", "S22"}
+        assert app.last_measurement["svg_path"] == str(export_path)
+        assert app.last_measurement["notes"] == sample_measurement["notes"]
+        assert host_input.value == "172.16.0.10"
+        assert folder_input.value == "exports/svg/{model}"
+        assert filename_input.value == "svg_roundtrip_{date}"
+        assert plot_type_select.value == "phase"
+        assert plot_s11.value is False
+        assert plot_s21.value is True
+        assert plot_s22.value is True
+        assert app._tabbed_content.active == "tab_results"

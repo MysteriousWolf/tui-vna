@@ -1,7 +1,8 @@
-"""Helpers for embedding TINA export metadata into PNG and SVG files."""
+"""Helpers for embedding and reading TINA export metadata in PNG and SVG files."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -38,6 +39,15 @@ def _dump_yaml(data: dict[str, Any]) -> str:
     return buffer.getvalue().rstrip("\n")
 
 
+def _load_yaml(text: str) -> dict[str, Any]:
+    """Parse YAML text into a dictionary, returning an empty mapping on failure."""
+    try:
+        parsed = _yaml.load(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _normalize_machine_settings(
     machine_settings: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -60,6 +70,18 @@ def build_image_export_metadata(
     return ImageExportMetadata(
         notes_markdown=notes_markdown,
         machine_settings=_normalize_machine_settings(machine_settings),
+    )
+
+
+def read_png_metadata(image_path: str | Path) -> ImageExportMetadata:
+    """Read TINA notes and YAML metadata from a PNG file."""
+    path = Path(image_path)
+    with Image.open(path) as image:
+        notes_markdown = str(image.info.get(_PNG_NOTES_KEY, ""))
+        yaml_text = str(image.info.get(_PNG_METADATA_KEY, ""))
+    return ImageExportMetadata(
+        notes_markdown=notes_markdown,
+        machine_settings=_load_yaml(yaml_text),
     )
 
 
@@ -117,6 +139,61 @@ def _build_svg_comment_block(
     lines.append(f"{_SVG_METADATA_END} -->")
 
     return "\n".join(lines) + "\n"
+
+
+def _extract_svg_comment_block(
+    svg_text: str,
+    *,
+    begin_marker: str,
+    end_marker: str,
+) -> str:
+    """Extract one SVG metadata comment block by marker name."""
+    pattern = re.compile(
+        rf"<!--\s*{re.escape(begin_marker)}\n(.*?)\n{re.escape(end_marker)}\s*-->",
+        re.DOTALL,
+    )
+    match = pattern.search(svg_text)
+    return match.group(1) if match else ""
+
+
+def read_svg_metadata(image_path: str | Path) -> ImageExportMetadata:
+    """Read TINA notes and YAML metadata from an SVG file."""
+    path = Path(image_path)
+    svg_text = path.read_text(encoding="utf-8")
+
+    notes_block = _extract_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_NOTES_BEGIN,
+        end_marker=_SVG_NOTES_END,
+    )
+    metadata_block = _extract_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_METADATA_BEGIN,
+        end_marker=_SVG_METADATA_END,
+    )
+
+    notes_lines = notes_block.splitlines()
+    if (
+        notes_lines
+        and notes_lines[0] == "Raw markdown notes below. You may edit these manually."
+    ):
+        notes_lines = notes_lines[1:]
+
+    metadata_lines = [
+        line
+        for line in metadata_block.splitlines()
+        if line
+        not in {
+            "Machine-readable settings for TINA import/recovery.",
+            "You may edit the markdown notes block manually, but avoid changing",
+            "this machine settings block if reliable re-import is desired.",
+        }
+    ]
+
+    return ImageExportMetadata(
+        notes_markdown="\n".join(notes_lines).rstrip(),
+        machine_settings=_load_yaml("\n".join(metadata_lines)),
+    )
 
 
 def embed_svg_metadata(

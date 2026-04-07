@@ -49,6 +49,8 @@ from .export import (
     build_image_export_metadata,
     embed_png_metadata,
     embed_svg_metadata,
+    read_png_metadata,
+    read_svg_metadata,
     render_template,
 )
 from .gui.components import (
@@ -68,7 +70,12 @@ from .gui.plotting import (
     truncate_path_intelligently,
     unwrap_phase,
 )
-from .gui.providers import CursorMarkerProvider, PlotBackendProvider, StatusPollProvider
+from .gui.providers import (
+    CursorMarkerProvider,
+    PlotBackendProvider,
+    SetupImportProvider,
+    StatusPollProvider,
+)
 from .gui.tabs import (
     apply_tool_ui,
     compose_log_tab,
@@ -120,6 +127,7 @@ class VNAApp(App):
         StatusPollProvider,
         PlotBackendProvider,
         CursorMarkerProvider,
+        SetupImportProvider,
     }
 
     BINDINGS = [
@@ -650,6 +658,304 @@ class VNAApp(App):
                 output_path=file_path,
             ),
         )
+
+    def _restore_setup_from_metadata(self, metadata: dict[str, object]) -> None:
+        """Restore Setup tab widgets and persisted settings from imported metadata."""
+        setup = metadata.get("setup", {})
+        if not isinstance(setup, dict):
+            return
+
+        def _set_input(selector: str, value: object) -> None:
+            if value is not None:
+                self.query_one(selector, Input).value = str(value)
+
+        def _set_checkbox(selector: str, value: object) -> None:
+            if isinstance(value, bool):
+                self.query_one(selector, Checkbox).value = value
+
+        def _set_select(selector: str, value: object) -> None:
+            if value is not None:
+                self.query_one(selector, Select).value = value
+
+        _set_input("#input_host", setup.get("host"))
+        _set_input("#input_port", setup.get("port"))
+        _set_select("#select_freq_unit", setup.get("freq_unit"))
+        _set_input("#input_start_freq", setup.get("start_freq_mhz"))
+        _set_input("#input_stop_freq", setup.get("stop_freq_mhz"))
+        _set_input("#input_points", setup.get("sweep_points"))
+        _set_input("#input_avg_count", setup.get("averaging_count"))
+        _set_checkbox("#check_set_freq", setup.get("set_freq_range"))
+        _set_checkbox("#check_set_points", setup.get("set_sweep_points"))
+        _set_checkbox("#check_averaging", setup.get("enable_averaging"))
+        _set_checkbox("#check_set_avg_count", setup.get("set_averaging_count"))
+
+        folder_template = setup.get("folder_template")
+        output_folder = setup.get("output_folder")
+        restored_folder_template = (
+            folder_template if isinstance(folder_template, str) else output_folder
+        )
+        _set_input("#input_output_folder", restored_folder_template)
+
+        filename_template = setup.get("filename_template")
+        filename_prefix = setup.get("filename_prefix")
+        restored_filename_template = (
+            filename_template if isinstance(filename_template, str) else filename_prefix
+        )
+        _set_input("#input_filename_prefix", restored_filename_template)
+
+        _set_checkbox("#check_export_s11", setup.get("export_s11"))
+        _set_checkbox("#check_export_s21", setup.get("export_s21"))
+        _set_checkbox("#check_export_s12", setup.get("export_s12"))
+        _set_checkbox("#check_export_s22", setup.get("export_s22"))
+        _set_checkbox("#check_export_bundle_s2p", setup.get("export_bundle_s2p"))
+        _set_checkbox("#check_export_bundle_csv", setup.get("export_bundle_csv"))
+        _set_checkbox("#check_export_bundle_png", setup.get("export_bundle_png"))
+        _set_checkbox("#check_export_bundle_svg", setup.get("export_bundle_svg"))
+
+        host = setup.get("host")
+        if isinstance(host, str):
+            self.settings.last_host = host
+            self.settings_manager.add_host_to_history(host)
+
+        port = setup.get("port")
+        if isinstance(port, str):
+            self.settings.last_port = port
+            self.settings_manager.add_port_to_history(port)
+
+        freq_unit = setup.get("freq_unit")
+        if isinstance(freq_unit, str):
+            self.settings.freq_unit = freq_unit
+
+        start_freq = setup.get("start_freq_mhz")
+        if isinstance(start_freq, (int, float)):
+            self.settings.start_freq_mhz = float(start_freq)
+
+        stop_freq = setup.get("stop_freq_mhz")
+        if isinstance(stop_freq, (int, float)):
+            self.settings.stop_freq_mhz = float(stop_freq)
+
+        sweep_points = setup.get("sweep_points")
+        if isinstance(sweep_points, int):
+            self.settings.sweep_points = sweep_points
+
+        averaging_count = setup.get("averaging_count")
+        if isinstance(averaging_count, int):
+            self.settings.averaging_count = averaging_count
+
+        for key in (
+            "set_freq_range",
+            "set_sweep_points",
+            "enable_averaging",
+            "set_averaging_count",
+            "export_s11",
+            "export_s21",
+            "export_s12",
+            "export_s22",
+            "export_bundle_s2p",
+            "export_bundle_csv",
+            "export_bundle_png",
+            "export_bundle_svg",
+        ):
+            value = setup.get(key)
+            if isinstance(value, bool):
+                setattr(self.settings, key, value)
+
+        if isinstance(restored_folder_template, str):
+            self.settings.output_folder = restored_folder_template
+            self.settings.folder_template = restored_folder_template
+
+        if isinstance(restored_filename_template, str):
+            self.settings.filename_template = restored_filename_template
+            self.settings.filename_prefix = restored_filename_template
+
+        self.settings_manager.save(self.settings)
+        setup_logic.refresh_export_template_validation(self)
+
+    def _restore_measurement_view_from_metadata(
+        self,
+        metadata: dict[str, object],
+        *,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
+    ) -> None:
+        """Restore Measurement tab plot state from imported metadata."""
+        measurement = metadata.get("measurement", {})
+        if not isinstance(measurement, dict):
+            measurement = {}
+
+        plot_type = measurement.get("plot_type")
+        if isinstance(plot_type, str):
+            self.query_one("#select_plot_type", Select).value = plot_type
+            self.settings.plot_type = plot_type
+
+        available_params = sparams or {}
+        for key, selector, fallback_name in (
+            ("plot_s11", "#check_plot_s11", "S11"),
+            ("plot_s21", "#check_plot_s21", "S21"),
+            ("plot_s12", "#check_plot_s12", "S12"),
+            ("plot_s22", "#check_plot_s22", "S22"),
+        ):
+            value = measurement.get(key)
+            checkbox = self.query_one(selector, Checkbox)
+            if isinstance(value, bool):
+                checkbox.value = value
+                setattr(self.settings, key, value)
+            else:
+                fallback = fallback_name in available_params
+                checkbox.value = fallback
+                setattr(self.settings, key, fallback)
+
+    def _activate_measurement_tab(self) -> None:
+        """Switch the UI to the Measurement tab."""
+        self.query_one(TabbedContent).active = "tab_results"
+
+    def _import_measurement_output(
+        self,
+        *,
+        restore_measurement: bool,
+    ) -> None:
+        """Import metadata from a measurement output, optionally restoring measurement state."""
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            file_path = filedialog.askopenfilename(
+                title="Select Measurement Output",
+                filetypes=[
+                    ("Measurement Outputs", "*.s2p *.png *.svg"),
+                    ("Touchstone Files", "*.s2p"),
+                    ("PNG Images", "*.png"),
+                    ("SVG Images", "*.svg"),
+                    ("All Files", "*.*"),
+                ],
+                initialdir=(
+                    self.settings.output_folder if self.settings.output_folder else "."
+                ),
+            )
+        finally:
+            root.destroy()
+
+        if not file_path:
+            return
+
+        self.log_message(f"Importing: {file_path}", "progress")
+
+        suffix = Path(file_path).suffix.lower()
+        freqs: np.ndarray | None = None
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
+        notes_markdown = ""
+        imported_metadata: dict[str, object] = {}
+
+        if suffix == ".s2p":
+            import_result = TouchstoneExporter.import_with_metadata(file_path)
+            freqs = import_result.frequencies_hz
+            sparams = import_result.s_parameters
+            notes_markdown = import_result.metadata.notes_markdown
+            imported_metadata = import_result.metadata.machine_settings or {}
+        elif suffix == ".png":
+            image_metadata = read_png_metadata(file_path)
+            notes_markdown = image_metadata.notes_markdown
+            imported_metadata = image_metadata.machine_settings
+        elif suffix == ".svg":
+            image_metadata = read_svg_metadata(file_path)
+            notes_markdown = image_metadata.notes_markdown
+            imported_metadata = image_metadata.machine_settings
+        else:
+            raise ValueError(f"Unsupported measurement output format: {suffix}")
+
+        self._restore_setup_from_metadata(imported_metadata)
+
+        imported_measurement = imported_metadata.get("measurement", {})
+        restored_panels = ["Setup"]
+
+        if restore_measurement:
+            if freqs is None or sparams is None:
+                raw_data = (
+                    imported_measurement.get("raw_data", {})
+                    if isinstance(imported_measurement, dict)
+                    else {}
+                )
+                if not isinstance(raw_data, dict):
+                    raise ValueError(
+                        "Measurement output does not contain recoverable measurement data"
+                    )
+
+                freqs_hz = raw_data.get("freqs_hz", [])
+                raw_sparams = raw_data.get("sparams", {})
+                if not isinstance(freqs_hz, list) or not isinstance(raw_sparams, dict):
+                    raise ValueError(
+                        "Measurement output contains invalid recovery payload"
+                    )
+
+                freqs = np.array(freqs_hz, dtype=float)
+                sparams = {}
+                for name, values in raw_sparams.items():
+                    if not isinstance(name, str) or not isinstance(values, dict):
+                        continue
+                    magnitude_db = values.get("magnitude_db", [])
+                    phase_deg = values.get("phase_deg", [])
+                    if isinstance(magnitude_db, list) and isinstance(phase_deg, list):
+                        sparams[name] = (
+                            np.array(magnitude_db, dtype=float),
+                            np.array(phase_deg, dtype=float),
+                        )
+
+                if len(freqs) == 0 or not sparams:
+                    raise ValueError(
+                        "Measurement output does not contain recoverable measurement data"
+                    )
+
+            imported_freq_unit = "MHz"
+            imported_setup = imported_metadata.get("setup", {})
+            if isinstance(imported_setup, dict):
+                imported_freq_unit_value = imported_setup.get("freq_unit")
+                if isinstance(imported_freq_unit_value, str):
+                    imported_freq_unit = imported_freq_unit_value
+
+            self.measurement_notes = notes_markdown
+            self.last_measurement = {
+                "freqs": freqs,
+                "sparams": sparams,
+                "output_path": file_path,
+                "touchstone_path": file_path if suffix == ".s2p" else None,
+                "png_path": file_path if suffix == ".png" else None,
+                "svg_path": file_path if suffix == ".svg" else None,
+                "freq_unit": imported_freq_unit,
+                "notes": self.measurement_notes,
+                "metadata": imported_metadata,
+            }
+            self.last_output_path = file_path
+            self._load_measurement_notes_into_editor()
+            self._refresh_measurement_notes_preview()
+            self._restore_measurement_view_from_metadata(
+                imported_metadata,
+                sparams=sparams,
+            )
+            self._activate_measurement_tab()
+            restored_panels.append("Measurement")
+
+            self.log_message(
+                f"Imported {len(freqs)} points, {len(sparams)} S-parameters", "success"
+            )
+
+            asyncio.create_task(self._update_results(freqs, sparams, file_path))
+            asyncio.create_task(self._refresh_tools_plot())
+            self._run_tools_computation()
+            self.call_after_refresh(self._rebuild_tools_params)
+            self._notify_import_result(
+                path=file_path,
+                imported_items=(
+                    f"{len(sparams)} traces, {len(freqs)} points; "
+                    f"restored {', '.join(restored_panels)}"
+                ),
+            )
+        else:
+            self.log_message("Imported setup from measurement output", "success")
+            self.notify(
+                f"Loaded setup from {Path(file_path).name} — restored {', '.join(restored_panels)}",
+                severity="information",
+                timeout=4,
+            )
 
     def _start_message_polling(self):
         """Start polling worker thread for messages."""
@@ -1350,99 +1656,24 @@ class VNAApp(App):
     def handle_import_results(self) -> None:
         """Import and display results from a Touchstone file."""
         try:
-            # Use tkinter file dialog (hidden root window)
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-
-            file_path = filedialog.askopenfilename(
-                title="Select Touchstone File",
-                filetypes=[
-                    ("Touchstone Files", "*.s2p"),
-                    ("All Files", "*.*"),
-                ],
-                initialdir=(
-                    self.settings.output_folder if self.settings.output_folder else "."
-                ),
-            )
-            root.destroy()
-
-            if not file_path:
-                return  # User cancelled
-
-            self.log_message(f"Importing: {file_path}", "progress")
-
-            # Import file using TouchstoneExporter
-            import_result = TouchstoneExporter.import_with_metadata(file_path)
-            freqs = import_result.frequencies_hz
-            sparams = import_result.s_parameters
-
-            self.log_message(
-                f"Imported {len(freqs)} points, {len(sparams)} S-parameters", "success"
-            )
-
-            imported_metadata = import_result.metadata.machine_settings or {}
-            imported_setup = imported_metadata.get("setup", {})
-            imported_measurement = imported_metadata.get("measurement", {})
-
-            imported_freq_unit = "MHz"
-            if isinstance(imported_setup, dict):
-                imported_freq_unit_value = imported_setup.get("freq_unit")
-                if isinstance(imported_freq_unit_value, str):
-                    imported_freq_unit = imported_freq_unit_value
-
-            # Store measurement data and imported notes
-            self.measurement_notes = import_result.metadata.notes_markdown
-            self.last_measurement = {
-                "freqs": freqs,
-                "sparams": sparams,
-                "output_path": file_path,
-                "touchstone_path": file_path,
-                "freq_unit": imported_freq_unit,
-                "notes": self.measurement_notes,
-                "metadata": imported_metadata,
-            }
-            self.last_output_path = file_path
-            self._load_measurement_notes_into_editor()
-            self._refresh_measurement_notes_preview()
-
-            # Update plot checkboxes based on imported metadata when available
-            if isinstance(imported_measurement, dict):
-                self.query_one("#check_plot_s11", Checkbox).value = bool(
-                    imported_measurement.get("plot_s11", "S11" in sparams)
-                )
-                self.query_one("#check_plot_s21", Checkbox).value = bool(
-                    imported_measurement.get("plot_s21", "S21" in sparams)
-                )
-                self.query_one("#check_plot_s12", Checkbox).value = bool(
-                    imported_measurement.get("plot_s12", "S12" in sparams)
-                )
-                self.query_one("#check_plot_s22", Checkbox).value = bool(
-                    imported_measurement.get("plot_s22", "S22" in sparams)
-                )
-            else:
-                self.query_one("#check_plot_s11", Checkbox).value = "S11" in sparams
-                self.query_one("#check_plot_s21", Checkbox).value = "S21" in sparams
-                self.query_one("#check_plot_s12", Checkbox).value = "S12" in sparams
-                self.query_one("#check_plot_s22", Checkbox).value = "S22" in sparams
-
-            # Display results
-            asyncio.create_task(self._update_results(freqs, sparams, file_path))
-            # Also refresh tools tab with imported data
-            asyncio.create_task(self._refresh_tools_plot())
-            self._run_tools_computation()
-            self.call_after_refresh(self._rebuild_tools_params)
-            self._notify_import_result(
-                path=file_path,
-                imported_items=f"{len(sparams)} traces, {len(freqs)} points",
-            )
-
+            self._import_measurement_output(restore_measurement=True)
         except FileNotFoundError as e:
             self.log_message(str(e), "error")
         except ValueError as e:
             self.log_message(f"Invalid file format: {e}", "error")
         except Exception as e:
             self.log_message(f"Import failed: {e}", "error")
+
+    def action_import_setup_from_measurement_output(self) -> None:
+        """Restore only the Setup tab from an exported measurement file."""
+        try:
+            self._import_measurement_output(restore_measurement=False)
+        except FileNotFoundError as e:
+            self.log_message(str(e), "error")
+        except ValueError as e:
+            self.log_message(f"Invalid file format: {e}", "error")
+        except Exception as e:
+            self.log_message(f"Setup import failed: {e}", "error")
 
     def _get_selected_export_params(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """Return the currently selected S-parameters available in cached data."""

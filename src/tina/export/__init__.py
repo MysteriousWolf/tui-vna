@@ -6,6 +6,8 @@ from .image_metadata import (
     build_image_export_metadata,
     embed_png_metadata,
     embed_svg_metadata,
+    read_png_metadata,
+    read_svg_metadata,
 )
 from .templates import (
     SUPPORTED_SHORT_TAGS,
@@ -46,6 +48,8 @@ __all__ = [
     "build_image_export_metadata",
     "embed_png_metadata",
     "embed_svg_metadata",
+    "read_png_metadata",
+    "read_svg_metadata",
     "render_export_template",
     "render_template",
     "validate_export_template",
