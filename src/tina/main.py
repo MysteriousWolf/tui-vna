@@ -177,6 +177,7 @@ class VNAApp(App):
         self._debug_scpi = self.settings.debug_scpi
         self._filename_template_validation = None
         self._folder_template_validation = None
+        self._minimal_export_mode = False
 
         # Tools tab state
         self._tools_cursor1_hz: float | None = None
@@ -257,6 +258,7 @@ class VNAApp(App):
         self.call_after_refresh(setup_logic.refresh_export_template_validation, self)
         self.call_after_refresh(self._load_measurement_notes_into_editor)
         self.call_after_refresh(self._refresh_measurement_notes_preview)
+        self.call_after_refresh(self._refresh_export_button_labels)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
         # Initialize plot-type options based on backend
@@ -614,6 +616,15 @@ class VNAApp(App):
             machine_settings=metadata,
         ).machine_settings
 
+    def _is_minimal_export_enabled(self) -> bool:
+        """Return whether minimal export mode is enabled in the Measurement tab."""
+        return self._minimal_export_mode
+
+    @staticmethod
+    def _minimal_export_suffix(minimal_export: bool) -> str:
+        """Return a short label suffix for minimal export notifications."""
+        return " (minimal)" if minimal_export else ""
+
     def _write_image_export(
         self,
         *,
@@ -622,8 +633,9 @@ class VNAApp(App):
         plot_params: list[str],
         dpi: int,
         metadata_writer,
+        minimal_export: bool = False,
     ) -> None:
-        """Render an image export, then embed TINA metadata into the saved file."""
+        """Render an image export and optionally embed notes plus recovery metadata."""
         if self.last_measurement is None:
             raise ValueError("No measurement data available for image export")
 
@@ -648,6 +660,9 @@ class VNAApp(App):
                 dpi=dpi,
                 colors=get_plot_colors(self.get_css_variables()),
             )
+
+        if minimal_export:
+            return
 
         metadata_writer(
             file_path,
@@ -1087,6 +1102,13 @@ class VNAApp(App):
         del event
         setup_logic.handle_export_template_change(self)
 
+    @on(Button.Pressed, "#check_minimal_export")
+    def on_minimal_export_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Toggle minimal export mode from the Measurement tab button."""
+        del event
+        self._minimal_export_mode = not self._minimal_export_mode
+        self._refresh_export_button_labels()
+
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """
@@ -1153,6 +1175,7 @@ class VNAApp(App):
         self.query_one("#btn_connect", Button).disabled = False
         self.query_one("#btn_read_params", Button).disabled = not self.connected
         self.query_one("#btn_measure", Button).disabled = not self.connected
+        self._refresh_export_button_labels()
 
     def update_connect_button(self):
         """
@@ -1168,6 +1191,29 @@ class VNAApp(App):
         else:
             btn.label = "📡\nConnect"
             btn.variant = "primary"
+
+    def _refresh_export_button_labels(self) -> None:
+        """Update Measurement-tab export controls to reflect minimal export mode."""
+        toggle_button = self.query_one("#check_minimal_export", Button)
+        minimal_export = self._minimal_export_mode
+        variant = "warning" if minimal_export else "success"
+
+        toggle_button.variant = "warning" if minimal_export else "default"
+        toggle_button.label = "▣\nMin" if minimal_export else "▢\nMin"
+        toggle_button.set_class(minimal_export, "-minimal-export")
+
+        show_button = self.query_one("#btn_open_output", Button)
+        show_button.styles.margin = (0, 0, 0, 0)
+
+        for selector in (
+            "#btn_export_touchstone",
+            "#btn_export_csv",
+            "#btn_export_png",
+            "#btn_export_svg",
+        ):
+            button = self.query_one(selector, Button)
+            button.variant = variant
+            button.set_class(minimal_export, "-minimal-export")
 
     def _show_help_document(self, filename: str, title: str) -> None:
         """Load a markdown help document from package resources and show it."""
@@ -1518,8 +1564,13 @@ class VNAApp(App):
             export_filename: str = filename
             export_name: str = "measurement"
             exported_trace_names = list(export_params.keys())
-            touchstone_metadata = self._build_touchstone_export_metadata(
-                exported_traces=exported_trace_names,
+            minimal_export = self._is_minimal_export_enabled()
+            touchstone_metadata = (
+                None
+                if minimal_export
+                else self._build_touchstone_export_metadata(
+                    exported_traces=exported_trace_names,
+                )
             )
             output_path = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -1529,14 +1580,17 @@ class VNAApp(App):
                     export_folder,
                     export_filename,
                     export_name,
-                    notes_markdown=self.measurement_notes,
+                    notes_markdown="" if minimal_export else self.measurement_notes,
                     metadata=touchstone_metadata,
                 ),
             )
 
-            self.log_message(f"Saved: {output_path}", "success")
+            self.log_message(
+                f"Saved{self._minimal_export_suffix(minimal_export)}: {output_path}",
+                "success",
+            )
             self._notify_export_result(
-                kind="Touchstone",
+                kind=f"Touchstone{self._minimal_export_suffix(minimal_export)}",
                 path=output_path,
                 exported_items=", ".join(exported_trace_names),
             )
@@ -1571,11 +1625,15 @@ class VNAApp(App):
                         plot_params=exported_trace_names,
                         dpi=300,
                         metadata_writer=embed_png_metadata,
+                        minimal_export=minimal_export,
                     ),
                 )
-                self.log_message(f"Saved: {png_path}", "success")
+                self.log_message(
+                    f"Saved{self._minimal_export_suffix(minimal_export)}: {png_path}",
+                    "success",
+                )
                 self._notify_export_result(
-                    kind="PNG",
+                    kind=f"PNG{self._minimal_export_suffix(minimal_export)}",
                     path=png_path,
                     exported_items=", ".join(exported_trace_names),
                 )
@@ -1591,11 +1649,15 @@ class VNAApp(App):
                         plot_params=exported_trace_names,
                         dpi=150,
                         metadata_writer=embed_svg_metadata,
+                        minimal_export=minimal_export,
                     ),
                 )
-                self.log_message(f"Saved: {svg_path}", "success")
+                self.log_message(
+                    f"Saved{self._minimal_export_suffix(minimal_export)}: {svg_path}",
+                    "success",
+                )
                 self._notify_export_result(
-                    kind="SVG",
+                    kind=f"SVG{self._minimal_export_suffix(minimal_export)}",
                     path=svg_path,
                     exported_items=", ".join(exported_trace_names),
                 )
@@ -1727,7 +1789,7 @@ class VNAApp(App):
             root.destroy()
 
     @on(Button.Pressed, "#btn_export_touchstone")
-    def handle_export_touchstone(self) -> None:
+    def handle_export_touchstone(self, event: Button.Pressed | None = None) -> None:
         """Export current measurement as a Touchstone file."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
@@ -1759,10 +1821,17 @@ class VNAApp(App):
             freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
             exporter = TouchstoneExporter(freq_unit=freq_unit)
             exported_trace_names = list(export_params.keys())
-            notes_markdown = str(self.last_measurement.get("notes", ""))
-            metadata = self._build_touchstone_export_metadata(
-                exported_traces=exported_trace_names,
-                output_path=file_path,
+            minimal_export = self._is_minimal_export_enabled()
+            notes_markdown = (
+                "" if minimal_export else str(self.last_measurement.get("notes", ""))
+            )
+            metadata = (
+                None
+                if minimal_export
+                else self._build_touchstone_export_metadata(
+                    exported_traces=exported_trace_names,
+                    output_path=file_path,
+                )
             )
             exporter.export(
                 self.last_measurement["freqs"],
@@ -1774,9 +1843,12 @@ class VNAApp(App):
             )
 
             self.last_measurement["touchstone_path"] = file_path
-            self.log_message(f"Exported Touchstone (SxP): {file_path}", "success")
+            self.log_message(
+                f"Exported Touchstone (SxP){self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
             self._notify_export_result(
-                kind="Touchstone",
+                kind=f"Touchstone{self._minimal_export_suffix(minimal_export)}",
                 path=file_path,
                 exported_items=", ".join(exported_trace_names),
             )
@@ -1785,7 +1857,7 @@ class VNAApp(App):
             self.log_message(f"Touchstone export failed: {e}", "error")
 
     @on(Button.Pressed, "#btn_export_csv")
-    def handle_export_csv(self) -> None:
+    def handle_export_csv(self, event: Button.Pressed | None = None) -> None:
         """Export current measurement as a CSV file."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
@@ -1831,7 +1903,7 @@ class VNAApp(App):
             self.log_message(f"CSV export failed: {e}", "error")
 
     @on(Button.Pressed, "#btn_export_png")
-    def handle_export_png(self) -> None:
+    def handle_export_png(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as PNG."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
@@ -1875,17 +1947,23 @@ class VNAApp(App):
             if self.query_one("#check_plot_s22", Checkbox).value:
                 plot_params.append("S22")
 
+            minimal_export = self._is_minimal_export_enabled()
+
             self._write_image_export(
                 file_path=file_path,
                 plot_type=str(plot_type),
                 plot_params=plot_params,
                 dpi=300,
                 metadata_writer=embed_png_metadata,
+                minimal_export=minimal_export,
             )
 
-            self.log_message(f"Exported PNG: {file_path}", "success")
+            self.log_message(
+                f"Exported PNG{self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
             self._notify_export_result(
-                kind="PNG",
+                kind=f"PNG{self._minimal_export_suffix(minimal_export)}",
                 path=file_path,
                 exported_items=", ".join(plot_params),
             )
@@ -1894,7 +1972,7 @@ class VNAApp(App):
             self.log_message(f"PNG export failed: {e}", "error")
 
     @on(Button.Pressed, "#btn_export_svg")
-    def handle_export_svg(self) -> None:
+    def handle_export_svg(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as SVG."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
@@ -1938,17 +2016,23 @@ class VNAApp(App):
             if self.query_one("#check_plot_s22", Checkbox).value:
                 plot_params.append("S22")
 
+            minimal_export = self._is_minimal_export_enabled()
+
             self._write_image_export(
                 file_path=file_path,
                 plot_type=str(plot_type),
                 plot_params=plot_params,
                 dpi=150,
                 metadata_writer=embed_svg_metadata,
+                minimal_export=minimal_export,
             )
 
-            self.log_message(f"Exported SVG: {file_path}", "success")
+            self.log_message(
+                f"Exported SVG{self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
             self._notify_export_result(
-                kind="SVG",
+                kind=f"SVG{self._minimal_export_suffix(minimal_export)}",
                 path=file_path,
                 exported_items=", ".join(plot_params),
             )
@@ -2812,10 +2896,12 @@ class VNAApp(App):
 
         # Enable export buttons
         self.query_one("#btn_open_output", Button).disabled = False
+        self.query_one("#check_minimal_export", Button).disabled = False
         self.query_one("#btn_export_touchstone", Button).disabled = False
         self.query_one("#btn_export_csv", Button).disabled = False
         self.query_one("#btn_export_png", Button).disabled = False
         self.query_one("#btn_export_svg", Button).disabled = False
+        self._refresh_export_button_labels()
 
 
 def run_gui(test_updates: bool = False, dev_mode: bool = False):
