@@ -88,8 +88,32 @@
 #btn_export_png,
 #btn_export_svg {
     width: auto;
-    min-width: 12;
+    min-width: 9;
 }
+
+#check_minimal_export {
+    width: auto;
+    min-width: 7;
+    height: 2;
+    border: none;
+    padding: 0 1;
+    margin-left: 2;
+    margin-right: 0;
+}
+
+#btn_export_touchstone.-minimal-export,
+#btn_export_csv.-minimal-export,
+#btn_export_png.-minimal-export,
+#btn_export_svg.-minimal-export,
+#check_minimal_export.-minimal-export {
+    color: $warning;
+    tint: $warning 15%;
+    text-style: bold;
+}
+
+
+
+
 
 #output_file_container {
     dock: bottom;

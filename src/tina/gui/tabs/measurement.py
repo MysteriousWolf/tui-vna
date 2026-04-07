@@ -32,6 +32,13 @@ def compose_measurement_tab(app) -> ComposeResult:
                 flat=True,
             )
             yield Button(
+                "▢\nMin",
+                id="check_minimal_export",
+                variant="default",
+                disabled=False,
+                flat=True,
+            )
+            yield Button(
                 "⇩\nSxP",
                 id="btn_export_touchstone",
                 variant="success",
