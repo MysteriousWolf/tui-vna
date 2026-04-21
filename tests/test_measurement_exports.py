@@ -1181,8 +1181,8 @@ class TestDirectMeasurementDataExports:
         app._get_selected_export_params = cast(
             Any,
             lambda: {
-                "S11": app.last_measurement["sparams"]["S11"],
-                "S21": app.last_measurement["sparams"]["S21"],
+                "S11": cast(Any, app.last_measurement)["sparams"]["S11"],
+                "S21": cast(Any, app.last_measurement)["sparams"]["S21"],
             },
         )
 
@@ -1562,7 +1562,7 @@ class TestMeasurementImportNotifications:
         assert plot_s11.value is True
         assert plot_s21.value is False
         assert plot_s22.value is True
-        assert app._tabbed_content.active == "tab_results"
+        assert app._tabbed_content.active == "tab_measure"
 
     def test_setup_only_import_restores_setup_without_measurement_state(self) -> None:
         """Setup-only import should restore Setup widgets without replacing measurement data."""
@@ -1849,7 +1849,7 @@ class TestMeasurementOutputRoundTrips:
         assert plot_type_select.value == "phase"
         assert plot_s11.value is True
         assert plot_s21.value is True
-        assert app._tabbed_content.active == "tab_results"
+        assert app._tabbed_content.active == "tab_measure"
 
     def test_png_export_then_import_restores_measurement_state(
         self, sample_measurement: dict[str, Any], tmp_path: Path
@@ -1997,7 +1997,7 @@ class TestMeasurementOutputRoundTrips:
         assert plot_type_select.value == "magnitude"
         assert plot_s11.value is True
         assert plot_s21.value is True
-        assert app._tabbed_content.active == "tab_results"
+        assert app._tabbed_content.active == "tab_measure"
 
     def test_svg_export_then_import_restores_measurement_state(
         self, sample_measurement: dict[str, Any], tmp_path: Path
@@ -2146,4 +2146,4 @@ class TestMeasurementOutputRoundTrips:
         assert plot_s11.value is False
         assert plot_s21.value is True
         assert plot_s22.value is True
-        assert app._tabbed_content.active == "tab_results"
+        assert app._tabbed_content.active == "tab_measure"
