@@ -145,18 +145,24 @@ class VNAApp(App):
         migration_message: str | None = None,
     ):
         """
-        Initialize application state, configuration, worker, timers, and temporary plot directory.
+        Initialize application state, configuration, worker, timers, and
+        temporary plot directory.
 
         Sets up settings (via SettingsManager), measurement worker, and VNA
-        configuration. Also initializes UI-related flags and caches, timers used
-        for polling and debouncing, tools tab state, a temporary directory for
-        rendered plot images, and detects the terminal font and program for
-        consistent rendering.
+        configuration. Also initializes UI-related flags and caches, timers
+        used for polling and debouncing, tools tab state, a temporary
+        directory for rendered plot images, and detects the terminal font
+        and program for consistent rendering.
 
         Parameters:
-            test_updates (bool): When True, enable test-mode update behavior used by the background update checker (shows test/welcome notifications).
-            dev_mode (bool): When True, suppress the post-update welcome popup and skip persisting the version acknowledgement to disk.
-            migration_message (str | None): If set, logged at startup to inform the user that legacy settings were migrated.
+            test_updates (bool): When True, enable test-mode update behavior
+                used by the background update checker (shows test/welcome
+                notifications).
+            dev_mode (bool): When True, suppress the post-update welcome
+                popup and skip persisting the version acknowledgement to
+                disk.
+            migration_message (str | None): If set, logged at startup to
+                inform the user that legacy settings were migrated.
         """
         super().__init__()
 
@@ -259,9 +265,14 @@ class VNAApp(App):
 
     def on_mount(self) -> None:
         """
-        Initialize application UI and background services when the app is mounted.
+        Initialize application UI and background services when the app is
+        mounted.
 
-        Performs startup initialization: updates window title and footer debug state, initializes progress bar and plot-type options, applies tool UI state, starts the measurement worker and its message polling, and schedules a background update check once the UI is ready.
+        Performs startup initialization: updates window title and footer
+        debug state, initializes progress bar and plot-type options, applies
+        tool UI state, starts the measurement worker and its message
+        polling, and schedules a background update check once the UI is
+        ready.
         """
         self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
@@ -379,9 +390,12 @@ class VNAApp(App):
 
     def on_app_theme_changed(self) -> None:
         """
-        Handle theme change by clearing cached styles and updating UI components.
+        Handle theme change by clearing cached styles and updating UI
+        components.
 
-        Clears the cached style map, re-renders the log using the updated theme colors, and—if a measurement is loaded—schedules refreshed tools and results plots to run after the next render cycle.
+        Clears the cached style map, re-renders the log using the updated
+        theme colors, and — if a measurement is loaded — schedules refreshed
+        tools and results plots to run after the next render cycle.
         """
         self._cached_style_map = None
         log_logic.refresh_log_display(self)
@@ -1124,12 +1138,18 @@ class VNAApp(App):
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """
-        Handle tab activation events by updating the UI: scroll the log when the Log tab is opened and schedule plot redraws when Results or Tools tabs are opened.
+        Handle tab activation events by updating the UI: scroll the log when
+        the Log tab is opened and schedule plot redraws when Results or
+        Tools tabs are opened.
 
-        When the Log tab is activated, scroll the log widget to the end. When the Results or Tools tab is activated, schedule a delayed redraw (0.3 seconds) of the corresponding plot if a measurement is available.
+        When the Log tab is activated, scroll the log widget to the end. When
+        the Results or Tools tab is activated, schedule a delayed redraw
+        (0.3 seconds) of the corresponding plot if a measurement is
+        available.
 
         Parameters:
-            event (TabbedContent.TabActivated): The tab activation event containing the activated pane (used to check pane.id).
+            event (TabbedContent.TabActivated): The tab activation event
+                containing the activated pane (used to check pane.id).
         """
         if event.pane.id == "tab_log":
             # Scroll log to bottom when opening log tab
@@ -1241,7 +1261,10 @@ class VNAApp(App):
         """
         Show the help viewer for the currently selected tool.
 
-        If no tool is active, notifies the user and returns. Otherwise loads the tool's markdown help file from the package's tina/help resources (falls back to a short "Help file not found." message on load failure) and opens a HelpScreen displaying the content.
+        If no tool is active, notifies the user and returns. Otherwise loads
+        the tool's markdown help file from the package's tina/help resources
+        (falls back to a short "Help file not found." message on load
+        failure) and opens a HelpScreen displaying the content.
         """
         active = self.settings.tools_active_tool
         help_map = {
@@ -1427,17 +1450,24 @@ class VNAApp(App):
 
     async def _handle_measurement_complete(self, result: MeasurementResult):
         """
-        Process a completed measurement: export selected S-parameters, cache the measurement, and update the UI and plots.
+        Process a completed measurement: export selected S-parameters, cache
+        the measurement, and update the UI and plots.
 
         Parameters:
-            result (MeasurementResult): Measurement outcome containing frequency array and S-parameter data.
+            result (MeasurementResult): Measurement outcome containing
+                frequency array and S-parameter data.
 
         Behavior:
-            - Exports the S-parameters selected in the UI to a Touchstone file.
-            - Updates `self.last_measurement` and `self.last_output_path` with the saved file and raw measurement data.
-            - Synchronizes plot selection checkboxes to match export selections.
-            - Triggers redraw of the main results plot and the Tools plot, then runs tool computations.
-            - Updates progress indicators, logs success or errors, and sets the app subtitle to reflect completion or failure.
+            - Exports the S-parameters selected in the UI to a Touchstone
+              file.
+            - Updates `self.last_measurement` and `self.last_output_path`
+              with the saved file and raw measurement data.
+            - Synchronizes plot selection checkboxes to match export
+              selections.
+            - Triggers redraw of the main results plot and the Tools plot,
+              then runs tool computations.
+            - Updates progress indicators, logs success or errors, and sets
+              the app subtitle to reflect completion or failure.
         """
         try:
             self.log_message("Processing measurement result...", "debug")
@@ -2151,7 +2181,13 @@ class VNAApp(App):
         """
         Handle window resize events and schedule debounced UI updates.
 
-        If a measurement is loaded, cancels any pending main-plot timer and schedules a debounced redraw of the results plot after 300 milliseconds. If the Tools tab is active and a measurement exists, cancels any pending tools-plot timer and schedules a debounced tools-plot refresh after 300 milliseconds. If an output path is set, cancels any pending path-update timer and schedules a debounced update of the displayed output-file label after 300 milliseconds.
+        If a measurement is loaded, cancels any pending main-plot timer and
+        schedules a debounced redraw of the results plot after 300
+        milliseconds. If the Tools tab is active and a measurement exists,
+        cancels any pending tools-plot timer and schedules a debounced
+        tools-plot refresh after 300 milliseconds. If an output path is set,
+        cancels any pending path-update timer and schedules a debounced
+        update of the displayed output-file label after 300 milliseconds.
 
         Parameters:
             event: The resize event object provided by the Textual framework.
@@ -2281,14 +2317,17 @@ class VNAApp(App):
 
     def _update_output_path_label(self) -> None:
         """
-        Update the output file label in the UI to a truncated path that fits the available container width.
+        Update the output file label in the UI to a truncated path that fits
+        the available container width.
 
-        If `self.last_output_path` is None the method returns immediately. The method measures the widths of
-        the output container and the export/show buttons (#btn_open_output, #btn_export_touchstone,
-        #btn_export_csv, #btn_export_png, #btn_export_svg), computes the remaining width, and uses
-        `truncate_path_intelligently` to produce a shortened path prefixed with "📁 ". If the computed
-        available width is too small (<= 10) the label is not updated. The method ignores exceptions raised
-        while querying widgets (e.g., widgets not yet mounted).
+        If `self.last_output_path` is None the method returns immediately. The
+        method measures the widths of the output container and the export/show
+        buttons (#btn_open_output, #btn_export_touchstone, #btn_export_csv,
+        #btn_export_png, #btn_export_svg), computes the remaining width, and
+        uses `truncate_path_intelligently` to produce a shortened path
+        prefixed with "📁 ". If the computed available width is too small
+        (<= 10) the label is not updated. The method ignores exceptions
+        raised while querying widgets (e.g., widgets not yet mounted).
         """
         if self.last_output_path is None:
             return
@@ -2365,9 +2404,13 @@ class VNAApp(App):
     @on(Button.Pressed, "#btn_apply_limits")
     async def handle_apply_limits(self) -> None:
         """
-        Reapply the current frequency and Y-axis limits to the cached measurement and refresh the results plot.
+        Reapply the current frequency and Y-axis limits to the cached
+        measurement and refresh the results plot.
 
-        If a cached measurement exists in self.last_measurement, calls _update_results with its frequencies, S-parameters, and output path to redraw the plot using the UI's current limit settings. Does nothing when no cached measurement is available.
+        If a cached measurement exists in self.last_measurement, calls
+        _update_results with its frequencies, S-parameters, and output path to
+        redraw the plot using the UI's current limit settings. Does nothing
+        when no cached measurement is available.
         """
         if self.last_measurement is None:
             return
@@ -2525,20 +2568,25 @@ class VNAApp(App):
 
     async def _update_results(self, freqs, sparams, output_path):
         """
-        Render measurement results into the Results tab and update related UI state.
+        Render measurement results into the Results tab and update related UI
+        state.
 
-        Renders the provided frequency and S-parameter measurement data into the Results
-        panel using the currently selected plot backend and UI options. Updates input
-        placeholders, applies optional frequency and Y-axis filtering from the UI,
-        generates and displays either a terminal or image plot (Smith or magnitude/phase),
-        updates cached plot/output paths, and enables export/open controls.
+        Renders the provided frequency and S-parameter measurement data into
+        the Results panel using the currently selected plot backend and UI
+        options. Updates input placeholders, applies optional frequency and
+        Y-axis filtering from the UI, generates and displays either a terminal
+        or image plot (Smith or magnitude/phase), updates cached plot/output
+        paths, and enables export/open controls.
 
         Parameters:
-            freqs (array-like): Frequencies in Hz for each measurement point, in ascending order.
-            sparams (dict): Mapping from S-parameter name (e.g., "S11") to a tuple
-                (magnitude_db_array, phase_deg_array), where arrays are aligned with `freqs`.
-            output_path (pathlike | str): Path where measurement results (Touchstone or related)
-                were written; used to update the output file display and export controls.
+            freqs (array-like): Frequencies in Hz for each measurement point,
+                in ascending order.
+            sparams (dict): Mapping from S-parameter name (e.g., "S11") to a
+                tuple (magnitude_db_array, phase_deg_array), where arrays are
+                aligned with `freqs`.
+            output_path (pathlike | str): Path where measurement results
+                (Touchstone or related) were written; used to update the
+                output file display and export controls.
         """
         self.log_message(
             f"_update_results called with {len(freqs)} freqs, {len(sparams)} sparams",
@@ -2897,8 +2945,14 @@ class VNAApp(App):
                         term_program = os.environ.get("TERM_PROGRAM", "")
                         kitty_window_id = os.environ.get("KITTY_WINDOW_ID", "")
 
+                        # Log terminal detection details in a readable, multi-line
+                        # message to avoid an overly long single-line f-string.
                         self.log_message(
-                            f"Terminal detection: TERM='{terminal}', TERM_PROGRAM='{term_program}', KITTY_WINDOW_ID='{kitty_window_id}'",
+                            (
+                                f"Terminal detection: TERM='{terminal}',"
+                                f" TERM_PROGRAM='{term_program}',"
+                                f" KITTY_WINDOW_ID='{kitty_window_id}'"
+                            ),
                             "debug",
                         )
 
@@ -2954,8 +3008,12 @@ class VNAApp(App):
                             fallback_h = 60
                             img_widget.set_class(True, "main-image-fallback")
 
+                            # Split long sizing message across two f-strings so it
+                            # remains within line-length limits while preserving
+                            # the original content.
                             self.log_message(
-                                f"Using fallback sizing: {fallback_w}x{fallback_h} (container_w={container_w}, px_w={px_w}, px_h={px_h})",
+                                f"Using fallback sizing: {fallback_w}x{fallback_h} "
+                                f"(container_w={container_w}, px_w={px_w}, px_h={px_h})",
                                 "debug",
                             )
 
