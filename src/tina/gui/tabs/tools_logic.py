@@ -93,7 +93,11 @@ async def rebuild_tools_params(app) -> None:
         app.last_measurement.get("freq_unit", "MHz") if app.last_measurement else "MHz"
     )
     app.log_message(
-        f"rebuild_tools_params: active={active!r} freq_unit={freq_unit!r} last_measurement={'yes' if app.last_measurement else 'no'}",
+        (
+            f"rebuild_tools_params: active={active!r} "
+            f"freq_unit={freq_unit!r} "
+            f"last_measurement={'yes' if app.last_measurement else 'no'}"
+        ),
         "debug",
     )
 

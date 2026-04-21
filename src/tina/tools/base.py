@@ -38,7 +38,14 @@ class BaseTool(ABC):
         """
         Compute the tool's measurement result for the provided frequency sweep.
 
-        Compute the measurement output for the given frequencies and S-parameter data using the specified trace and plot type. The `sparams` mapping should provide tuples or arrays of (magnitude in dB, phase in degrees) keyed by S-parameter name (e.g., "S11"). `plot_type` accepts "magnitude", "phase", or "phase_raw". `cursor1_hz` and `cursor2_hz`, if provided, are used to populate the corresponding cursor fields in the returned ToolResult.
+        Compute the measurement output for the given frequencies and S-parameter
+        data using the specified trace and plot type. The `sparams` mapping
+        should provide tuples or arrays of (magnitude in dB, phase in degrees)
+        keyed by S-parameter name (e.g., "S11").
+
+        `plot_type` accepts "magnitude", "phase", or "phase_raw". If
+        `cursor1_hz` and `cursor2_hz` are provided they are used to populate
+        the corresponding cursor fields in the returned ToolResult.
 
         Parameters:
             freqs (np.ndarray): Frequency array in Hz.
@@ -49,5 +56,6 @@ class BaseTool(ABC):
             cursor2_hz (float | None): Cursor-2 frequency in Hz, or None if unset.
 
         Returns:
-            ToolResult: Result containing computed cursor values, delta (if applicable), unit label, and any extra metadata.
+            ToolResult: Result containing computed cursor values, delta (if
+                applicable), unit label, and any extra metadata.
         """
