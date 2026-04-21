@@ -23,10 +23,27 @@
     border: none;
 }
 
-#tools_tool_panel Button {
+#tools_tool_panel .button-group > Button.toolbar-button,
+#tools_tool_panel .button-group > Button.toolbar-button:first-child:last-child {
+    /* Target the Button element with the opt-in .toolbar-button class so this
+       rule has element+class+ID specificity and reliably overrides global
+       `Button { width: 100% }` rules. The :only-child variant prevents a
+       single toolbar button from stretching to fill the entire row. */
+    width: auto;
+    min-width: 12;
+    max-width: 40;
     height: 2;
     border: none;
     padding: 0 2;
+    margin: 1 0 0 0;
+    content-align: center middle;
+}
+
+#tools_tool_panel Button.panel-button {
+    /* Fallback for other Buttons in the tools panel that are not inside
+       the .button-group: do not force width/height here so they can inherit
+       panel- or context-specific rules as appropriate. */
+    border: none;
 }
 
 #tools_tool_panel .button-group {
@@ -39,10 +56,20 @@
     layout: horizontal;
     width: 100%;
     height: auto;
+    /* Keep the middle row aligned to the top so the Selection frame does not
+       vertically expand or center inside the scroll area. */
+    align: left top;
 }
 
 #tools_middle_row > Container:first-child {
     width: 3fr;
+    /* Prevent the Selection panel from stretching vertically to fill the
+       entire scroll area. Keep its height proportional to contents. The
+       container-level scrollbar (#tools_scroll) manages vertical scrolling
+       for the whole Tools tab; do not add per-frame overflow. */
+    height: auto;
+    min-height: 0;
+    align: left top;
 }
 
 #tools_results_container {
@@ -68,31 +95,138 @@
 #tools_params_container {
     width: auto;
     height: auto;
-    max-height: 12;
+    /* Let the outer tools scrollpane manage scrolling. Do not force an inner
+       scroll on the params area — allow it to size naturally. */
     padding: 0;
     margin: 0;
     layout: vertical;
     align: left top;
 }
 
+
+/* Constrain the always-visible static frequency selector rows so they don't
+   force the selection panel to grow. Allow internal scrolling if the terminal
+   is very short. Keep these rows small so the Selection frame doesn't appear
+   full-height inside the scroll pane. */
+#tools_params_static {
+    /* Allow the static selector block to size naturally; the outer VerticalScroll
+       will add a scrollbar for the full Tools tab when needed. Keep this area
+       free from its own scrollbars. */
+    height: auto;
+    min-height: 0;
+}
+
+
 #tools_params_placeholder {
     padding: 1 0;
     width: auto;
     content-align: left top;
+    /* Prevent the placeholder text from creating a tall empty panel. Keep it
+       compact and allow wrapping if terminal is narrow. */
+    max-height: 5;
+    overflow: hidden;
 }
 
 #tools_params_container .plot-controls,
 #tools_params_container .distortion-row {
-    width: auto;
+    width: 100%;
     height: auto;
     min-width: 0;
-    align: left top;
+    align: left middle;
 }
 
-#tools_params_container Input {
-    width: 1fr;
-    min-width: 12;
+#tools_params_container .tools-frequency-row {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    align: left middle;
 }
+
+#tools_params_container .tools-frequency-label {
+    /* Slightly narrower label and reduced right padding for tighter alignment */
+    width: 8;
+    min-width: 8;
+    max-width: 8;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    padding: 0 0 0 0;
+    content-align: left middle;
+}
+
+/* Restore cursor-specific label coloring (match the cursor color classes added
+   to the FrequencyEntry instances in compose). These selectors ensure the
+   label text inherits the intended cursor color. Target both the legacy
+   label class and the component's internal label class. */
+#tools_params_container .tools-cursor-1 .freq-label,
+#tools_params_container .tools-cursor-1 .tools-frequency-label {
+    color: $warning;
+}
+#tools_params_container .tools-cursor-2 .freq-label,
+#tools_params_container .tools-cursor-2 .tools-frequency-label {
+    color: $primary;
+}
+
+#tools_params_container .tools-frequency-input {
+    width: 1fr;
+    /* Flexible entry box: consume remaining horizontal space while keeping
+       a modest minimum to remain usable. Reduced min-width so tiny buttons can
+       comfortably fit within the same row on narrow terminals. */
+    min-width: 6;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    margin-right: 0;
+    padding: 0;
+}
+
+#tools_params_container .tools-frequency-button {
+    /* Compact flat buttons: fixed 5x2 size, borderless so Button.variant + flat=True
+       can provide the intended colored appearance. Keep sizing fixed to avoid
+       layout shifts on state changes. Match measurement-tab reset/apply button styling. */
+    width: 5;
+    min-width: 5;
+    max-width: 5;
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0 0 0 1;
+    padding: 0 2;
+    content-align: center middle;
+    border: none;
+    /* Do not force a muted base color here; let the component control color/variant
+       so variant/flat combinations can render colored glyphs as intended. */
+}
+
+/* Authoritative override for FrequencyEntry buttons mounted inside the tools
+   params container. This selector is deliberately specific (ID + component +
+   class) so it takes precedence over broader `.plot-controls Button` rules and
+   ensures the compact 5x2 footprint is applied in the app. */
+#tools_params_container FrequencyEntry.tools-compact > .freq-entry-row > Button.tools-frequency-button {
+    width: auto;
+    min-width: 5;
+    max-width: 5;
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0 0 0 1;
+    padding: 0 2;
+    content-align: center middle;
+    border: none;
+    box-sizing: border-box;
+}
+
+#tools_params_container > Input {
+    width: 1fr;
+    /* Larger minimum to provide a more usable editing area for frequency
+       values (especially when using MHz/GHz with decimals). This rule is
+       intentionally scoped to direct children of the params container so it
+       does not force nested FrequencyEntry inputs (which live deeper) to
+       expand. */
+    min-width: 24;
+}
+
 
 #tools_params_container Select {
     width: 18;
@@ -111,10 +245,92 @@
     height: 3;
 }
 
+#tools_params_container .tools-frequency-button.--active,
+#tools_params_container .tools-frequency-button.toggle-active {
+    /* Preserve legacy selector behaviour but allow Button.variant/coloring to
+       control the visual identity. Do not forcibly override the background so
+       'flat' + variant styling from the component can render as intended. */
+    border: none;
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    padding: 0;
+    margin: 0 0 0 1;
+}
+
+/* Prev / Next active: defer to component semantics (primary color, color-only).
+   Keep sizing consistent with FrequencyEntry.tools-compact footprint. */
+#tools_params_container .tools-frequency-button.prev-button.--active,
+#tools_params_container .tools-frequency-button.next-button.--active {
+    border: none;
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    padding: 0;
+    margin: 0 0 0 1;
+}
+
+/* Min/max and smoothing toggles: align with component visual identity and use
+   accent color for active state (color-only). */
+#tools_params_container .tools-frequency-button.minima-toggle.--active,
+#tools_params_container .tools-frequency-button.smooth-toggle.--active {
+    border: none;
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    padding: 0;
+    margin: 0 0 0 1;
+}
+
 #tools_params_container .distortion-row {
     margin-top: 0;
     align: center top;
     content-align: center top;
+}
+
+/* Dynamic params subcontainer should size to its content and not expand to
+   fill the parent. Override the generic FrequencyEntry sizing for items mounted
+   under #tools_params_dynamic so dynamic controls remain as small as possible. */
+#tools_params_dynamic {
+    width: auto;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    align: left top;
+    layout: vertical;
+}
+
+/* Classes used by programmatic sizing replacements */
+.tools-image-display {
+    /* Large display image sizing; allow tcss to define cell-based sizes */
+    width: 40;
+    height: 20;
+}
+
+.tools-image-fallback {
+    width: 15;
+    height: 6;
+}
+
+.tools-help-image {
+    width: 30;
+    height: 10;
+}
+
+.tools-help-image-large {
+    width: 60;
+    height: 20;
+}
+
+#tools_params_dynamic FrequencyEntry,
+#tools_params_dynamic > .distortion-row,
+#tools_params_dynamic .distortion-row {
+    /* Do not force FrequencyEntry instances in the dynamic area to 1fr width
+       or 3-row height. Let them size to their natural content. */
+    width: auto;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
 }
 
 .distortion-comp-check {
@@ -150,15 +366,10 @@
     margin-right: 1;
 }
 
-#btn_tool_measure,
-#btn_tool_distortion {
-    width: 1fr;
-    margin: 0 1 0 0;
-}
-
-#btn_tool_distortion {
-    margin-right: 0;
-}
+/* Tool-panel buttons should inherit their appearance and sizing from
+   the panel-level rule `#tools_tool_panel Button`. Remove id-specific
+   overrides so the Cursor/Distortion buttons use the same styling
+   conventions as other toolbar buttons throughout the app. */
 
 .tools-cursor-1 {
     color: $warning;

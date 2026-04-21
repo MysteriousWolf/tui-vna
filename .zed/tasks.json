@@ -2,51 +2,56 @@
   {
     "label": "test",
     "command": "uv run pytest",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "test-fast",
     "command": "uv run pytest -m unit",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "test-coverage",
     "command": "uv run pytest --cov=src/tina",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "lint-check",
     "command": "./scripts/lint.sh --check",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "lint-fix",
     "command": "./scripts/lint.sh --fix",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "open-coverage",
     "command": "xdg-open htmlcov/index.html",
-    "use_new_terminal": false
+    "use_new_terminal": false,
   },
   {
     "label": "run-app",
     "command": "uv run tina",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "run-app-dev",
     "command": "uv run tina --dev",
-    "use_new_terminal": true
+    "use_new_terminal": true,
   },
   {
     "label": "run-app-test-updates",
     "command": "uv run tina --test-updates",
-    "use_new_terminal": true
+    "use_new_terminal": true,
+  },
+  {
+    "label": "run-frequency-entry-sandbox",
+    "command": "uv run python scripts/frequency_entry_sandbox.py",
+    "use_new_terminal": true,
   },
   {
     "label": "screenshot",
     "command": "uv run python scripts/screenshot.py",
-    "use_new_terminal": true
-  }
+    "use_new_terminal": true,
+  },
 ]

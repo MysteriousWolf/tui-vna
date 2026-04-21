@@ -37,7 +37,10 @@ ImageWidget {
     width: 1fr;
 }
 
-.plot-controls Button {
+/* Only target direct Button children of plot-controls so nested component
+   Buttons (like those inside FrequencyEntry) are not affected. We additionally
+   restrict to the `.plot-control-button` class so callers opt-in explicitly. */
+.plot-controls > Button.plot-control-button {
     width: auto;
     min-width: 8;
     margin-left: 1;

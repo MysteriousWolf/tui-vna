@@ -262,14 +262,25 @@ class HelpScreen(ModalScreen):
                                 cw = tc.width if tc.width > 0 else 8
                                 ch = tc.height if tc.height > 0 else 16
                             except Exception:
-                                cw, ch = 8, 16
+                                # Fallback cell dimensions
+                                cw = 8
+                                ch = 16
+
+                            # Compute approximate cell spans for the rendered image
                             w_cells = max(8, round(img_w_px / cw))
-                            h_cells = max(1, round(img_h_px / ch))
+                            _h_cells = max(1, round(img_h_px / ch))
+
                             if ImageWidget is None:
                                 raise RuntimeError("textual-image widget unavailable")
+
                             img_widget = ImageWidget(str(img_path))
-                            img_widget.styles.width = w_cells
-                            img_widget.styles.height = h_cells
+                            # Choose a CSS class based on approximate width so we can
+                            # size large and small math images differently if needed.
+                            if w_cells >= 30:
+                                img_widget.set_class(True, "tools-help-image-large")
+                            else:
+                                img_widget.set_class(True, "tools-help-image")
+
                             with Horizontal(classes="math-img-row"):
                                 yield img_widget
                         else:
