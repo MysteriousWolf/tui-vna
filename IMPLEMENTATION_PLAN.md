@@ -487,7 +487,7 @@ Implementation completed. The reusable frequency-entry component and its extrema
 
 ---
 
-## Functional Unit 10 — Extrema navigation in tools
+## Functional Unit 10 — Extrema navigation in tools ✅ Done
 
 ### Goal
 
@@ -534,9 +534,16 @@ If that turns out not to be clean/reliable enough:
 
 If minima mode or smoothing mode is active, the UI should make that obvious.
 
+### Measurement tab extrema search
+
+- Note: extrema search on the Measurement tab was intentionally skipped for
+  this batch due to TUI stability concerns. Implementing a separate
+  measurement-tab peak finder was deferred to avoid destabilising the core TUI
+  during the feature work.
+
 ---
 
-## Functional Unit 11 — Copy full tool results
+## Functional Unit 11 — Copy full tool results ✅ Done
 
 ### Goal
 
@@ -716,4 +723,39 @@ This plan intentionally leaves room for implementation discoveries, especially a
 - re-import edge cases
 
 However, the product decisions in this document should be treated as the current
-design baseline for the feature batch.
+  design baseline for the feature batch.
+
+## Release Prep Checklist
+
+Blocking items
+
+- Update README to reflect SciPy requirement and the UX note that importing
+  does not auto-switch tabs (no-tab-switch behaviour).
+- Create a `CHANGELOG.md` summarising this batch's user-facing changes.
+- Bump package version in `pyproject.toml` and `src/tina/__init__.py`.
+- Ensure CI runs lint and tests (make sure `./scripts/lint.sh --fix` and
+  `./scripts/test.sh` are green in CI). Fix any failures before tagging.
+- Add tests covering extrema cache and the fallback behaviour when smoothing
+  or extrema lookup is unavailable.
+
+Optional items
+
+- Verify PyInstaller-built binaries on target platforms if distributing a
+  standalone executable.
+- Polish docs and examples (screenshots, small walkthroughs for import/export
+  and notes recovery).
+
+### Design decisions recorded
+
+- No auto-switch on import: importing a measurement does not change the active
+  tab automatically to avoid surprising the user and to keep TUI focus stable.
+- SciPy as dependency with numpy fallback: wherever smoothing or SG filters are
+  desirable we prefer SciPy, but codepaths should gracefully fallback to a
+  numpy-based simpler implementation when SciPy is unavailable.
+- Extrema cache keying and invalidation: extrema results are cached keyed by
+  (measurement id, plot-range, smoothing-mode) and invalidated on data or
+  range changes to ensure caches don't return stale locations.
+- Removed sandbox script and `.zed` task: developer-only automation was
+  removed as part of simplifying the repo for release.
+- Skipped measurement-tab extrema search: peak finding on the Measurement tab
+  was explicitly deferred for TUI stability reasons (see Functional Unit 10).
