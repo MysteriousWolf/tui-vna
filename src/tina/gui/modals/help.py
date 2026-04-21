@@ -141,7 +141,8 @@ class HelpScreen(ModalScreen):
             expr (str): Raw LaTeX string (without surrounding `$` delimiters).
 
         Returns:
-            str: Sanitized expression safe to pass to matplotlib mathtext (e.g., `fig.text(..., usetex=False)`).
+            str: Sanitized expression safe to pass to matplotlib mathtext.
+                 Example: `fig.text(..., usetex=False)`.
         """
         expr = expr.replace("\\boxed", "")
         expr = re.sub(r"\\text\{([^{}]*)\}", r"\\mathrm{\1}", expr)
@@ -155,7 +156,10 @@ class HelpScreen(ModalScreen):
         """
         Render a LaTeX display-math expression to a tightly cropped PNG and return its file path and pixel dimensions.
 
-        The input expression is sanitized for matplotlib's mathtext and rendered as a display-style formula. On success returns a temporary PNG Path and its width and height in pixels; returns `None` if rendering fails.
+        The input expression is sanitized for matplotlib's mathtext and
+        rendered as a display-style formula. On success it returns a
+        temporary PNG Path and its width and height in pixels. It returns
+        `None` if rendering fails.
 
         Parameters:
             latex_expr (str): The LaTeX expression to render (may be raw math without surrounding `$$`).
