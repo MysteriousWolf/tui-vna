@@ -407,7 +407,9 @@ class VNAApp(App):
         """
         Perform shutdown tasks for the application.
 
-        Saves current settings and attempts to stop the background measurement worker, waiting up to 5.0 seconds for it to terminate.
+        Saves current settings and attempts to stop the background measurement worker.
+
+        Waits up to 5.0 seconds for it to terminate.
         """
         # Save settings before exit
         self._save_current_settings()
@@ -1166,7 +1168,10 @@ class VNAApp(App):
 
     @on(
         Checkbox.Changed,
-        "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, #check_log_success, #check_log_error, #check_log_debug, #check_log_poll",
+        (
+            "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, "
+            "#check_log_success, #check_log_error, #check_log_debug, #check_log_poll"
+        ),
     )
     def on_log_filter_change(self, event: Checkbox.Changed) -> None:
         """Handle log filter checkbox changes."""

@@ -23,18 +23,35 @@ class MeasureTool(BaseTool):
         """
         Compute interpolated trace values at up to two cursor frequencies and the difference between them.
 
-        Interpolates the selected trace data at `cursor1_hz` and `cursor2_hz` (when provided and within the range of `freqs`) and returns those values and their difference. If `trace` is not present in `sparams`, returns a ToolResult containing only `tool_name="measure"` and `unit_label`. Cursors outside the frequency range or set to `None` produce `None` for the corresponding value.
+        Interpolates the selected trace data at `cursor1_hz` and `cursor2_hz` when
+        those values are provided and lie within the range defined by `freqs`.
+
+        If `trace` is not present in `sparams`, returns a ToolResult containing
+        only `tool_name="measure"` and `unit_label`. Cursors outside the
+        frequency range or set to `None` produce `None` for the corresponding
+        value.
 
         Parameters:
-            freqs (np.ndarray): 1D array of frequency points used for interpolation; first and last elements define the valid interpolation range.
-            sparams (dict): Mapping from trace name to a tuple `(mag, phase)` where `mag` and `phase` are arrays aligned with `freqs`.
+            freqs (np.ndarray): 1D array of frequency points used for
+                interpolation. The first and last elements define the valid
+                interpolation range.
+            sparams (dict): Mapping from trace name to a tuple `(mag, phase)`
+                where `mag` and `phase` are arrays aligned with `freqs`.
             trace (str): Key selecting which entry from `sparams` to use.
-            plot_type (str): Selects which data to interpolate: `"magnitude"` uses `mag`, `"phase"` uses unwrapped `phase`, any other value uses raw `phase`.
-            cursor1_hz (float | None): Frequency for cursor 1; when `None` or outside `freqs` range, cursor1 value is `None`.
-            cursor2_hz (float | None): Frequency for cursor 2; when `None` or outside `freqs` range, cursor2 value is `None`.
+            plot_type (str): Selects which data to interpolate: `"magnitude"`
+                uses `mag`, `"phase"` uses unwrapped `phase`, any other
+                value uses raw `phase`.
+            cursor1_hz (float | None): Frequency for cursor 1; when `None` or
+                outside `freqs` range, cursor1 value is `None`.
+            cursor2_hz (float | None): Frequency for cursor 2; when `None` or
+                outside `freqs` range, cursor2 value is `None`.
 
         Returns:
-            ToolResult: Contains `tool_name="measure"`, `unit_label` (`"dB"` for magnitude, otherwise `"°"`), `cursor1_freq_hz`, `cursor2_freq_hz`, `cursor1_value`, `cursor2_value`, and `delta_value` (`cursor2 - cursor1` or `None` if either value is `None`).
+            ToolResult: Contains `tool_name="measure"`, `unit_label`
+                (`"dB"` for magnitude, otherwise `"°"`), `cursor1_freq_hz`,
+                `cursor2_freq_hz`, `cursor1_value`, `cursor2_value`, and
+                `delta_value` (`cursor2 - cursor1` or `None` if either value is
+                `None`).
         """
         unit_label = "dB" if plot_type == "magnitude" else "°"
 

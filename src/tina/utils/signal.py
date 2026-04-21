@@ -28,10 +28,12 @@ def calculate_plot_range_with_outlier_filtering(
 
     Filters the input data by removing the lowest and highest
     `outlier_percentile` percentiles. It uses those percentile values as the
-    core min/max and expands the range by a `safety_margin` fraction of the
-    filtered span. If `data` is empty, returns (0.0, 1.0). If the filtered span
-    is zero, a nonzero span is derived from `min_val` (10% of |min_val|) or set
-    to 1.0 when `min_val` is zero.
+    core min/max. The range is expanded by a `safety_margin` fraction of the
+    filtered span.
+
+    If `data` is empty, returns (0.0, 1.0). If the filtered span is zero, a
+    nonzero span is derived from `min_val` (10% of |min_val|) or set to 1.0
+    when `min_val` is zero.
 
     Parameters:
         data (np.ndarray): Values to compute the plot range from.
