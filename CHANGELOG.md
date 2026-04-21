@@ -17,12 +17,9 @@ All notable changes to this project will be documented in this file.
 - Units done: 1 (templating), 2 (setup output UI), 3 (CSV export)
   4 (measurement notes UI), 5 (notes + metadata), 6 (PNG/SVG metadata),
   7 (import/recovery), 8 (alt minimal export), 9 (frequency-entry),
-  10 (extrema navigation in tools).
+  10 (extrema navigation in tools), 11 (copy full tool results).
 
-### Pending / Deferred
-- Unit 11: explicit "Copy full tool results" action — per-cell clickable
-  copy affordances exist, but the Results-panel title copy button is not
-  implemented.
+-### Pending / Deferred
 - Units 12–13: persistent command-palette history and save-back workflow.
 - Extrema search on the Measurement tab was intentionally skipped for
   stability reasons (TUI modifier handling issues).

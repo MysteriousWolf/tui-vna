@@ -543,7 +543,7 @@ If minima mode or smoothing mode is active, the UI should make that obvious.
 
 ---
 
-## Functional Unit 11 — Copy full tool results ⏳ Pending
+## Functional Unit 11 — Copy full tool results ✅ Completed
 
 Note: per-cell copy affordances already exist in tool results (cells are
 clickable). The explicit 'copy full tool results' action in the Results panel
