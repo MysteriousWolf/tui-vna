@@ -1,0 +1,53 @@
+/* Styles for FrequencyEntry component.
+ *
+ * Layout model:
+ * - the inner Horizontal row owns the layout
+ * - label has fixed width
+ * - input consumes the remaining width
+ * - the whole row respects the width of its parent container
+ */
+
+FrequencyEntry {
+    width: 100%;
+    height: auto;
+}
+
+FrequencyEntry > .freq-entry-row {
+    /* Allow the inner row to expand to fill available horizontal space
+       while keeping a fixed vertical height. Keep vertical centering so
+       elements align nicely within the row. */
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    align: left middle;
+}
+
+FrequencyEntry .freq-label {
+    width: 8;
+    min-width: 8;
+    max-width: 8;
+    height: 3;
+    content-align: left middle;
+    padding: 0 0 0 0;
+}
+
+FrequencyEntry .freq-input {
+    width: 1fr;
+    min-width: 8;
+    height: 3;
+    /* Allow the input to autosize and take remaining space in the row */
+}
+
+/* DEBUG-ALIGN: temporary visual helpers for alignment inspection */
+FrequencyEntry > .freq-entry-row.dbg-row {
+    background: $accent;
+}
+FrequencyEntry > .freq-entry-row > Button.dbg-btn {
+    background: $primary;
+    color: $surface;
+    border: round $surface;
+}
+/* measurement buttons debug style (same visual) */
+Button.dbg-btn { background: $primary; color: $surface; border: round $surface; }

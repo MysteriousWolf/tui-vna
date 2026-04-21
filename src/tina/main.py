@@ -120,6 +120,7 @@ class VNAApp(App):
         "gui/styles/setup_tab.tcss",
         "gui/styles/measurement_tab.tcss",
         "gui/styles/tools_tab.tcss",
+        "gui/styles/frequency_entry.tcss",
         "gui/styles/log_tab.tcss",
     ]
 
@@ -220,7 +221,11 @@ class VNAApp(App):
                     yield Label("Disconnected", id="progress_label")
                     yield ProgressBar(id="progress_bar")
                 yield Button(
-                    "📡\nConnect", id="btn_connect", variant="primary", flat=True
+                    "📡\nConnect",
+                    id="btn_connect",
+                    variant="primary",
+                    flat=True,
+                    classes="panel-button",
                 )
                 yield Button(
                     "🔍\nRead Parameters",
@@ -228,6 +233,7 @@ class VNAApp(App):
                     variant="default",
                     disabled=True,
                     flat=True,
+                    classes="panel-button",
                 )
                 yield Button(
                     "📊\nMeasure",
@@ -235,12 +241,14 @@ class VNAApp(App):
                     variant="success",
                     disabled=True,
                     flat=True,
+                    classes="panel-button",
                 )
                 yield Button(
                     "📁\nImport File",
                     id="btn_import_results",
                     variant="warning",
                     flat=True,
+                    classes="panel-button",
                 )
 
         yield StatusFooter()
@@ -946,7 +954,7 @@ class VNAApp(App):
                 imported_metadata,
                 sparams=sparams,
             )
-            self._activate_measurement_tab()
+            # Restore measurement (do not automatically switch tabs)
             restored_panels.append("Measurement")
 
             self.log_message(
@@ -1203,7 +1211,8 @@ class VNAApp(App):
         toggle_button.set_class(minimal_export, "-minimal-export")
 
         show_button = self.query_one("#btn_open_output", Button)
-        show_button.styles.margin = (0, 0, 0, 0)
+        # Prefer CSS class for button spacing so styles are centralized
+        show_button.set_class(True, "no-margin")
 
         for selector in (
             "#btn_export_touchstone",
@@ -2370,6 +2379,10 @@ class VNAApp(App):
     # Tools tab event handlers
     # ------------------------------------------------------------------ #
 
+    # FrequencyEntry is used by the Tools UI to provide cursor inputs with
+    # explicit prev/next and mode toggles (fallback for unreliable modifier keys).
+    from .gui.components.frequency_entry import FrequencyEntry
+
     @on(Button.Pressed, "#btn_tool_measure")
     def handle_tool_measure_pressed(self) -> None:
         """Activate or deactivate the cursor tool."""
@@ -2403,6 +2416,106 @@ class VNAApp(App):
         """Handle changes to the tools plot type by refreshing the tools plot and recomputing results."""
         del event
         await tools_logic.on_tools_plot_type_change(self)
+
+    # ------------------------------------------------------------------ #
+    # FrequencyEntry message handlers
+    # ------------------------------------------------------------------ #
+
+    @on(Button.Pressed, "#btn_freq1_prev")
+    def handle_btn_freq1_prev(self, event: Button.Pressed) -> None:
+        """Navigate to previous extrema for cursor 1 (prev button)."""
+        del event
+        minima = getattr(self, "_tools_cursor1_minima", False)
+        smoothing = getattr(self, "_tools_cursor1_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 1, -1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq1_next")
+    def handle_btn_freq1_next(self, event: Button.Pressed) -> None:
+        """Navigate to next extrema for cursor 1 (next button)."""
+        del event
+        minima = getattr(self, "_tools_cursor1_minima", False)
+        smoothing = getattr(self, "_tools_cursor1_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 1, 1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq2_prev")
+    def handle_btn_freq2_prev(self, event: Button.Pressed) -> None:
+        """Navigate to previous extrema for cursor 2 (prev button)."""
+        del event
+        minima = getattr(self, "_tools_cursor2_minima", False)
+        smoothing = getattr(self, "_tools_cursor2_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 2, -1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq2_next")
+    def handle_btn_freq2_next(self, event: Button.Pressed) -> None:
+        """Navigate to next extrema for cursor 2 (next button)."""
+        del event
+        minima = getattr(self, "_tools_cursor2_minima", False)
+        smoothing = getattr(self, "_tools_cursor2_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 2, 1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq1_toggle_min")
+    def handle_btn_freq1_toggle_min(self, event: Button.Pressed) -> None:
+        """Toggle minima mode for cursor 1 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor1_minima", False)
+        new = not cur
+        setattr(self, "_tools_cursor1_minima", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (▲/▼) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 1, new, getattr(self, "_tools_cursor1_smoothing", False)
+        )
+
+    @on(Button.Pressed, "#btn_freq1_toggle_smooth")
+    def handle_btn_freq1_toggle_smooth(self, event: Button.Pressed) -> None:
+        """Toggle smoothing mode for cursor 1 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor1_smoothing", False)
+        new = not cur
+        setattr(self, "_tools_cursor1_smoothing", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (∿/⎍) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 1, getattr(self, "_tools_cursor1_minima", False), new
+        )
+
+    @on(Button.Pressed, "#btn_freq2_toggle_min")
+    def handle_btn_freq2_toggle_min(self, event: Button.Pressed) -> None:
+        """Toggle minima mode for cursor 2 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor2_minima", False)
+        new = not cur
+        setattr(self, "_tools_cursor2_minima", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (▲/▼) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 2, new, getattr(self, "_tools_cursor2_smoothing", False)
+        )
+
+    @on(Button.Pressed, "#btn_freq2_toggle_smooth")
+    def handle_btn_freq2_toggle_smooth(self, event: Button.Pressed) -> None:
+        """Toggle smoothing mode for cursor 2 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor2_smoothing", False)
+        new = not cur
+        setattr(self, "_tools_cursor2_smoothing", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (∿/⎍) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 2, getattr(self, "_tools_cursor2_minima", False), new
+        )
 
     # ------------------------------------------------------------------ #
 
@@ -2826,8 +2939,7 @@ class VNAApp(App):
                             # Derive height from width to preserve aspect ratio
                             display_h = int(display_w / aspect_ratio)
 
-                            img_widget.styles.width = display_w
-                            img_widget.styles.height = display_h
+                            img_widget.set_class(True, "main-image-display")
 
                             self.log_message(
                                 f"Using proper sizing: {display_w}x{display_h}", "debug"
@@ -2836,8 +2948,7 @@ class VNAApp(App):
                             # Fallback if container size unknown - use better fallback
                             fallback_w = 120
                             fallback_h = 60
-                            img_widget.styles.width = fallback_w
-                            img_widget.styles.height = fallback_h
+                            img_widget.set_class(True, "main-image-fallback")
 
                             self.log_message(
                                 f"Using fallback sizing: {fallback_w}x{fallback_h} (container_w={container_w}, px_w={px_w}, px_h={px_h})",

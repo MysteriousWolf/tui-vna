@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -386,41 +385,43 @@ class TouchstoneExporter:
             "S22": ([], []),
         }
 
-        text = Path(file_path).read_text(encoding="utf-8")
+        # Read the file once into memory and reuse the content for both
+        # metadata parsing and numeric line iteration to avoid double I/O.
+        with open(file_path, encoding="utf-8") as f:
+            text = f.read()
         metadata = cls.parse_metadata_from_text(text)
 
-        with open(file_path, encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
 
-                if not line:
+            if not line:
+                continue
+
+            if line.startswith("!"):
+                continue
+
+            if line.startswith("#"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    freq_unit = parts[1]
+                continue
+
+            try:
+                values = [float(v) for v in line.split()]
+                if len(values) < 3:
                     continue
 
-                if line.startswith("!"):
-                    continue
+                frequencies.append(values[0])
 
-                if line.startswith("#"):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        freq_unit = parts[1]
-                    continue
+                for idx, param_name in enumerate(_TOUCHSTONE_PARAM_ORDER):
+                    mag_idx = 1 + idx * 2
+                    phase_idx = 2 + idx * 2
+                    if phase_idx < len(values):
+                        s_params[param_name][0].append(values[mag_idx])
+                        s_params[param_name][1].append(values[phase_idx])
 
-                try:
-                    values = [float(v) for v in line.split()]
-                    if len(values) < 3:
-                        continue
-
-                    frequencies.append(values[0])
-
-                    for idx, param_name in enumerate(_TOUCHSTONE_PARAM_ORDER):
-                        mag_idx = 1 + idx * 2
-                        phase_idx = 2 + idx * 2
-                        if phase_idx < len(values):
-                            s_params[param_name][0].append(values[mag_idx])
-                            s_params[param_name][1].append(values[phase_idx])
-
-                except (ValueError, IndexError):
-                    continue
+            except (ValueError, IndexError):
+                continue
 
         if not frequencies:
             raise ValueError("No valid data found in file")

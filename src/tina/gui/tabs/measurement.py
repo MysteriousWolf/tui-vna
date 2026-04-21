@@ -30,6 +30,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 variant="primary",
                 disabled=True,
                 flat=True,
+                classes="panel-button",
             )
             yield Button(
                 "▢\nMin",
@@ -37,6 +38,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 variant="default",
                 disabled=False,
                 flat=True,
+                classes="panel-button",
             )
             yield Button(
                 "⇩\nSxP",
@@ -44,6 +46,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 variant="success",
                 disabled=True,
                 flat=True,
+                classes="panel-button",
             )
             yield Button(
                 "≣\nCSV",
@@ -51,6 +54,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 variant="success",
                 disabled=True,
                 flat=True,
+                classes="panel-button",
             )
             yield Button(
                 "◐\nPNG",
@@ -58,6 +62,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 variant="success",
                 disabled=True,
                 flat=True,
+                classes="panel-button",
             )
             yield Button(
                 "◇\nSVG",
@@ -65,6 +70,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 variant="success",
                 disabled=True,
                 flat=True,
+                classes="panel-button",
             )
 
     with VerticalScroll():
@@ -122,6 +128,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                         id="btn_reset_freq_limits",
                         variant="error",
                         flat=True,
+                        classes="plot-control-button",
                     )
 
                 with Horizontal(classes="plot-controls"):
@@ -134,6 +141,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                         id="btn_reset_y_limits",
                         variant="error",
                         flat=True,
+                        classes="plot-control-button",
                     )
 
                 with Horizontal(classes="plot-controls"):
@@ -143,6 +151,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                         id="btn_apply_limits",
                         variant="primary",
                         flat=True,
+                        classes="plot-control-button",
                     )
 
             with Container(id="measurement_notes_container", classes="panel") as panel:

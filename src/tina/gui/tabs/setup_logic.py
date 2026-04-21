@@ -87,7 +87,8 @@ def update_template_preview(
     template = app.query_one(input_id, Input).value.strip() or default_template
     preview = app.query_one(preview_id, Static)
 
-    validation = validate_export_template_for_app(
+    # Validate template but results are currently rendered-only; keep for side-effects
+    validate_export_template_for_app(
         template,
         allow_path_separators=allow_path_separators,
     )
@@ -115,24 +116,11 @@ def update_template_preview(
         "".join(rendered_markup) if rendered_markup else "[dim](empty)[/dim]"
     )
 
-    theme_vars = app.theme_variables
-    if validation.has_errors:
-        border_color = theme_vars.get("error", "#ff6b6b")
-    elif validation.has_warnings:
-        border_color = theme_vars.get("warning", "#ffa500")
-    else:
-        border_color = (
-            theme_vars.get("border-blurred")
-            or theme_vars.get("border_blurred")
-            or theme_vars.get("panel")
-            or theme_vars.get("text-muted")
-            or "#666666"
-        )
-
-    preview.styles.border_top = ("round", border_color)
-    preview.styles.border_right = ("round", border_color)
-    preview.styles.border_bottom = ("round", border_color)
-    preview.styles.border_left = ("round", border_color)
+    # The preview border color was previously computed and applied via
+    # programmatic styles. We now rely on a CSS class to control preview
+    # appearance and keep theme logic centralized in tcss. Apply the class
+    # unconditionally; tcss can reference theme variables for color decisions.
+    preview.set_class(True, "preview-border-round")
 
 
 def get_host_autocomplete_choices(app) -> list[AutocompleteChoice]:

@@ -57,8 +57,30 @@ Checkbox {
     content-align: left middle;
 }
 
+/* Make Button default non-invasive: prefer explicit sizing. Previously Button
+   defaulted to width: 100% which caused nested component Buttons to be
+   stretched accidentally when broad selectors matched them. Change the
+   default to `auto` and provide an explicit `.fill-button` helper for
+   cases where full-width is desired. */
 Button {
     margin: 1 0 0 0;
+    width: auto;
+}
+
+/* Centralized panel button sizing: prefer `panel-button` for buttons that
+   live in action/tool panels. Keep `.fill-button` for backward compatibility
+   but prefer `panel-button` in new code. */
+.panel-button,
+Button.panel-button {
+    min-width: 16;
+    height: 2;
+    margin: 0 0 0 1;
+    padding: 0 2;
+}
+
+/* Helper class kept for backward compatibility; prefer panel-button. */
+.fill-button,
+Button.fill-button {
     width: 100%;
 }
 
@@ -182,8 +204,9 @@ DataTable {
     color: $success;
 }
 
-#action_bar Button {
-    width: auto;
+#action_bar Button.panel-button {
+    /* Action-bar buttons use the centralized panel-button sizing. Keep
+       border:none here to preserve the flat appearance. */
     min-width: 16;
     margin: 0 0 0 1;
     height: 2;
@@ -191,8 +214,42 @@ DataTable {
     padding: 0 2;
 }
 
+/* Utility classes replacing inline styles set in Python */
+.no-margin {
+    margin: 0 0 0 0;
+}
+
+.main-image-display {
+    width: 40;
+    height: 20;
+}
+
+.main-image-fallback {
+    width: 15;
+    height: 6;
+}
+
+.preview-border-round {
+    border: round $panel;
+}
+
 #footer_separator {
     dock: bottom;
     height: 1;
     background: $secondary;
+}
+
+/* Small helper for plot control buttons that are compact and should not
+   inherit panel-button sizing. These live inside `.plot-controls` and are
+   narrow by design. */
+.plot-control-button,
+Button.plot-control-button {
+    width: auto;
+    min-width: 8;
+    margin-left: 1;
+}
+
+.plot-control-button.narrow,
+Button.plot-control-button.narrow {
+    min-width: 5;
 }

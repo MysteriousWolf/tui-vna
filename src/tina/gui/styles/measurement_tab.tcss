@@ -123,7 +123,7 @@
     border: none;
 }
 
-#output_file_container Button {
+#output_file_container Button.panel-button {
     height: 2;
     border: none;
     padding: 0 2;
