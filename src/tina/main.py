@@ -147,7 +147,11 @@ class VNAApp(App):
         """
         Initialize application state, configuration, worker, timers, and temporary plot directory.
 
-        Sets up settings (via SettingsManager), measurement worker, VNA configuration, UI-related flags and caches, timers used for polling and debouncing, tools tab state, a temporary directory for rendered plot images, and detects terminal font/program for consistent rendering.
+        Sets up settings (via SettingsManager), measurement worker, and VNA
+        configuration. Also initializes UI-related flags and caches, timers used
+        for polling and debouncing, tools tab state, a temporary directory for
+        rendered plot images, and detects the terminal font and program for
+        consistent rendering.
 
         Parameters:
             test_updates (bool): When True, enable test-mode update behavior used by the background update checker (shows test/welcome notifications).
