@@ -136,6 +136,7 @@ class VNAApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("ctrl+d", "toggle_debug_scpi", "SCPI Debug", show=False),
+        Binding("ctrl+s", "save_back", "Save measurement notes", show=False),
     ]
 
     TITLE = "TINA - Terminal UI Network Analyzer"
@@ -2503,6 +2504,141 @@ class VNAApp(App):
             preview.update(self.measurement_notes)
         else:
             preview.update("No notes yet")
+
+    def action_save_back(self) -> None:
+        """Save measurement notes/metadata back into the original source file (Ctrl+S).
+
+        Only supported for imported measurement outputs where a touchstone_path
+        exists and the file is a .s2p. Rewrites TINA comment blocks (notes and
+        machine-readable metadata) while preserving the numeric Touchstone data.
+        """
+        try:
+            # Sync editor contents first
+            self._sync_measurement_notes_from_editor()
+
+            if not self.last_measurement:
+                self.notify("No measurement loaded to save", timeout=2)
+                return
+
+            s2p_path = self.last_measurement.get("touchstone_path")
+            if not s2p_path or not os.path.exists(s2p_path):
+                self.notify("No original Touchstone file available to save", timeout=2)
+                return
+
+            if Path(s2p_path).suffix.lower() != ".s2p":
+                self.notify("Save-back only supported for .s2p files", timeout=2)
+                return
+
+            # Read original file
+            with open(s2p_path, encoding="utf-8") as f:
+                orig_text = f.read()
+
+            # Parse existing import to extract numeric lines and option line
+            # We'll reuse TouchstoneExporter.import_with_metadata to validate
+            try:
+                # Validate original file can be parsed; result not needed here
+                TouchstoneExporter.import_with_metadata(s2p_path)
+            except Exception as e:
+                self.log_message(
+                    f"Failed to parse original .s2p for save-back: {e}", "error"
+                )
+                self.notify(
+                    f"Failed to parse original .s2p: {e}", severity="error", timeout=3
+                )
+                return
+
+            # Build new metadata payload based on current app state
+            exported_traces = list(self._get_selected_export_params().keys()) or list(
+                self.last_measurement.get("sparams", {}).keys()
+            )
+            new_touchstone_metadata = self._build_touchstone_export_metadata(
+                exported_traces=exported_traces,
+            )
+
+            # Ensure the setup restore history is touched with this path
+            try:
+                self.settings_manager.touch_setup_restore_history(str(s2p_path))
+                self.settings_manager.save(self.settings)
+            except Exception:
+                pass
+
+            # Reconstruct file: keep non-TINA comment header lines, then notes block,
+            # then option line + numeric data unchanged, then machine metadata block.
+            lines = orig_text.splitlines()
+
+            # Separate sections
+            header_lines: list[str] = []
+            option_and_data_lines: list[str] = []
+
+            in_data = False
+            for raw in lines:
+                line = raw.rstrip("\n")
+                stripped = line.strip()
+                if not in_data and stripped and not stripped.startswith("!"):
+                    # First non-comment line is the option line; start data capture
+                    in_data = True
+                if in_data:
+                    option_and_data_lines.append(line)
+                else:
+                    # Keep header comments that are not TINA blocks; they will be
+                    # replaced by regenerated notes/metadata blocks below
+                    if stripped.startswith("!"):
+                        # Check for TINA markers and skip existing TINA blocks
+                        content = TouchstoneExporter._strip_comment_prefix(stripped)
+                        if content in (
+                            "TINA NOTES BEGIN",
+                            "TINA NOTES END",
+                            "TINA METADATA BEGIN",
+                            "TINA METADATA END",
+                        ):
+                            # skip marker line
+                            continue
+                        header_lines.append(line)
+                    else:
+                        header_lines.append(line)
+
+            # Build notes and metadata comment blocks
+            notes_lines = TouchstoneExporter._build_notes_comment_lines(
+                str(self.measurement_notes or "")
+            )
+            metadata_lines = TouchstoneExporter._serialize_metadata_comment_lines(
+                new_touchstone_metadata
+            )
+
+            # Compose final file content
+            out_lines: list[str] = []
+            # Ensure basic header exists: if original had 'HP E5071B' line, keep it;
+            # otherwise start with a minimal header
+            if header_lines:
+                out_lines.extend(header_lines)
+            else:
+                out_lines.append("! HP E5071B S-Parameter Data")
+
+            # Append generated notes block
+            out_lines.extend(notes_lines)
+
+            # Append option and numeric data
+            out_lines.extend(option_and_data_lines)
+
+            # Append serialized metadata at EOF
+            out_lines.extend(metadata_lines)
+
+            # Write back atomically
+            tmp_path = Path(s2p_path).with_suffix(".s2p.tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(out_lines) + "\n")
+            Path(s2p_path).replace(tmp_path)
+
+            self.log_message(f"Saved notes back to: {s2p_path}", "success")
+            self.notify(
+                f"Saved notes to {Path(s2p_path).name}",
+                severity="information",
+                timeout=3,
+            )
+
+        except Exception as e:
+            self.log_message(f"Save-back failed: {e}", "error")
+            self.notify(f"Save-back failed: {e}", severity="error", timeout=4)
 
     async def _refresh_tools_plot(self) -> None:
         """Render the Tools tab plot for the currently selected trace."""
