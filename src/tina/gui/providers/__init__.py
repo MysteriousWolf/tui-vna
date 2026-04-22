@@ -3,7 +3,10 @@
 from .command_palette import (
     CursorMarkerProvider,
     PlotBackendProvider,
+    RecentExportedProvider,
+    RecentImportedProvider,
     SetupImportProvider,
+    SetupRestoreHistoryProvider,
     StatusPollProvider,
 )
 
@@ -12,4 +15,7 @@ __all__ = [
     "PlotBackendProvider",
     "SetupImportProvider",
     "StatusPollProvider",
+    "SetupRestoreHistoryProvider",
+    "RecentExportedProvider",
+    "RecentImportedProvider",
 ]

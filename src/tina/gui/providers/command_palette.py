@@ -214,3 +214,66 @@ class SetupImportProvider(Provider):
         """Trigger setup-only import from a measurement output file."""
         app = cast(_VNAAppProtocol, self.app)
         app.action_import_setup_from_measurement_output()
+
+
+class SetupRestoreHistoryProvider(Provider):
+    """Provide MRU entries for restoring setups from previous imports."""
+
+    async def discover(self) -> Hits:
+        app = cast(_VNAAppProtocol, self.app)
+        for path in getattr(app.settings, "setup_restore_history", []) or []:
+            yield Hit(1.0, path, partial(app.action_restore_setup_from_path, path))
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        app = cast(_VNAAppProtocol, self.app)
+        for path in getattr(app.settings, "setup_restore_history", []) or []:
+            score = matcher.match(path)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(path),
+                    partial(app.action_restore_setup_from_path, path),
+                )
+
+
+class RecentExportedProvider(Provider):
+    """Provide MRU entries for recently exported measurements."""
+
+    async def discover(self) -> Hits:
+        app = cast(_VNAAppProtocol, self.app)
+        for path in getattr(app.settings, "recent_exported_measurements", []) or []:
+            yield Hit(1.0, path, partial(app.action_open_recent_measurement, path))
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        app = cast(_VNAAppProtocol, self.app)
+        for path in getattr(app.settings, "recent_exported_measurements", []) or []:
+            score = matcher.match(path)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(path),
+                    partial(app.action_open_recent_measurement, path),
+                )
+
+
+class RecentImportedProvider(Provider):
+    """Provide MRU entries for recently imported measurements."""
+
+    async def discover(self) -> Hits:
+        app = cast(_VNAAppProtocol, self.app)
+        for path in getattr(app.settings, "recent_imported_measurements", []) or []:
+            yield Hit(1.0, path, partial(app.action_open_recent_measurement, path))
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        app = cast(_VNAAppProtocol, self.app)
+        for path in getattr(app.settings, "recent_imported_measurements", []) or []:
+            score = matcher.match(path)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(path),
+                    partial(app.action_open_recent_measurement, path),
+                )

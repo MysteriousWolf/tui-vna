@@ -107,6 +107,10 @@ class AppSettings:
     folder_template: str = "measurement"
     filename_template_history: list[str] = field(default_factory=list)
     folder_template_history: list[str] = field(default_factory=list)
+    # Command-palette / MRU histories
+    setup_restore_history: list[str] = field(default_factory=list)
+    recent_exported_measurements: list[str] = field(default_factory=list)
+    recent_imported_measurements: list[str] = field(default_factory=list)
     export_bundle_s2p: bool = True
     export_bundle_csv: bool = False
     export_bundle_png: bool = True
@@ -149,6 +153,7 @@ class SettingsManager:
     MAX_PORT_HISTORY = 10
     MAX_HOST_HISTORY = 10
     MAX_TEMPLATE_HISTORY = 20
+    MAX_COMMAND_HISTORY = 10
 
     def __init__(self):
         """Initialize settings manager."""
@@ -389,3 +394,47 @@ class SettingsManager:
             history.remove(normalized)
         history.insert(0, normalized)
         setattr(self.settings, field_name, history[: self.MAX_TEMPLATE_HISTORY])
+
+    def touch_setup_restore_history(self, value: str) -> None:
+        """Move a setup-restore path to the top of the MRU history."""
+        normalized = value.strip()
+        if not normalized:
+            return
+
+        history = list(getattr(self.settings, "setup_restore_history") or [])
+        if normalized in history:
+            history.remove(normalized)
+        history.insert(0, normalized)
+        setattr(
+            self.settings, "setup_restore_history", history[: self.MAX_COMMAND_HISTORY]
+        )
+
+    def add_recent_exported_measurement(self, path: str) -> None:
+        """Record a recently exported measurement path (most recent first)."""
+        if not path or not str(path).strip():
+            return
+        p = str(path)
+        history = list(getattr(self.settings, "recent_exported_measurements") or [])
+        if p in history:
+            history.remove(p)
+        history.insert(0, p)
+        setattr(
+            self.settings,
+            "recent_exported_measurements",
+            history[: self.MAX_COMMAND_HISTORY],
+        )
+
+    def add_recent_imported_measurement(self, path: str) -> None:
+        """Record a recently imported measurement path (most recent first)."""
+        if not path or not str(path).strip():
+            return
+        p = str(path)
+        history = list(getattr(self.settings, "recent_imported_measurements") or [])
+        if p in history:
+            history.remove(p)
+        history.insert(0, p)
+        setattr(
+            self.settings,
+            "recent_imported_measurements",
+            history[: self.MAX_COMMAND_HISTORY],
+        )
