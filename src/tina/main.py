@@ -2585,12 +2585,15 @@ class VNAApp(App):
             )
 
             # Prefer .s2p for applying save-back since it stores numeric data + metadata
+            self.log_message("save-back: checking s2p path", "debug")
             if s2p_path:
                 try:
                     s2p_resolved = str(Path(s2p_path).resolve())
                 except Exception:
                     s2p_resolved = s2p_path
                 if os.path.exists(s2p_resolved) and Path(s2p_resolved).suffix.lower() == ".s2p":
+                    # Debug: report resolved s2p path
+                    self.log_message(f"save-back: s2p exists, resolved={s2p_resolved!r}", "debug")
                     target_for_history = s2p_resolved
                     # Read original file
                     with open(s2p_resolved, encoding="utf-8") as f:
@@ -2689,14 +2692,25 @@ class VNAApp(App):
                     except Exception:
                         pass
                     return
+                else:
+                    self.log_message("save-back: s2p path does not exist or wrong suffix", "debug")
 
             # If we reach here, no valid s2p save-back occurred; try embedding into PNG or SVG
+            self.log_message("save-back: checking png path", "debug")
             if png_path and os.path.exists(png_path):
                 try:
                     try:
                         png_resolved = str(Path(png_path).resolve())
                     except Exception:
                         png_resolved = png_path
+                    # Debug PNG resolution and existence
+                    try:
+                        self.log_message(
+                            f"save-back: png resolved={png_resolved!r}, exists={os.path.exists(png_resolved)}",
+                            "debug",
+                        )
+                    except Exception:
+                        pass
                     new_image_metadata = self._build_image_export_metadata(
                         exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
                         plot_type=str(self.settings.plot_type or "magnitude"),
@@ -2720,12 +2734,21 @@ class VNAApp(App):
                     self.notify(f"PNG save-back failed: {e}", severity="error", timeout=3)
                     return
 
+            self.log_message("save-back: checking svg path", "debug")
             elif svg_path and os.path.exists(svg_path):
                 try:
                     try:
                         svg_resolved = str(Path(svg_path).resolve())
                     except Exception:
                         svg_resolved = svg_path
+                    # Debug SVG resolution and existence
+                    try:
+                        self.log_message(
+                            f"save-back: svg resolved={svg_resolved!r}, exists={os.path.exists(svg_resolved)}",
+                            "debug",
+                        )
+                    except Exception:
+                        pass
                     new_image_metadata = self._build_image_export_metadata(
                         exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
                         plot_type=str(self.settings.plot_type or "magnitude"),
