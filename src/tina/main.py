@@ -2693,18 +2693,28 @@ class VNAApp(App):
             # If we reach here, no valid s2p save-back occurred; try embedding into PNG or SVG
             if png_path and os.path.exists(png_path):
                 try:
-                    embed_png_metadata(
-                        png_path,
-                        notes_markdown=str(self.measurement_notes or ""),
-                        machine_settings=new_touchstone_metadata,
+                    try:
+                        png_resolved = str(Path(png_path).resolve())
+                    except Exception:
+                        png_resolved = png_path
+                    new_image_metadata = self._build_image_export_metadata(
+                        exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
+                        plot_type=str(self.settings.plot_type or "magnitude"),
+                        output_path=png_resolved,
                     )
-                    self.log_message(f"Embedded notes into PNG: {png_path}", "success")
+                    # Avoid double-embedding notes: machine_settings already contains notes
+                    embed_png_metadata(
+                        png_resolved,
+                        notes_markdown="",
+                        machine_settings=new_image_metadata,
+                    )
+                    self.log_message(f"Embedded notes into PNG: {png_resolved}", "success")
                     self.notify(
-                        f"Saved notes to {Path(png_path).name}",
+                        f"Saved notes to {Path(png_resolved).name}",
                         severity="information",
                         timeout=3,
                     )
-                    target_for_history = png_path
+                    target_for_history = png_resolved
                 except Exception as e:
                     self.log_message(f"Failed to embed PNG metadata: {e}", "error")
                     self.notify(f"PNG save-back failed: {e}", severity="error", timeout=3)
@@ -2712,18 +2722,28 @@ class VNAApp(App):
 
             elif svg_path and os.path.exists(svg_path):
                 try:
-                    embed_svg_metadata(
-                        svg_path,
-                        notes_markdown=str(self.measurement_notes or ""),
-                        machine_settings=new_touchstone_metadata,
+                    try:
+                        svg_resolved = str(Path(svg_path).resolve())
+                    except Exception:
+                        svg_resolved = svg_path
+                    new_image_metadata = self._build_image_export_metadata(
+                        exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
+                        plot_type=str(self.settings.plot_type or "magnitude"),
+                        output_path=svg_resolved,
                     )
-                    self.log_message(f"Embedded notes into SVG: {svg_path}", "success")
+                    # Avoid double-embedding notes: machine_settings already contains notes
+                    embed_svg_metadata(
+                        svg_resolved,
+                        notes_markdown="",
+                        machine_settings=new_image_metadata,
+                    )
+                    self.log_message(f"Embedded notes into SVG: {svg_resolved}", "success")
                     self.notify(
-                        f"Saved notes to {Path(svg_path).name}",
+                        f"Saved notes to {Path(svg_resolved).name}",
                         severity="information",
                         timeout=3,
                     )
-                    target_for_history = svg_path
+                    target_for_history = svg_resolved
                 except Exception as e:
                     self.log_message(f"Failed to embed SVG metadata: {e}", "error")
                     self.notify(f"SVG save-back failed: {e}", severity="error", timeout=3)
