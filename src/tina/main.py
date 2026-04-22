@@ -1264,14 +1264,14 @@ class VNAApp(App):
         self.query_one("#btn_read_params", Button).disabled = not self.connected
         self.query_one("#btn_measure", Button).disabled = not self.connected
         self._refresh_export_button_labels()
-        # Save-back button should only be enabled when a measurement with a
-        # touchstone_path is available (we can only save back to an original
-        # .s2p file).
+        # Save-back button should be enabled when any saveable path exists
+        # (original .s2p, exported .png, or exported .svg).
         try:
-            self.query_one("#btn_save_notes", Button).disabled = (
-                self.last_measurement is None
-                or self.last_measurement.get("touchstone_path") is None
+            lm = self.last_measurement
+            can_save = lm is not None and (
+                lm.get("touchstone_path") or lm.get("png_path") or lm.get("svg_path")
             )
+            self.query_one("#btn_save_notes", Button).disabled = not can_save
         except Exception:
             # If button not mounted yet, ignore
             pass
@@ -2554,7 +2554,11 @@ class VNAApp(App):
                 )
                 return
 
+            # Prefer touchstone path for save-back metadata storage, but allow
+            # saving back into PNG or SVG images as well when present.
             s2p_path = self.last_measurement.get("touchstone_path")
+            png_path = self.last_measurement.get("png_path")
+            svg_path = self.last_measurement.get("svg_path")
             # Log the configured path and whether it currently exists so we can
             # diagnose save-back failures. Resolve to absolute path to avoid
             # issues when cwd changes or relative paths are used.
@@ -2567,55 +2571,10 @@ class VNAApp(App):
                 )
             except Exception:
                 pass
-            if not s2p_path:
-                self.notify(
-                    "No original Touchstone file available to save",
-                    severity="error",
-                    timeout=2,
-                )
-                return
-            try:
-                s2p_resolved = str(Path(s2p_path).resolve())
-            except Exception:
-                s2p_resolved = s2p_path
-            exists = os.path.exists(s2p_resolved)
-            try:
-                self.log_message(f"action_save_back: resolved path: {s2p_resolved}, exists={exists}", "debug")
-            except Exception:
-                pass
-            if not exists:
-                self.notify(
-                    "No original Touchstone file available to save",
-                    severity="error",
-                    timeout=2,
-                )
-                return
-
-            if Path(s2p_resolved).suffix.lower() != ".s2p":
-                self.notify(
-                    "Save-back only supported for .s2p files",
-                    severity="error",
-                    timeout=2,
-                )
-                return
-
-            # Read original file
-            with open(s2p_resolved, encoding="utf-8") as f:
-                orig_text = f.read()
-
-            # Parse existing import to extract numeric lines and option line
-            # We'll reuse TouchstoneExporter.import_with_metadata to validate
-            try:
-                # Validate original file can be parsed; result not needed here
-                TouchstoneExporter.import_with_metadata(s2p_resolved)
-            except Exception as e:
-                self.log_message(
-                    f"Failed to parse original .s2p for save-back: {e}", "error"
-                )
-                self.notify(
-                    f"Failed to parse original .s2p: {e}", severity="error", timeout=3
-                )
-                return
+            # If we have an s2p path and it exists, use the existing save-back
+            # behavior that rewrites the touchstone file. Otherwise, if a PNG or
+            # SVG path exists, embed the metadata into the image file.
+            target_for_history = None
 
             # Build new metadata payload based on current app state
             exported_traces = list(self._get_selected_export_params().keys()) or list(
@@ -2625,89 +2584,166 @@ class VNAApp(App):
                 exported_traces=exported_traces,
             )
 
-            # Ensure the setup restore history is touched with this path
+            # Prefer .s2p for applying save-back since it stores numeric data + metadata
+            if s2p_path:
+                try:
+                    s2p_resolved = str(Path(s2p_path).resolve())
+                except Exception:
+                    s2p_resolved = s2p_path
+                if os.path.exists(s2p_resolved) and Path(s2p_resolved).suffix.lower() == ".s2p":
+                    target_for_history = s2p_resolved
+                    # Read original file
+                    with open(s2p_resolved, encoding="utf-8") as f:
+                        orig_text = f.read()
+
+                    # Parse existing import to extract numeric lines and option line
+                    try:
+                        TouchstoneExporter.import_with_metadata(s2p_resolved)
+                    except Exception as e:
+                        self.log_message(
+                            f"Failed to parse original .s2p for save-back: {e}", "error"
+                        )
+                        self.notify(
+                            f"Failed to parse original .s2p: {e}", severity="error", timeout=3
+                        )
+                        return
+
+                    # Reconstruct file: keep non-TINA comment header lines, then notes block,
+                    # then option line + numeric data unchanged, then machine metadata block.
+                    lines = orig_text.splitlines()
+
+                    # Separate sections
+                    header_lines: list[str] = []
+                    option_and_data_lines: list[str] = []
+
+                    in_data = False
+                    for raw in lines:
+                        line = raw.rstrip("\n")
+                        stripped = line.strip()
+                        if not in_data and stripped and not stripped.startswith("!"):
+                            # First non-comment line is the option line; start data capture
+                            in_data = True
+                        if in_data:
+                            option_and_data_lines.append(line)
+                        else:
+                            # Keep header comments that are not TINA blocks; they will be
+                            # replaced by regenerated notes/metadata blocks below
+                            if stripped.startswith("!"):
+                                # Check for TINA markers and skip existing TINA blocks
+                                content = TouchstoneExporter._strip_comment_prefix(stripped)
+                                if content in (
+                                    "TINA NOTES BEGIN",
+                                    "TINA NOTES END",
+                                    "TINA METADATA BEGIN",
+                                    "TINA METADATA END",
+                                ):
+                                    # skip marker line
+                                    continue
+                                header_lines.append(line)
+                            else:
+                                header_lines.append(line)
+
+                    # Build notes and metadata comment blocks
+                    notes_lines = TouchstoneExporter._build_notes_comment_lines(
+                        str(self.measurement_notes or "")
+                    )
+                    metadata_lines = TouchstoneExporter._serialize_metadata_comment_lines(
+                        new_touchstone_metadata
+                    )
+
+                    # Compose final file content
+                    out_lines: list[str] = []
+                    # Ensure basic header exists: if original had 'HP E5071B' line, keep it;
+                    # otherwise start with a minimal header
+                    if header_lines:
+                        out_lines.extend(header_lines)
+                    else:
+                        out_lines.append("! HP E5071B S-Parameter Data")
+
+                    # Append generated notes block
+                    out_lines.extend(notes_lines)
+
+                    # Append option and numeric data
+                    out_lines.extend(option_and_data_lines)
+
+                    # Append serialized metadata at EOF
+                    out_lines.extend(metadata_lines)
+
+                    # Write back atomically
+                    target_path = Path(s2p_resolved)
+                    tmp_path = target_path.with_suffix(".s2p.tmp")
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(out_lines) + "\n")
+                    target_path.replace(tmp_path)
+
+                    self.log_message(f"Saved notes back to: {s2p_resolved}", "success")
+                    self.notify(
+                        f"Saved notes to {Path(s2p_resolved).name}",
+                        severity="information",
+                        timeout=3,
+                    )
+                    # Touch history
+                    try:
+                        self.settings_manager.touch_setup_restore_history(str(s2p_resolved))
+                        self.settings_manager.save(self.settings)
+                    except Exception:
+                        pass
+                    return
+
+            # If we reach here, no valid s2p save-back occurred; try embedding into PNG or SVG
+            if png_path and os.path.exists(png_path):
+                try:
+                    embed_png_metadata(
+                        png_path,
+                        notes_markdown=str(self.measurement_notes or ""),
+                        machine_settings=new_touchstone_metadata,
+                    )
+                    self.log_message(f"Embedded notes into PNG: {png_path}", "success")
+                    self.notify(
+                        f"Saved notes to {Path(png_path).name}",
+                        severity="information",
+                        timeout=3,
+                    )
+                    target_for_history = png_path
+                except Exception as e:
+                    self.log_message(f"Failed to embed PNG metadata: {e}", "error")
+                    self.notify(f"PNG save-back failed: {e}", severity="error", timeout=3)
+                    return
+
+            elif svg_path and os.path.exists(svg_path):
+                try:
+                    embed_svg_metadata(
+                        svg_path,
+                        notes_markdown=str(self.measurement_notes or ""),
+                        machine_settings=new_touchstone_metadata,
+                    )
+                    self.log_message(f"Embedded notes into SVG: {svg_path}", "success")
+                    self.notify(
+                        f"Saved notes to {Path(svg_path).name}",
+                        severity="information",
+                        timeout=3,
+                    )
+                    target_for_history = svg_path
+                except Exception as e:
+                    self.log_message(f"Failed to embed SVG metadata: {e}", "error")
+                    self.notify(f"SVG save-back failed: {e}", severity="error", timeout=3)
+                    return
+
+            else:
+                self.notify(
+                    "No original file available to save",
+                    severity="error",
+                    timeout=2,
+                )
+                return
+
+            # Update setup restore history if we saved into an image
             try:
-                self.settings_manager.touch_setup_restore_history(str(s2p_resolved))
-                self.settings_manager.save(self.settings)
+                if target_for_history:
+                    self.settings_manager.touch_setup_restore_history(str(target_for_history))
+                    self.settings_manager.save(self.settings)
             except Exception:
                 pass
-
-            # Reconstruct file: keep non-TINA comment header lines, then notes block,
-            # then option line + numeric data unchanged, then machine metadata block.
-            lines = orig_text.splitlines()
-
-            # Separate sections
-            header_lines: list[str] = []
-            option_and_data_lines: list[str] = []
-
-            in_data = False
-            for raw in lines:
-                line = raw.rstrip("\n")
-                stripped = line.strip()
-                if not in_data and stripped and not stripped.startswith("!"):
-                    # First non-comment line is the option line; start data capture
-                    in_data = True
-                if in_data:
-                    option_and_data_lines.append(line)
-                else:
-                    # Keep header comments that are not TINA blocks; they will be
-                    # replaced by regenerated notes/metadata blocks below
-                    if stripped.startswith("!"):
-                        # Check for TINA markers and skip existing TINA blocks
-                        content = TouchstoneExporter._strip_comment_prefix(stripped)
-                        if content in (
-                            "TINA NOTES BEGIN",
-                            "TINA NOTES END",
-                            "TINA METADATA BEGIN",
-                            "TINA METADATA END",
-                        ):
-                            # skip marker line
-                            continue
-                        header_lines.append(line)
-                    else:
-                        header_lines.append(line)
-
-            # Build notes and metadata comment blocks
-            notes_lines = TouchstoneExporter._build_notes_comment_lines(
-                str(self.measurement_notes or "")
-            )
-            metadata_lines = TouchstoneExporter._serialize_metadata_comment_lines(
-                new_touchstone_metadata
-            )
-
-            # Compose final file content
-            out_lines: list[str] = []
-            # Ensure basic header exists: if original had 'HP E5071B' line, keep it;
-            # otherwise start with a minimal header
-            if header_lines:
-                out_lines.extend(header_lines)
-            else:
-                out_lines.append("! HP E5071B S-Parameter Data")
-
-            # Append generated notes block
-            out_lines.extend(notes_lines)
-
-            # Append option and numeric data
-            out_lines.extend(option_and_data_lines)
-
-            # Append serialized metadata at EOF
-            out_lines.extend(metadata_lines)
-
-            # Write back atomically
-            # Write back atomically using the resolved path so replace() acts
-            # on the correct file even if the path was relative originally.
-            target_path = Path(s2p_resolved)
-            tmp_path = target_path.with_suffix(".s2p.tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(out_lines) + "\n")
-            target_path.replace(tmp_path)
-
-            self.log_message(f"Saved notes back to: {s2p_resolved}", "success")
-            self.notify(
-                f"Saved notes to {Path(s2p_resolved).name}",
-                severity="information",
-                timeout=3,
-            )
 
         except Exception as e:
             self.log_message(f"Save-back failed: {e}", "error")
