@@ -159,8 +159,7 @@ def compose_measurement_tab(app) -> ComposeResult:
                 # click to save notes back to the original file (save-back).
                 # Pattern mirrors the copy/help affordance used in the Tools tab.
                 panel.border_title = (
-                    "Notes "
-                    "[@click='app.handle_save_notes'][on $primary] 💾 [/ ]"
+                    "Notes " "[@click='app.handle_save_notes'][on $primary] 💾 [/ ]"
                 )
                 with Horizontal(id="measurement_notes_split"):
                     with Container(id="measurement_notes_editor_wrap"):

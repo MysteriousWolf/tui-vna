@@ -16,10 +16,10 @@ from tkinter import filedialog
 import matplotlib
 import numpy as np
 from textual import on, work
-from textual.events import Key
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.events import Key
 from textual.widgets import (
     Button,
     Checkbox,
@@ -242,7 +242,7 @@ class VNAApp(App):
                     classes="panel-button",
                 )
                 yield Button(
-                    "🔍\nRead Parameters",
+                    "🔍\nRead",
                     id="btn_read_params",
                     variant="default",
                     disabled=True,
@@ -258,7 +258,7 @@ class VNAApp(App):
                     classes="panel-button",
                 )
                 yield Button(
-                    "📁\nImport File",
+                    "📁\nImport",
                     id="btn_import_results",
                     variant="warning",
                     flat=True,
@@ -1262,7 +1262,9 @@ class VNAApp(App):
         self._refresh_export_button_labels()
         # Save-back button should only be enabled when a measurement is loaded
         try:
-            self.query_one("#btn_save_notes", Button).disabled = self.last_measurement is None
+            self.query_one("#btn_save_notes", Button).disabled = (
+                self.last_measurement is None
+            )
         except Exception:
             # If button not mounted yet, ignore
             pass
@@ -2537,16 +2539,26 @@ class VNAApp(App):
             self._sync_measurement_notes_from_editor()
 
             if not self.last_measurement:
-                self.notify("No measurement loaded to save", severity="error", timeout=2)
+                self.notify(
+                    "No measurement loaded to save", severity="error", timeout=2
+                )
                 return
 
             s2p_path = self.last_measurement.get("touchstone_path")
             if not s2p_path or not os.path.exists(s2p_path):
-                self.notify("No original Touchstone file available to save", severity="error", timeout=2)
+                self.notify(
+                    "No original Touchstone file available to save",
+                    severity="error",
+                    timeout=2,
+                )
                 return
 
             if Path(s2p_path).suffix.lower() != ".s2p":
-                self.notify("Save-back only supported for .s2p files", severity="error", timeout=2)
+                self.notify(
+                    "Save-back only supported for .s2p files",
+                    severity="error",
+                    timeout=2,
+                )
                 return
 
             # Read original file
@@ -2830,7 +2842,9 @@ class VNAApp(App):
                 event.prevent_default()
             except Exception:
                 pass
-            self.log_message("handle_notes_key: detected Ctrl+S — invoking action_save_back", "debug")
+            self.log_message(
+                "handle_notes_key: detected Ctrl+S — invoking action_save_back", "debug"
+            )
             self.action_save_back()
 
     @on(Button.Pressed, "#btn_apply_limits")
