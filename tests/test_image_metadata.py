@@ -159,6 +159,33 @@ class TestEmbedPngMetadata:
             assert "tina_metadata_yaml" in image.info
 
 
+    def test_embed_png_metadata_replaces_prior_tina_chunks_without_duplication(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """Repeated PNG embedding should refresh TINA metadata while keeping other text."""
+        image_path = tmp_path / "plot.png"
+        Image.new("RGB", (10, 10), color="green").save(image_path)
+
+        embed_png_metadata(
+            image_path,
+            notes_markdown="first notes",
+            machine_settings=sample_machine_settings,
+        )
+        embed_png_metadata(
+            image_path,
+            notes_markdown="updated notes",
+            machine_settings={
+                **sample_machine_settings,
+                "setup": {**sample_machine_settings["setup"], "host": "updated-host"},
+            },
+        )
+
+        with Image.open(image_path) as image:
+            assert image.info["tina_notes_markdown"] == "updated notes"
+            assert image.info["tina_metadata_yaml"].count("host: updated-host") == 1
+            assert "first notes" not in image.info["tina_notes_markdown"]
+
+
 @pytest.mark.unit
 class TestEmbedSvgMetadata:
     """Tests for SVG metadata embedding."""
@@ -251,6 +278,36 @@ class TestEmbedSvgMetadata:
                 notes_markdown="notes",
                 machine_settings=sample_machine_settings,
             )
+
+
+    def test_embed_svg_metadata_replaces_existing_tina_blocks_instead_of_duplicating(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """Repeated SVG embedding should replace prior TINA blocks and stay idempotent."""
+        image_path = tmp_path / "plot.svg"
+        image_path.write_text('<svg><rect width="10" height="10"/></svg>', encoding="utf-8")
+
+        embed_svg_metadata(
+            image_path,
+            notes_markdown="first notes",
+            machine_settings=sample_machine_settings,
+        )
+        embed_svg_metadata(
+            image_path,
+            notes_markdown="updated notes",
+            machine_settings={
+                **sample_machine_settings,
+                "setup": {**sample_machine_settings["setup"], "host": "updated-host"},
+            },
+        )
+
+        content = image_path.read_text(encoding="utf-8")
+
+        assert content.count("TINA NOTES BEGIN") == 1
+        assert content.count("TINA METADATA BEGIN") == 1
+        assert "first notes" not in content
+        assert "updated notes" in content
+        assert "host: updated-host" in content
 
 
 @pytest.mark.unit

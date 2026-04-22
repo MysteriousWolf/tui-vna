@@ -181,6 +181,10 @@ class _FakeApp:
             ),
         )
         self._import_measurement_output = MagicMock()
+        self._apply_import_result = cast(
+            Any,
+            lambda result: VNAApp._apply_import_result(cast(Any, self), result),
+        )
         self._restore_setup_from_metadata = cast(
             Any,
             lambda metadata: VNAApp._restore_setup_from_metadata(
@@ -1545,6 +1549,43 @@ class TestDirectMeasurementDataExports:
 @pytest.mark.unit
 class TestMeasurementImportNotifications:
     """Tests for metadata-aware measurement import notifications."""
+
+    def test_handle_import_complete_restores_state_and_resets_loading(self) -> None:
+        """IMPORT_COMPLETE should apply results and reset the loading state."""
+        app = _FakeApp(None)
+        freqs = np.array([1.0e6, 2.0e6], dtype=float)
+        sparams = {
+            "S11": (
+                np.array([-10.0, -11.0], dtype=float),
+                np.array([5.0, 6.0], dtype=float),
+            )
+        }
+        app._import_in_flight = True
+
+        with (
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._handle_worker_message(
+                cast(Any, app),
+                SimpleNamespace(
+                    type=MessageType.IMPORT_COMPLETE,
+                    data=_build_import_result(
+                        file_path="/tmp/import_complete.s2p",
+                        restore_measurement=True,
+                        notes="notes",
+                        setup={"freq_unit": "MHz"},
+                        measurement_metadata={"plot_s11": True},
+                        freqs=freqs,
+                        sparams=sparams,
+                    ),
+                ),
+            )
+
+        assert app.last_measurement is not None
+        assert app._import_in_flight is False
+        app.enable_buttons_for_state.assert_called_once()
+        app.reset_progress.assert_called_once()
 
     def test_import_notification_reports_loaded_file_summary(self) -> None:
         """Import should show a toaster with the loaded file summary."""

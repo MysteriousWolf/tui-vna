@@ -7,12 +7,19 @@ Uses helper to consume progress messages properly.
 
 import queue
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from src.tina.drivers.base import VNAConfig
+from src.tina.export import embed_png_metadata, embed_svg_metadata
+from src.tina.utils.touchstone import TouchstoneExporter
 from src.tina.worker import (
+    ImportRequest,
+    ImportResult,
     LogMessage,
     MeasurementWorker,
     MessageType,
@@ -315,6 +322,162 @@ class TestWorkerProgressUpdates:
         # But CONNECTED should always arrive
 
         worker.stop()
+
+    @pytest.mark.integration
+    def test_import_touchstone_emits_progress_and_complete(self, tmp_path: Path):
+        """Touchstone import should emit staged progress and an ImportResult."""
+        export_path = TouchstoneExporter().export(
+            frequencies_hz=np.array([1.0e6, 2.0e6, 3.0e6], dtype=float),
+            s_parameters={
+                "S11": (
+                    np.array([-10.0, -11.0, -12.0], dtype=float),
+                    np.array([5.0, 6.0, 7.0], dtype=float),
+                ),
+                "S21": (
+                    np.array([-1.0, -1.5, -2.0], dtype=float),
+                    np.array([45.0, 46.0, 47.0], dtype=float),
+                ),
+            },
+            output_path=str(tmp_path),
+            filename="worker_import.s2p",
+            notes_markdown="worker notes",
+            metadata={
+                "setup": {"freq_unit": "MHz"},
+                "measurement": {"plot_s11": True, "plot_s21": True},
+            },
+        )
+
+        worker = MeasurementWorker()
+        worker.start()
+        worker.send_command(
+            MessageType.IMPORT,
+            ImportRequest(file_path=export_path, restore_measurement=True),
+        )
+
+        progress_messages: list[str] = []
+        completed = None
+        for _ in range(12):
+            msg = worker.get_response(timeout=1.0)
+            if msg.type == MessageType.IMPORT_PROGRESS:
+                progress_messages.append(msg.data.message)
+            elif msg.type == MessageType.IMPORT_COMPLETE:
+                completed = msg
+                break
+            elif msg.type == MessageType.ERROR:
+                completed = msg
+                break
+
+        try:
+            assert completed is not None
+            assert completed.type == MessageType.IMPORT_COMPLETE
+            assert progress_messages[0] == "Resolving import path..."
+            assert progress_messages[-1] == "Import complete"
+            assert len(progress_messages) >= 5
+
+            result = completed.data
+            assert isinstance(result, ImportResult)
+            assert result.notes == "worker notes"
+            assert result.paths["touchstone_path"] == str(Path(export_path).resolve())
+            assert result.measurement["restore_measurement"] is True
+            restored_freqs = result.measurement["frequencies"]
+            assert restored_freqs is not None
+            assert len(restored_freqs) == 3
+            restored_sparams = result.measurement["sparams"]
+            assert isinstance(restored_sparams, dict)
+            assert set(restored_sparams) == {"S11", "S21"}
+        finally:
+            worker.stop()
+
+    @pytest.mark.integration
+    def test_import_png_recovers_measurement_payload(self, tmp_path: Path):
+        """PNG import should rebuild measurement data from embedded raw metadata."""
+        export_path = tmp_path / "worker_import.png"
+        Image.new("RGB", (8, 8), color="black").save(export_path)
+        embed_png_metadata(
+            export_path,
+            notes_markdown="png notes",
+            machine_settings={
+                "setup": {"freq_unit": "MHz"},
+                "measurement": {
+                    "plot_s11": True,
+                    "raw_data": {
+                        "freqs_hz": [1.0e6, 2.0e6],
+                        "sparams": {
+                            "S11": {
+                                "magnitude_db": [-10.0, -11.0],
+                                "phase_deg": [5.0, 6.0],
+                            }
+                        },
+                    },
+                },
+            },
+        )
+
+        worker = MeasurementWorker()
+        worker.start()
+        worker.send_command(
+            MessageType.IMPORT,
+            ImportRequest(file_path=str(export_path), restore_measurement=True),
+        )
+
+        completed = pytest.consume_worker_messages_until(
+            worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
+        )
+        try:
+            assert completed is not None
+            assert completed.type == MessageType.IMPORT_COMPLETE
+            result = completed.data
+            assert isinstance(result, ImportResult)
+            assert result.notes == "png notes"
+            assert result.paths["png_path"] == str(export_path.resolve())
+            restored_freqs = result.measurement["frequencies"]
+            assert restored_freqs is not None
+            assert len(restored_freqs) == 2
+            restored_sparams = result.measurement["sparams"]
+            assert isinstance(restored_sparams, dict)
+            assert set(restored_sparams) == {"S11"}
+        finally:
+            worker.stop()
+
+    @pytest.mark.integration
+    def test_import_svg_setup_only_returns_without_measurement_arrays(
+        self, tmp_path: Path
+    ) -> None:
+        """Setup-only SVG import should avoid reconstructing measurement arrays."""
+        export_path = tmp_path / "worker_import.svg"
+        export_path.write_text("<svg></svg>", encoding="utf-8")
+        embed_svg_metadata(
+            export_path,
+            notes_markdown="svg notes",
+            machine_settings={
+                "setup": {"host": "172.16.0.10", "freq_unit": "GHz"},
+                "measurement": {"plot_type": "phase"},
+            },
+        )
+
+        worker = MeasurementWorker()
+        worker.start()
+        worker.send_command(
+            MessageType.IMPORT,
+            ImportRequest(file_path=str(export_path), restore_measurement=False),
+        )
+
+        completed = pytest.consume_worker_messages_until(
+            worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
+        )
+        try:
+            assert completed is not None
+            assert completed.type == MessageType.IMPORT_COMPLETE
+            result = completed.data
+            assert isinstance(result, ImportResult)
+            assert result.notes == "svg notes"
+            assert result.paths["svg_path"] == str(export_path.resolve())
+            assert result.measurement["restore_measurement"] is False
+            assert result.measurement["frequencies"] is None
+            assert result.measurement["sparams"] is None
+            assert result.setup["host"] == "172.16.0.10"
+        finally:
+            worker.stop()
 
 
 class TestWorkerErrorHandling:

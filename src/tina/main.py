@@ -2720,7 +2720,7 @@ class VNAApp(App):
                     tmp_path = target_path.with_suffix(".s2p.tmp")
                     with open(tmp_path, "w", encoding="utf-8") as f:
                         f.write("\n".join(out_lines) + "\n")
-                    target_path.replace(tmp_path)
+                    tmp_path.replace(target_path)
 
                     self.log_message(f"Saved notes back to: {s2p_resolved}", "success")
                     self.notify(

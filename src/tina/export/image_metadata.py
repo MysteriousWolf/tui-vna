@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -85,6 +86,31 @@ def read_png_metadata(image_path: str | Path) -> ImageExportMetadata:
     )
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write bytes to a sibling temp file and atomically replace the target."""
+    fd, tmp_name = tempfile.mkstemp(
+        suffix=f"{path.suffix}.tmp",
+        prefix=f"{path.stem}_",
+        dir=path.parent,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with open(fd, "wb", closefd=True) as handle:
+            handle.write(data)
+        tmp_path.replace(path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write UTF-8 text to a sibling temp file and atomically replace the target."""
+    _atomic_write_bytes(path, text.encode("utf-8"))
+
+
 def embed_png_metadata(
     image_path: str | Path,
     *,
@@ -102,6 +128,8 @@ def embed_png_metadata(
         png_info = PngImagePlugin.PngInfo()
 
         for key, value in image.info.items():
+            if key in {_PNG_NOTES_KEY, _PNG_METADATA_KEY}:
+                continue
             if isinstance(key, (str, bytes)) and isinstance(value, str):
                 png_info.add_text(key, value)
 
@@ -113,7 +141,11 @@ def embed_png_metadata(
             _dump_yaml(metadata.machine_settings),
         )
 
-        image.save(path, format="PNG", pnginfo=png_info)
+        image.load()
+        with tempfile.SpooledTemporaryFile() as buffer:
+            image.save(buffer, format="PNG", pnginfo=png_info)
+            buffer.seek(0)
+            _atomic_write_bytes(path, buffer.read())
 
 
 def _build_svg_comment_block(
@@ -196,6 +228,20 @@ def read_svg_metadata(image_path: str | Path) -> ImageExportMetadata:
     )
 
 
+def _strip_svg_comment_block(
+    svg_text: str,
+    *,
+    begin_marker: str,
+    end_marker: str,
+) -> str:
+    """Remove one TINA SVG metadata block if present."""
+    pattern = re.compile(
+        rf"\n?<!--\s*{re.escape(begin_marker)}\n.*?\n{re.escape(end_marker)}\s*-->\n?",
+        re.DOTALL,
+    )
+    return pattern.sub("\n", svg_text)
+
+
 def embed_svg_metadata(
     image_path: str | Path,
     *,
@@ -210,13 +256,24 @@ def embed_svg_metadata(
     )
 
     svg_text = path.read_text(encoding="utf-8")
+    if "<svg" not in svg_text:
+        raise ValueError("SVG file does not contain an <svg> root element")
+
+    svg_text = _strip_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_NOTES_BEGIN,
+        end_marker=_SVG_NOTES_END,
+    )
+    svg_text = _strip_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_METADATA_BEGIN,
+        end_marker=_SVG_METADATA_END,
+    )
+
     comment_block = _build_svg_comment_block(
         notes_markdown=metadata.notes_markdown,
         machine_settings=metadata.machine_settings,
     )
-
-    if "<svg" not in svg_text:
-        raise ValueError("SVG file does not contain an <svg> root element")
 
     insert_at = svg_text.find(">")
     if insert_at == -1:
@@ -225,4 +282,4 @@ def embed_svg_metadata(
     updated_svg = (
         svg_text[: insert_at + 1] + "\n" + comment_block + svg_text[insert_at + 1 :]
     )
-    path.write_text(updated_svg, encoding="utf-8")
+    _atomic_write_text(path, updated_svg)
