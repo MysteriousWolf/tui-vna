@@ -1264,10 +1264,13 @@ class VNAApp(App):
         self.query_one("#btn_read_params", Button).disabled = not self.connected
         self.query_one("#btn_measure", Button).disabled = not self.connected
         self._refresh_export_button_labels()
-        # Save-back button should only be enabled when a measurement is loaded
+        # Save-back button should only be enabled when a measurement with a
+        # touchstone_path is available (we can only save back to an original
+        # .s2p file).
         try:
             self.query_one("#btn_save_notes", Button).disabled = (
                 self.last_measurement is None
+                or self.last_measurement.get("touchstone_path") is None
             )
         except Exception:
             # If button not mounted yet, ignore
@@ -2556,7 +2559,12 @@ class VNAApp(App):
             # diagnose save-back failures. Resolve to absolute path to avoid
             # issues when cwd changes or relative paths are used.
             try:
-                self.log_message(f"action_save_back: touchstone_path (raw): {s2p_path}", "debug")
+                # Log raw touchstone_path value so we can diagnose what is
+                # being stored (including None or relative paths). Use repr
+                # style formatting to make empties and special chars visible.
+                self.log_message(
+                    f"action_save_back: touchstone_path={s2p_path!r}", "debug"
+                )
             except Exception:
                 pass
             if not s2p_path:
