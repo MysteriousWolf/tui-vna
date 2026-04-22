@@ -264,6 +264,14 @@ class VNAApp(App):
                     flat=True,
                     classes="panel-button",
                 )
+                yield Button(
+                    "💾\nSave",
+                    id="btn_save_notes",
+                    variant="default",
+                    disabled=True,
+                    flat=True,
+                    classes="panel-button",
+                )
 
         yield StatusFooter()
 
@@ -1252,6 +1260,12 @@ class VNAApp(App):
         self.query_one("#btn_read_params", Button).disabled = not self.connected
         self.query_one("#btn_measure", Button).disabled = not self.connected
         self._refresh_export_button_labels()
+        # Save-back button should only be enabled when a measurement is loaded
+        try:
+            self.query_one("#btn_save_notes", Button).disabled = self.last_measurement is None
+        except Exception:
+            # If button not mounted yet, ignore
+            pass
 
     def update_connect_button(self):
         """
@@ -2514,6 +2528,11 @@ class VNAApp(App):
         machine-readable metadata) while preserving the numeric Touchstone data.
         """
         try:
+            # Ensure save button is enabled when this action is invoked
+            try:
+                self.query_one("#btn_save_notes", Button).disabled = False
+            except Exception:
+                pass
             # Sync editor contents first
             self._sync_measurement_notes_from_editor()
 
@@ -2641,16 +2660,33 @@ class VNAApp(App):
             self.log_message(f"Save-back failed: {e}", "error")
             self.notify(f"Save-back failed: {e}", severity="error", timeout=4)
 
+    @on(Button.Pressed, "#btn_save_notes")
     def handle_save_notes(self) -> None:
         """Handler called from measurement notes panel save affordance.
 
         Delegates to action_save_back so the same save-back logic is used.
         """
+        # This handler is bound to the Save button pressed event
         try:
+            # Disable button while saving to prevent double-press
+            try:
+                btn = self.query_one("#btn_save_notes", Button)
+                btn.disabled = True
+            except Exception:
+                btn = None
+
             # Call the action to perform save-back
             self.action_save_back()
         except Exception as e:
             self.log_message(f"Save notes handler failed: {e}", "error")
+        finally:
+            # Re-enable button after save attempt
+            try:
+                if btn is None:
+                    btn = self.query_one("#btn_save_notes", Button)
+                btn.disabled = False
+            except Exception:
+                pass
 
     async def _refresh_tools_plot(self) -> None:
         """Render the Tools tab plot for the currently selected trace."""
@@ -3470,6 +3506,11 @@ class VNAApp(App):
         self.query_one("#btn_export_csv", Button).disabled = False
         self.query_one("#btn_export_png", Button).disabled = False
         self.query_one("#btn_export_svg", Button).disabled = False
+        # Enable Save button when measurement is present
+        try:
+            self.query_one("#btn_save_notes", Button).disabled = False
+        except Exception:
+            pass
         self._refresh_export_button_labels()
 
 
