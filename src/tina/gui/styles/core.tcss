@@ -72,7 +72,7 @@ Button {
    but prefer `panel-button` in new code. */
 .panel-button,
 Button.panel-button {
-    min-width: 12;
+    min-width: 10;
     height: 2;
     margin: 0 0 0 1;
     padding: 0 2;
