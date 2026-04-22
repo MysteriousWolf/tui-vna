@@ -39,6 +39,8 @@ from textual.widgets import (
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
 
+from tina.tools import DistortionTool, MeasureTool
+
 from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
@@ -1299,6 +1301,139 @@ class VNAApp(App):
     def action_copy_log(self) -> None:
         """Copy visible log entries as plain text to the system clipboard."""
         log_logic.copy_log(self)
+
+    def action_copy_tool_results(self) -> None:
+        """Build a plain-text representation of the current tool results and copy to clipboard.
+
+        Handles both the cursor (measure) and distortion tools. Uses the same
+        computation functions as the UI but emits plain text without markup.
+        """
+        active = self.settings.tools_active_tool
+        if not active:
+            self.notify("Activate a tool to copy results", timeout=2)
+            return
+        if self.last_measurement is None:
+            self.notify("No measurement loaded", timeout=2)
+            return
+
+        freqs = self.last_measurement["freqs"]
+        sparams = self.last_measurement["sparams"]
+        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+        multiplier = unit_multipliers.get(freq_unit, 1e6)
+
+        trace = self._get_tools_trace()
+        try:
+            plot_type = self.query_one("#select_tools_plot_type", Select).value
+        except Exception:
+            plot_type = self.settings.tools_plot_type or "magnitude"
+
+        try:
+            if active == "cursor":
+                result = MeasureTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    getattr(self, "_tools_cursor1_hz", None),
+                    getattr(self, "_tools_cursor2_hz", None),
+                )
+                lines: list[str] = []
+                # Cursor 1
+                if (
+                    result.cursor1_freq_hz is not None
+                    and result.cursor1_value is not None
+                ):
+                    f1 = result.cursor1_freq_hz / multiplier
+                    v1 = result.cursor1_value
+                    lines.append(
+                        f"Cursor 1: {f1:.4f} {freq_unit}   {v1:.4f} {result.unit_label}"
+                    )
+                # Cursor 2
+                if (
+                    result.cursor2_freq_hz is not None
+                    and result.cursor2_value is not None
+                ):
+                    f2 = result.cursor2_freq_hz / multiplier
+                    v2 = result.cursor2_value
+                    lines.append(
+                        f"Cursor 2: {f2:.4f} {freq_unit}   {v2:.4f} {result.unit_label}"
+                    )
+                # Delta
+                if result.delta_value is not None:
+                    # frequency delta if both freqs present
+                    if (
+                        result.cursor1_freq_hz is not None
+                        and result.cursor2_freq_hz is not None
+                    ):
+                        fd = (
+                            abs(
+                                float(result.cursor2_freq_hz)
+                                - float(result.cursor1_freq_hz)
+                            )
+                            / multiplier
+                        )
+                        fd_s = f"{fd:.4f} {freq_unit}"
+                    else:
+                        fd_s = ""
+                    dv = result.delta_value
+                    lines.append(f"Delta: {fd_s}   {dv:.4f} {result.unit_label}")
+
+                txt = "\n".join(lines) if lines else ""
+
+            elif active == "distortion":
+                result = DistortionTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    getattr(self, "_tools_cursor1_hz", None),
+                    getattr(self, "_tools_cursor2_hz", None),
+                )
+                lines = []
+                # Header
+                unit = result.unit_label
+                lines.append(f"n, Component, c_n ({unit}), Δy_n ({unit})")
+                # Import component names locally to avoid top-level dependency
+                try:
+                    from tina.tools.distortion import COMPONENT_NAMES
+
+                    dist_names = COMPONENT_NAMES
+
+                except Exception:
+                    dist_names = [str(n) for n in range(6)]
+
+                ex = result.extra or {}
+                coeffs = ex.get("coeffs", [])
+                delta_y = ex.get("delta_y", [])
+                for n in range(max(len(dist_names), len(coeffs), len(delta_y))):
+                    name = dist_names[n] if n < len(dist_names) else f"Comp{n}"
+                    c = f"{coeffs[n]:.4f}" if n < len(coeffs) else ""
+                    if n == 0:
+                        dy = "—"
+                    else:
+                        dy = f"{delta_y[n]:.4f}" if n < len(delta_y) else ""
+                    lines.append(f"{n}, {name}, {c}, {dy}")
+
+                txt = "\n".join(lines)
+
+            else:
+                txt = ""
+        except Exception as e:
+            self.log_message(f"Failed to build tool results for copy: {e}", "error")
+            txt = ""
+
+        if not txt:
+            # Nothing to copy
+            self.notify("No tool results to copy", timeout=2)
+            return
+
+        try:
+            self.copy_to_clipboard(txt)
+            self.notify("Tool results copied to clipboard")
+        except Exception as e:
+            self.log_message(f"Copy to clipboard failed: {e}", "error")
+            self.notify("Failed to copy tool results", timeout=2)
 
     @on(Button.Pressed, "#btn_connect")
     def handle_connect(self) -> None:
