@@ -17,19 +17,19 @@ All notable changes to this project will be documented in this file.
 - Units done: 1 (templating), 2 (setup output UI), 3 (CSV export)
   4 (measurement notes UI), 5 (notes + metadata), 6 (PNG/SVG metadata),
   7 (import/recovery), 8 (alt minimal export), 9 (frequency-entry),
-  10 (extrema navigation in tools), 11 (copy full tool results).
+  10 (extrema navigation in tools), 11 (copy full tool results),
+  12 (persistent command-palette history), 13 (save-back workflow).
 
--### Pending / Deferred
-- Units 12–13: persistent command-palette history and save-back workflow.
+### Pending / Deferred
 - Extrema search on the Measurement tab was intentionally skipped for
   stability reasons (TUI modifier handling issues).
 
 ### Release Prep Checklist
-- [ ] Update README requirements (note SciPy dependency)
-- [ ] Document the no-tab-switch import UX in README
+- [x] Update README requirements (note SciPy dependency)
+- [x] Document the no-tab-switch import UX in README
 - [ ] Bump version and tag release
-- [ ] Ensure CI runs the same lint/test commands
-- [ ] Add unit tests for extrema cache and SciPy/NumPy fallback
+- [x] Ensure CI runs the same lint/test commands
+- [x] Add unit tests for extrema cache and SciPy/NumPy fallback
 - [ ] Verify PyInstaller binary builds (optional)
 
 ## Previous releases

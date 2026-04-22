@@ -33,6 +33,11 @@ Completed so far:
 - **Functional Unit 6 — PNG/SVG embedded metadata and future recovery payload**
 - **Functional Unit 7 — Import and recovery from measurement outputs**
 - **Functional Unit 8 — Alt-modified minimal export mode**
+- **Functional Unit 9 — Reusable frequency-entry component**
+- **Functional Unit 10 — Extrema navigation in tools**
+- **Functional Unit 11 — Copy full tool results**
+- **Functional Unit 12 — Persistent command-palette history**
+- **Functional Unit 13 — Save-back workflow**
 
 Additional implementation notes:
 
