@@ -65,3 +65,4 @@ coverage.json
 
 # UV lock file (package, not application)
 uv.lock
+IMPLEMENTATION_PLAN.md
