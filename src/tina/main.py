@@ -2641,6 +2641,17 @@ class VNAApp(App):
             self.log_message(f"Save-back failed: {e}", "error")
             self.notify(f"Save-back failed: {e}", severity="error", timeout=4)
 
+    def handle_save_notes(self) -> None:
+        """Handler called from measurement notes panel save affordance.
+
+        Delegates to action_save_back so the same save-back logic is used.
+        """
+        try:
+            # Call the action to perform save-back
+            self.action_save_back()
+        except Exception as e:
+            self.log_message(f"Save notes handler failed: {e}", "error")
+
     async def _refresh_tools_plot(self) -> None:
         """Render the Tools tab plot for the currently selected trace."""
         await refresh_tools_plot(self)
