@@ -2518,16 +2518,16 @@ class VNAApp(App):
             self._sync_measurement_notes_from_editor()
 
             if not self.last_measurement:
-                self.notify("No measurement loaded to save", timeout=2)
+                self.notify("No measurement loaded to save", severity="error", timeout=2)
                 return
 
             s2p_path = self.last_measurement.get("touchstone_path")
             if not s2p_path or not os.path.exists(s2p_path):
-                self.notify("No original Touchstone file available to save", timeout=2)
+                self.notify("No original Touchstone file available to save", severity="error", timeout=2)
                 return
 
             if Path(s2p_path).suffix.lower() != ".s2p":
-                self.notify("Save-back only supported for .s2p files", timeout=2)
+                self.notify("Save-back only supported for .s2p files", severity="error", timeout=2)
                 return
 
             # Read original file
@@ -2743,11 +2743,47 @@ class VNAApp(App):
             sender_id = getattr(event.sender, "id", None)
         except Exception:
             sender_id = None
+        # Debug/log the incoming event so we can see how Textual reports it
+        try:
+            self.log_message(
+                f"handle_notes_key: sender={sender_id}, key={getattr(event, 'key', None)}, character={getattr(event, 'character', None)}, event={str(event)}",
+                "debug",
+            )
+        except Exception:
+            pass
+
         if sender_id != "measurement_notes_editor":
             return
 
-        if event.key == "ctrl+s":
-            event.prevent_default()
+        # Textual Key events differ between versions; try multiple matches.
+        is_ctrl_s = False
+        # Preferred: use event.matches("ctrl+s") when available
+        matches = getattr(event, "matches", None)
+        if callable(matches):
+            try:
+                is_ctrl_s = matches("ctrl+s")
+            except Exception:
+                is_ctrl_s = False
+
+        # Fallbacks: check key name, modifier flags, or character (ASCII 0x13)
+        if not is_ctrl_s:
+            key = getattr(event, "key", None)
+            char = getattr(event, "character", None)
+            # Common cases: event.key may be "ctrl+s" or just "s" with ctrl flag
+            if key in ("ctrl+s", "C-s", "c-s"):
+                is_ctrl_s = True
+            elif key in ("s", "S") and getattr(event, "ctrl", False):
+                is_ctrl_s = True
+            elif char == "\x13":
+                # ASCII DC3 (Ctrl+S)
+                is_ctrl_s = True
+
+        if is_ctrl_s:
+            try:
+                event.prevent_default()
+            except Exception:
+                pass
+            self.log_message("handle_notes_key: detected Ctrl+S — invoking action_save_back", "debug")
             self.action_save_back()
 
     @on(Button.Pressed, "#btn_apply_limits")
