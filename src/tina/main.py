@@ -694,13 +694,17 @@ class VNAApp(App):
                     imported_freq_unit = imported_freq_unit_value
 
             self.measurement_notes = notes_markdown
+            # Store absolute paths so later save-back checks remain valid even
+            # if the working directory changes. Use resolve() to normalize.
+            abs_file_path = str(Path(file_path).resolve())
+
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
-                "output_path": file_path,
-                "touchstone_path": file_path if suffix == ".s2p" else None,
-                "png_path": file_path if suffix == ".png" else None,
-                "svg_path": file_path if suffix == ".svg" else None,
+                "output_path": abs_file_path,
+                "touchstone_path": abs_file_path if suffix == ".s2p" else None,
+                "png_path": abs_file_path if suffix == ".png" else None,
+                "svg_path": abs_file_path if suffix == ".svg" else None,
                 "freq_unit": imported_freq_unit,
                 "notes": self.measurement_notes,
                 "metadata": imported_metadata,
@@ -1900,18 +1904,21 @@ class VNAApp(App):
 
             # Store measurement data with frequency unit
             freq_unit = self.query_one("#select_freq_unit", Select).value
+            # Ensure we store absolute paths for consistency
+            abs_output_path = str(Path(output_path).resolve())
+
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
-                "output_path": output_path,
-                "touchstone_path": output_path,
+                "output_path": abs_output_path,
+                "touchstone_path": abs_output_path,
                 "csv_path": csv_path,
                 "png_path": png_path,
                 "svg_path": svg_path,
                 "freq_unit": freq_unit,
                 "notes": self.measurement_notes,
             }
-            self.last_output_path = output_path
+            self.last_output_path = abs_output_path
 
             # Set plot checkboxes to match export parameters
             self.query_one("#check_plot_s11", Checkbox).value = self.query_one(
@@ -2545,7 +2552,30 @@ class VNAApp(App):
                 return
 
             s2p_path = self.last_measurement.get("touchstone_path")
-            if not s2p_path or not os.path.exists(s2p_path):
+            # Log the configured path and whether it currently exists so we can
+            # diagnose save-back failures. Resolve to absolute path to avoid
+            # issues when cwd changes or relative paths are used.
+            try:
+                self.log_message(f"action_save_back: touchstone_path (raw): {s2p_path}", "debug")
+            except Exception:
+                pass
+            if not s2p_path:
+                self.notify(
+                    "No original Touchstone file available to save",
+                    severity="error",
+                    timeout=2,
+                )
+                return
+            try:
+                s2p_resolved = str(Path(s2p_path).resolve())
+            except Exception:
+                s2p_resolved = s2p_path
+            exists = os.path.exists(s2p_resolved)
+            try:
+                self.log_message(f"action_save_back: resolved path: {s2p_resolved}, exists={exists}", "debug")
+            except Exception:
+                pass
+            if not exists:
                 self.notify(
                     "No original Touchstone file available to save",
                     severity="error",
@@ -2553,7 +2583,7 @@ class VNAApp(App):
                 )
                 return
 
-            if Path(s2p_path).suffix.lower() != ".s2p":
+            if Path(s2p_resolved).suffix.lower() != ".s2p":
                 self.notify(
                     "Save-back only supported for .s2p files",
                     severity="error",
@@ -2562,14 +2592,14 @@ class VNAApp(App):
                 return
 
             # Read original file
-            with open(s2p_path, encoding="utf-8") as f:
+            with open(s2p_resolved, encoding="utf-8") as f:
                 orig_text = f.read()
 
             # Parse existing import to extract numeric lines and option line
             # We'll reuse TouchstoneExporter.import_with_metadata to validate
             try:
                 # Validate original file can be parsed; result not needed here
-                TouchstoneExporter.import_with_metadata(s2p_path)
+                TouchstoneExporter.import_with_metadata(s2p_resolved)
             except Exception as e:
                 self.log_message(
                     f"Failed to parse original .s2p for save-back: {e}", "error"
@@ -2589,7 +2619,7 @@ class VNAApp(App):
 
             # Ensure the setup restore history is touched with this path
             try:
-                self.settings_manager.touch_setup_restore_history(str(s2p_path))
+                self.settings_manager.touch_setup_restore_history(str(s2p_resolved))
                 self.settings_manager.save(self.settings)
             except Exception:
                 pass
@@ -2656,14 +2686,17 @@ class VNAApp(App):
             out_lines.extend(metadata_lines)
 
             # Write back atomically
-            tmp_path = Path(s2p_path).with_suffix(".s2p.tmp")
+            # Write back atomically using the resolved path so replace() acts
+            # on the correct file even if the path was relative originally.
+            target_path = Path(s2p_resolved)
+            tmp_path = target_path.with_suffix(".s2p.tmp")
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(out_lines) + "\n")
-            Path(s2p_path).replace(tmp_path)
+            target_path.replace(tmp_path)
 
-            self.log_message(f"Saved notes back to: {s2p_path}", "success")
+            self.log_message(f"Saved notes back to: {s2p_resolved}", "success")
             self.notify(
-                f"Saved notes to {Path(s2p_path).name}",
+                f"Saved notes to {Path(s2p_resolved).name}",
                 severity="information",
                 timeout=3,
             )

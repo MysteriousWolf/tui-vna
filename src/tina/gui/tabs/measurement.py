@@ -155,12 +155,10 @@ def compose_measurement_tab(app) -> ComposeResult:
                     )
 
             with Container(id="measurement_notes_container", classes="panel") as panel:
-                # Add a small save affordance to the Notes panel title so users can
-                # click to save notes back to the original file (save-back).
-                # Pattern mirrors the copy/help affordance used in the Tools tab.
-                panel.border_title = (
-                    "Notes " "[@click='app.handle_save_notes'][on $primary] 💾 [/ ]"
-                )
+                # Notes panel title. Removed the in-title save affordance to
+                # avoid duplicated/hidden controls; saving is handled via
+                # Ctrl+S or the explicit Save button elsewhere in the UI.
+                panel.border_title = "Notes"
                 with Horizontal(id="measurement_notes_split"):
                     with Container(id="measurement_notes_editor_wrap"):
                         yield TextArea(
