@@ -727,7 +727,7 @@ This plan intentionally leaves room for implementation discoveries, especially a
 - re-import edge cases
 
 However, the product decisions in this document should be treated as the current
-  design baseline for the feature batch.
+design baseline for the feature batch.
 
 ## Release Prep Checklist
 

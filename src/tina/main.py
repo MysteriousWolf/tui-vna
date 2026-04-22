@@ -16,6 +16,7 @@ from tkinter import filedialog
 import matplotlib
 import numpy as np
 from textual import on, work
+from textual.events import Key
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
@@ -2733,6 +2734,21 @@ class VNAApp(App):
         del event
         self._sync_measurement_notes_from_editor()
         self._refresh_measurement_notes_preview()
+
+    @on(Key)
+    def handle_notes_key(self, event: Key) -> None:
+        """Intercept Ctrl+S in the notes editor to trigger save-back."""
+        # Only handle key events originating from the notes editor
+        try:
+            sender_id = getattr(event.sender, "id", None)
+        except Exception:
+            sender_id = None
+        if sender_id != "measurement_notes_editor":
+            return
+
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            self.action_save_back()
 
     @on(Button.Pressed, "#btn_apply_limits")
     async def handle_apply_limits(self) -> None:
