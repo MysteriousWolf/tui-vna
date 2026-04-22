@@ -20,6 +20,91 @@ from ...tools import DistortionTool, MeasureTool
 from ...tools.distortion import COMPONENT_NAMES as DISTORTION_COMPONENT_NAMES
 
 
+def _tools_plot_state(app) -> dict:
+    """Return the cached Matplotlib state for the Tools plot."""
+    state = getattr(app, "_tools_mpl_plot_state", None)
+    if state is None:
+        state = {}
+        app._tools_mpl_plot_state = state
+    return state
+
+
+async def _ensure_tools_plot_widget(container, widget_class, *args, **kwargs):
+    """Reuse the existing tools plot widget when the widget type matches."""
+    existing_children = list(container.children)
+    existing_widget = existing_children[0] if existing_children else None
+
+    if existing_widget is not None and isinstance(existing_widget, widget_class):
+        for child in existing_children[1:]:
+            await child.remove()
+        return existing_widget, True
+
+    await container.remove_children()
+    widget = widget_class(*args, **kwargs)
+    await container.mount(widget)
+    return widget, False
+
+
+def _clear_tools_overlay_artists(app) -> None:
+    """Remove cursor and distortion overlay artists from the cached axes."""
+    state = _tools_plot_state(app)
+    for artist in state.get("overlay_artists", []):
+        try:
+            artist.remove()
+        except Exception:
+            pass
+    state["overlay_artists"] = []
+
+
+def _update_tools_plot_legend(ax, fg: str, grid: str, base_size: float) -> None:
+    """Rebuild the legend after base or overlay changes."""
+    legend = ax.get_legend()
+    if legend is not None:
+        legend.remove()
+
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+
+    legend = ax.legend(
+        edgecolor=grid,
+        labelcolor=fg,
+        fontsize=base_size * 0.9,
+    )
+    legend.get_frame().set_alpha(0.5)
+    legend.get_frame().set_facecolor("none")
+
+
+def _style_tools_axes(
+    fig,
+    ax,
+    *,
+    freq_unit: str,
+    y_label: str,
+    plot_title: str,
+    fg: str,
+    grid: str,
+) -> float:
+    """Apply consistent styling to the Tools Matplotlib axes."""
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+
+    _font_family, base_size = get_terminal_font()
+    base_size = base_size or 10.0
+
+    ax.set_xlabel(f"Frequency ({freq_unit})", color=fg, fontsize=base_size)
+    ax.set_ylabel(y_label, color=fg, fontsize=base_size)
+    ax.set_title(plot_title, color=fg, fontsize=base_size * 1.2, pad=15)
+    ax.tick_params(colors=fg, labelsize=base_size * 0.85)
+    ax.grid(True, alpha=0.2, color=grid, linestyle="-", linewidth=0.5)
+
+    for spine in ax.spines.values():
+        spine.set_edgecolor(grid)
+        spine.set_linewidth(1)
+
+    return base_size
+
+
 def get_tools_trace(app) -> str:
     """Return the currently selected tools trace, defaulting to S21."""
     try:
@@ -361,6 +446,63 @@ def _detect_candidates_with_smoothing(
     return np.sort(peaks)
 
 
+def _get_cached_distortion_result(
+    app,
+    freqs: np.ndarray,
+    sparams: dict,
+    trace: str,
+    plot_type: str,
+    cursor1_hz: float | None,
+    cursor2_hz: float | None,
+):
+    """Return a cached distortion result for the current data and parameters."""
+    trace_data = sparams.get(trace)
+    if trace_data is None:
+        return DistortionTool().compute(
+            freqs,
+            sparams,
+            trace,
+            plot_type,
+            cursor1_hz,
+            cursor2_hz,
+        )
+
+    mag, phase = trace_data
+    data_key = (id(freqs), id(mag), id(phase))
+    if data_key != getattr(app, "_tools_distortion_cache_last_data_key", None):
+        app._tools_distortion_cache = {}
+        app._tools_distortion_cache_last_data_key = data_key
+
+    cache = getattr(app, "_tools_distortion_cache", None)
+    if cache is None:
+        cache = {}
+        app._tools_distortion_cache = cache
+
+    cache_key = (
+        data_key,
+        str(trace),
+        str(plot_type),
+        float(cursor1_hz) if cursor1_hz is not None else None,
+        float(cursor2_hz) if cursor2_hz is not None else None,
+    )
+    if cache_key in cache:
+        return cache[cache_key]
+
+    result = DistortionTool().compute(
+        freqs,
+        sparams,
+        trace,
+        plot_type,
+        cursor1_hz,
+        cursor2_hz,
+    )
+    try:
+        cache[cache_key] = result
+    except Exception:
+        pass
+    return result
+
+
 def handle_frequency_extrema_navigate(
     app,
     cursor_index: int,
@@ -620,47 +762,86 @@ async def refresh_tools_plot(app) -> None:
         plot_widget.refresh()
 
     else:
-        plot_file = app.plot_temp_dir / "tools_plot.png"
+        plot_generation = getattr(app, "_tools_plot_generation", 0) + 1
+        app._tools_plot_generation = plot_generation
+        plot_file = app.plot_temp_dir / f"tools_plot_{plot_generation}.png"
         dpi = 150
         fixed_width_px = 1920
         fixed_height_px = 1080
 
-        fig, ax = plt.subplots(figsize=(fixed_width_px / dpi, fixed_height_px / dpi))
-        fig.patch.set_alpha(0.0)
-        ax.set_facecolor("none")
-
         fg = plot_colors["fg"]
         grid = plot_colors["grid"]
 
-        ax.plot(freq_axis, data, color=trace_color_hex, linewidth=1.5, label=trace)
-        ax.set_ylim(auto_y_min, auto_y_max)
+        state = _tools_plot_state(app)
+        base_signature = (
+            id(freqs),
+            id(data),
+            trace,
+            plot_type,
+            freq_unit,
+            float(auto_y_min),
+            float(auto_y_max),
+            trace_color_hex,
+            fg,
+            grid,
+            plot_title,
+            y_label,
+        )
+
+        fig = state.get("fig")
+        ax = state.get("ax")
+        if fig is None or ax is None:
+            fig, ax = plt.subplots(figsize=(fixed_width_px / dpi, fixed_height_px / dpi))
+            state["fig"] = fig
+            state["ax"] = ax
+            state["overlay_artists"] = []
+
+        if state.get("base_signature") != base_signature:
+            ax.clear()
+            ax.plot(freq_axis, data, color=trace_color_hex, linewidth=1.5, label=trace)
+            ax.set_ylim(auto_y_min, auto_y_max)
+            state["base_signature"] = base_signature
+            state["plot_file"] = plot_file
+            state["render_size"] = (fixed_width_px, fixed_height_px, dpi)
+        else:
+            state["plot_file"] = plot_file
+
+        _clear_tools_overlay_artists(app)
 
         if cursor1_hz is not None:
             x1 = cursor1_hz / multiplier
-            ax.axvline(x1, color=cursor1_hex, linewidth=1.2, zorder=3)
+            state["overlay_artists"].append(
+                ax.axvline(x1, color=cursor1_hex, linewidth=1.2, zorder=3)
+            )
             if active_tool in ("cursor", "distortion"):
                 y1 = np.interp(cursor1_hz, freqs, data)
-                ax.scatter(
-                    [x1],
-                    [y1],
-                    color=cursor1_hex,
-                    marker=mpl_marker,
-                    s=80,
-                    zorder=5,
+                state["overlay_artists"].append(
+                    ax.scatter(
+                        [x1],
+                        [y1],
+                        color=cursor1_hex,
+                        marker=mpl_marker,
+                        s=80,
+                        zorder=5,
+                    )
                 )
 
         if cursor2_hz is not None:
             x2 = cursor2_hz / multiplier
-            ax.axvline(x2, color=cursor2_hex, linewidth=1.2, zorder=3)
+            state["overlay_artists"].append(
+                ax.axvline(x2, color=cursor2_hex, linewidth=1.2, zorder=3)
+            )
             if active_tool in ("cursor", "distortion"):
                 y2 = np.interp(cursor2_hz, freqs, data)
-                ax.scatter(
-                    [x2],
-                    [y2],
-                    color=cursor2_hex,
-                    marker=mpl_marker,
-                    s=80,
-                    zorder=5,
+                state["overlay_artists"].append(
+                    ax.scatter(
+                        [x2],
+                        [y2],
+                        color=cursor2_hex,
+                        marker=mpl_marker,
+                        s=80,
+                        zorder=5,
+                    )
                 )
 
         if (
@@ -669,7 +850,8 @@ async def refresh_tools_plot(app) -> None:
             and cursor2_hz is not None
             and cursor1_hz != cursor2_hz
         ):
-            result = DistortionTool().compute(
+            result = _get_cached_distortion_result(
+                app,
                 freqs,
                 sparams,
                 trace,
@@ -684,7 +866,9 @@ async def refresh_tools_plot(app) -> None:
                 f_band_axis = np.array(ex["f_band_hz"]) / multiplier
                 f_lo_axis = min(cursor1_hz, cursor2_hz) / multiplier
                 f_hi_axis = max(cursor1_hz, cursor2_hz) / multiplier
-                ax.axvspan(f_lo_axis, f_hi_axis, alpha=0.08, color=fg, zorder=0)
+                state["overlay_artists"].append(
+                    ax.axvspan(f_lo_axis, f_hi_axis, alpha=0.08, color=fg, zorder=0)
+                )
                 comp_enabled = get_distortion_comp_enabled(app)
                 overlay_hex = plot_colors["distortion_overlays"]
                 for n in range(6):
@@ -693,37 +877,31 @@ async def refresh_tools_plot(app) -> None:
                     cumulative = np.zeros(n + 1)
                     cumulative[:] = coeffs[: n + 1]
                     cumulative_y = np.polynomial.legendre.legval(x, cumulative)
-                    ax.plot(
-                        f_band_axis,
-                        cumulative_y,
-                        color=overlay_hex[n],
-                        linestyle=DISTORTION_OVERLAY_STYLES[n],
-                        linewidth=1.5,
-                        label=DISTORTION_OVERLAY_LABELS[n],
-                        zorder=4,
+                    state["overlay_artists"].extend(
+                        ax.plot(
+                            f_band_axis,
+                            cumulative_y,
+                            color=overlay_hex[n],
+                            linestyle=DISTORTION_OVERLAY_STYLES[n],
+                            linewidth=1.5,
+                            label=DISTORTION_OVERLAY_LABELS[n],
+                            zorder=4,
+                        )
                     )
 
-        _font_family, base_size = get_terminal_font()
-        base_size = base_size or 10.0
-        ax.set_xlabel(f"Frequency ({freq_unit})", color=fg, fontsize=base_size)
-        ax.set_ylabel(y_label, color=fg, fontsize=base_size)
-        ax.set_title(plot_title, color=fg, fontsize=base_size * 1.2, pad=15)
-        ax.tick_params(colors=fg, labelsize=base_size * 0.85)
-        ax.grid(True, alpha=0.2, color=grid, linestyle="-", linewidth=0.5)
-        legend = ax.legend(
-            edgecolor=grid,
-            labelcolor=fg,
-            fontsize=base_size * 0.9,
+        base_size = _style_tools_axes(
+            fig,
+            ax,
+            freq_unit=freq_unit,
+            y_label=y_label,
+            plot_title=plot_title,
+            fg=fg,
+            grid=grid,
         )
-        legend.get_frame().set_alpha(0.5)
-        legend.get_frame().set_facecolor("none")
+        _update_tools_plot_legend(ax, fg, grid, base_size)
 
-        for spine in ax.spines.values():
-            spine.set_edgecolor(grid)
-            spine.set_linewidth(1)
-
-        plt.tight_layout()
-        plt.savefig(
+        fig.tight_layout()
+        fig.savefig(
             plot_file,
             dpi=dpi,
             facecolor=fig.get_facecolor(),
@@ -731,13 +909,15 @@ async def refresh_tools_plot(app) -> None:
             bbox_inches="tight",
             transparent=True,
         )
-        plt.close(fig)
-
-        await container.remove_children()
 
         if plot_file.exists() and TEXTUAL_IMAGE_AVAILABLE:
             try:
-                img_widget = ImageWidget(str(plot_file))
+                img_widget, _ = await _ensure_tools_plot_widget(
+                    container,
+                    ImageWidget,
+                    str(plot_file),
+                )
+                img_widget.image = str(plot_file)
                 container_w = container.content_size.width
                 if container_w and container_w > 10:
                     # Previously display_w/aspect were used to compute programmatic
@@ -746,22 +926,35 @@ async def refresh_tools_plot(app) -> None:
                     img_widget.set_class(True, "tools-image-display")
                 else:
                     img_widget.set_class(True, "tools-image-fallback")
-                await container.mount(img_widget)
+                img_widget.refresh()
             except Exception as e:
-                await container.mount(
-                    Static(f"[red]Image display error: {e}[/red]", markup=True)
-                )
-        elif not TEXTUAL_IMAGE_AVAILABLE:
-            await container.mount(
-                Static(
-                    "[yellow]Image backend available, but image display support is missing.[/yellow]",
+                err_widget, _ = await _ensure_tools_plot_widget(
+                    container,
+                    Static,
+                    f"[red]Image display error: {e}[/red]",
                     markup=True,
                 )
+                err_widget.update(f"[red]Image display error: {e}[/red]")
+        elif not TEXTUAL_IMAGE_AVAILABLE:
+            msg = (
+                "[yellow]Image backend available, but image display support is missing.[/yellow]"
             )
+            msg_widget, _ = await _ensure_tools_plot_widget(
+                container,
+                Static,
+                msg,
+                markup=True,
+            )
+            msg_widget.update(msg)
         else:
-            await container.mount(
-                Static("[red]Failed to generate tools plot image.[/red]", markup=True)
+            msg = "[red]Failed to generate tools plot image.[/red]"
+            msg_widget, _ = await _ensure_tools_plot_widget(
+                container,
+                Static,
+                msg,
+                markup=True,
             )
+            msg_widget.update(msg)
 
 
 def run_tools_computation(app) -> None:
@@ -859,7 +1052,8 @@ def run_tools_computation(app) -> None:
         return
 
     if active == "distortion":
-        result = DistortionTool().compute(
+        result = _get_cached_distortion_result(
+            app,
             freqs,
             sparams,
             trace,

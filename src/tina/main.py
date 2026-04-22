@@ -114,6 +114,54 @@ from .worker import (
 )
 
 
+def _render_plot_image_snapshot(
+    freqs: np.ndarray,
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    plot_params: tuple[str, ...],
+    plot_type: str,
+    output_path: Path,
+    dpi: int,
+    pixel_width: int,
+    pixel_height: int,
+    render_scale: int,
+    colors: dict,
+    y_min: float | None,
+    y_max: float | None,
+    plot_data: dict[str, np.ndarray] | None = None,
+) -> None:
+    """Render a plot image from UI-thread snapshots in a worker thread."""
+    if plot_type == "smith":
+        create_smith_chart(
+            freqs,
+            sparams,
+            list(plot_params),
+            output_path,
+            dpi=dpi,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            transparent=True,
+            render_scale=render_scale,
+            colors=colors,
+        )
+    else:
+        create_matplotlib_plot(
+            freqs,
+            sparams,
+            list(plot_params),
+            plot_type,
+            output_path,
+            dpi=dpi,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            transparent=True,
+            render_scale=render_scale,
+            colors=colors,
+            y_min=y_min,
+            y_max=y_max,
+            plot_data=plot_data,
+        )
+
+
 class VNAApp(App):
     """TINA - Terminal UI Network Analyzer"""
 
@@ -180,6 +228,9 @@ class VNAApp(App):
         self.connected = False
         self.measuring = False
         self.last_measurement = None  # Store last measurement data
+        self._measurement_plot_cache = {}
+        self._measurement_plot_cache_measurement_id = None
+        self._plot_render_generation = 0
         self.measurement_notes = ""  # Store raw markdown notes for current measurement
         self.last_output_path = None  # Store last output file path
         self.last_plot_path = None  # Store last plot image path
@@ -187,6 +238,7 @@ class VNAApp(App):
         self._message_check_timer = None  # Timer for checking worker messages
         self._resize_timer = None  # Timer for debouncing resize events
         self._path_update_timer = None  # Timer for updating path label on resize
+        self._plot_refresh_timer = None  # Timer for debouncing plot control changes
         self._poll_timer = None  # Timer for status bar polling
         self._status_poll_in_flight = False  # True while a STATUS_POLL is outstanding
         self._debug_scpi = self.settings.debug_scpi
@@ -199,6 +251,8 @@ class VNAApp(App):
         self._tools_cursor2_hz: float | None = None
         self._tools_resize_timer = None
         self._tools_input_timer = None  # Timer for debouncing cursor input changes
+        self._tools_distortion_cache = {}
+        self._tools_distortion_cache_last_data_key = None
         self._template_input_timer = None
 
         # Create temporary directory for plot images
@@ -425,6 +479,15 @@ class VNAApp(App):
         """
         # Save settings before exit
         self._save_current_settings()
+        try:
+            tools_plot_state = getattr(self, "_tools_mpl_plot_state", None)
+            tools_plot_fig = tools_plot_state.get("fig") if tools_plot_state else None
+            if tools_plot_fig is not None:
+                import matplotlib.pyplot as plt
+
+                plt.close(tools_plot_fig)
+        except Exception:
+            pass
         # Stop worker thread gracefully
         if self.worker:
             self.worker.stop(timeout=5.0)
@@ -863,6 +926,42 @@ class VNAApp(App):
                 output_path=file_path,
             ),
         )
+
+    async def _run_measurement_image_export(
+        self,
+        *,
+        file_path: str,
+        plot_type: str,
+        plot_params: list[str],
+        dpi: int,
+        metadata_writer,
+        minimal_export: bool,
+        kind: str,
+    ) -> None:
+        """Write a measurement bundle image export without blocking plot refresh."""
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._write_image_export(
+                    file_path=file_path,
+                    plot_type=plot_type,
+                    plot_params=plot_params,
+                    dpi=dpi,
+                    metadata_writer=metadata_writer,
+                    minimal_export=minimal_export,
+                ),
+            )
+            self.log_message(
+                f"Saved{self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
+            self._notify_export_result(
+                kind=f"{kind}{self._minimal_export_suffix(minimal_export)}",
+                path=file_path,
+                exported_items=", ".join(plot_params),
+            )
+        except Exception as e:
+            self.log_message(f"Post-measurement processing failed: {str(e)}", "error")
 
     def _restore_setup_from_metadata(self, metadata: dict[str, object]) -> None:
         """Restore Setup tab widgets and persisted settings from imported metadata."""
@@ -1858,51 +1957,38 @@ class VNAApp(App):
                 )
 
             png_path = None
+            image_export_tasks = []
             if self.query_one("#check_export_bundle_png", Checkbox).value:
                 png_path = str(Path(export_folder) / f"{export_filename}.png")
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._write_image_export(
-                        file_path=png_path,
-                        plot_type=str(self.settings.plot_type),
-                        plot_params=exported_trace_names,
-                        dpi=300,
-                        metadata_writer=embed_png_metadata,
-                        minimal_export=minimal_export,
-                    ),
-                )
-                self.log_message(
-                    f"Saved{self._minimal_export_suffix(minimal_export)}: {png_path}",
-                    "success",
-                )
-                self._notify_export_result(
-                    kind=f"PNG{self._minimal_export_suffix(minimal_export)}",
-                    path=png_path,
-                    exported_items=", ".join(exported_trace_names),
+                image_export_tasks.append(
+                    asyncio.create_task(
+                        self._run_measurement_image_export(
+                            file_path=png_path,
+                            plot_type=str(self.settings.plot_type),
+                            plot_params=exported_trace_names,
+                            dpi=300,
+                            metadata_writer=embed_png_metadata,
+                            minimal_export=minimal_export,
+                            kind="PNG",
+                        )
+                    )
                 )
 
             svg_path = None
             if self.query_one("#check_export_bundle_svg", Checkbox).value:
                 svg_path = str(Path(export_folder) / f"{export_filename}.svg")
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._write_image_export(
-                        file_path=svg_path,
-                        plot_type=str(self.settings.plot_type),
-                        plot_params=exported_trace_names,
-                        dpi=150,
-                        metadata_writer=embed_svg_metadata,
-                        minimal_export=minimal_export,
-                    ),
-                )
-                self.log_message(
-                    f"Saved{self._minimal_export_suffix(minimal_export)}: {svg_path}",
-                    "success",
-                )
-                self._notify_export_result(
-                    kind=f"SVG{self._minimal_export_suffix(minimal_export)}",
-                    path=svg_path,
-                    exported_items=", ".join(exported_trace_names),
+                image_export_tasks.append(
+                    asyncio.create_task(
+                        self._run_measurement_image_export(
+                            file_path=svg_path,
+                            plot_type=str(self.settings.plot_type),
+                            plot_params=exported_trace_names,
+                            dpi=150,
+                            metadata_writer=embed_svg_metadata,
+                            minimal_export=minimal_export,
+                            kind="SVG",
+                        )
+                    )
                 )
 
             # Store measurement data with frequency unit
@@ -2460,6 +2546,16 @@ class VNAApp(App):
                 self.last_measurement["output_path"],
             )
 
+    def _schedule_plot_refresh(self) -> None:
+        """Schedule a debounced refresh of the results plot."""
+        if self.last_measurement is None:
+            return
+
+        if self._plot_refresh_timer is not None:
+            self._plot_refresh_timer.stop()
+
+        self._plot_refresh_timer = self.set_timer(0.15, self._redraw_plot)
+
     # ------------------------------------------------------------------ #
     # Tools tab helpers
     # ------------------------------------------------------------------ #
@@ -2860,28 +2956,20 @@ class VNAApp(App):
     )
     async def on_plot_param_change(self, event: Checkbox.Changed) -> None:
         """Handle S-parameter plot checkbox change."""
+        del event
         if self.last_measurement is None:
             return
 
-        # Redraw plot with selected parameters
-        await self._update_results(
-            self.last_measurement["freqs"],
-            self.last_measurement["sparams"],
-            self.last_measurement["output_path"],
-        )
+        self._schedule_plot_refresh()
 
     @on(Select.Changed, "#select_plot_type")
     async def on_plot_type_change(self, event: Select.Changed) -> None:
         """Handle plot type change."""
+        del event
         if self.last_measurement is None:
             return
 
-        # Redraw plot with new type
-        await self._update_results(
-            self.last_measurement["freqs"],
-            self.last_measurement["sparams"],
-            self.last_measurement["output_path"],
-        )
+        self._schedule_plot_refresh()
 
     @on(TextArea.Changed, "#measurement_notes_editor")
     def handle_measurement_notes_change(self, event: TextArea.Changed) -> None:
@@ -3135,8 +3223,14 @@ class VNAApp(App):
             "debug",
         )
 
-        # Get frequency unit from measurement data
+        # Get frequency unit from the current measurement snapshot
         measurement = self.last_measurement or {}
+        measurement_snapshot = (freqs, sparams)
+        measurement_id = id(measurement_snapshot)
+        if measurement_id != self._measurement_plot_cache_measurement_id:
+            self._measurement_plot_cache = {}
+            self._measurement_plot_cache_measurement_id = measurement_id
+
         measurement_freq_unit = measurement.get("freq_unit", "MHz")
         freq_unit = (
             measurement_freq_unit if isinstance(measurement_freq_unit, str) else "MHz"
@@ -3193,6 +3287,8 @@ class VNAApp(App):
         freq_range = (
             f"{filtered_freqs[0] / 1e6:.1f} - {filtered_freqs[-1] / 1e6:.1f} MHz"
         )
+        freq_start_hz = float(filtered_freqs[0])
+        freq_stop_hz = float(filtered_freqs[-1])
 
         # Calculate min, max, avg for all S-parameters (using filtered data)
         stats = {}
@@ -3224,9 +3320,23 @@ class VNAApp(App):
         ):
             plot_params.append("S22")
 
-        # Clear and rebuild results container
+        # Reuse the existing results widget when the widget type stays the same.
+        # This avoids unnecessary unmount/mount churn and reduces visual flicker.
         results_container = self.query_one("#results_container", Container)
-        await results_container.remove_children()
+
+        async def ensure_results_widget(widget_class, *args, **kwargs):
+            existing_children = list(results_container.children)
+            existing_widget = existing_children[0] if existing_children else None
+
+            if existing_widget is not None and isinstance(existing_widget, widget_class):
+                for child in existing_children[1:]:
+                    await child.remove()
+                return existing_widget, True
+
+            await results_container.remove_children()
+            widget = widget_class(*args, **kwargs)
+            await results_container.mount(widget)
+            return widget, False
 
         # Update Results panel title with measurement info
         # Show filtered point count and original count if different
@@ -3242,6 +3352,26 @@ class VNAApp(App):
             # Get plot settings from UI
             plot_type = self.query_one("#select_plot_type", Select).value
             plot_backend = self.settings.plot_backend
+            selected_traces = tuple(plot_params)
+
+            def get_plot_data(param: str):
+                if plot_type != "phase":
+                    if plot_type == "magnitude":
+                        return filtered_sparams[param][0]
+                    return filtered_sparams[param][1]
+
+                cache_key = (
+                    measurement_id,
+                    param,
+                    freq_start_hz,
+                    freq_stop_hz,
+                    plot_type,
+                )
+                cached_data = self._measurement_plot_cache.get(cache_key)
+                if cached_data is None:
+                    cached_data = unwrap_phase(filtered_sparams[param][1])
+                    self._measurement_plot_cache[cache_key] = cached_data
+                return cached_data
 
             # Determine plot title
             if plot_type == "magnitude":
@@ -3279,24 +3409,27 @@ class VNAApp(App):
 
             # Calculate auto Y-axis limits for placeholders
             # Collect all data based on plot type (use filtered data)
-            all_y_data = []
-            for param in plot_params:
-                if plot_type == "magnitude":
-                    param_data = filtered_sparams[param][0]
-                elif plot_type == "phase":
-                    param_data = unwrap_phase(filtered_sparams[param][1])
-                else:  # phase_raw
-                    param_data = filtered_sparams[param][1]
-                all_y_data.append(param_data)
+            all_y_data = [get_plot_data(param) for param in plot_params]
 
             # Calculate auto limits
             auto_y_min = None
             auto_y_max = None
             if all_y_data and plot_type != "smith":
-                combined_data = np.concatenate(all_y_data)
-                auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
-                    combined_data, outlier_percentile=1.0, safety_margin=0.05
+                auto_range_key = (
+                    measurement_id,
+                    selected_traces,
+                    freq_start_hz,
+                    freq_stop_hz,
+                    f"auto_range:{plot_type}",
                 )
+                cached_auto_range = self._measurement_plot_cache.get(auto_range_key)
+                if cached_auto_range is None:
+                    combined_data = np.concatenate(all_y_data)
+                    cached_auto_range = calculate_plot_range_with_outlier_filtering(
+                        combined_data, outlier_percentile=1.0, safety_margin=0.05
+                    )
+                    self._measurement_plot_cache[auto_range_key] = cached_auto_range
+                auto_y_min, auto_y_max = cached_auto_range
 
                 # Update input placeholders with auto-detected values
                 if user_y_min is None:
@@ -3323,23 +3456,25 @@ class VNAApp(App):
             # Check if smith chart is selected
             if plot_type == "smith" and plot_backend == "terminal":
                 # Smith chart not supported in terminal mode
-                await results_container.mount(
-                    Static(
-                        "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
-                        "[dim]Please switch to Image backend to view Smith charts.[/dim]",
-                        markup=True,
-                    )
+                plot_widget, _ = await ensure_results_widget(
+                    Static,
+                    "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
+                    "[dim]Please switch to Image backend to view Smith charts.[/dim]",
+                    markup=True,
+                )
+                plot_widget.update(
+                    "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
+                    "[dim]Please switch to Image backend to view Smith charts.[/dim]"
                 )
             elif plot_backend == "terminal":
                 # Use plotext for terminal-based plotting
                 from textual_plotext import PlotextPlot
 
-                plot_widget = PlotextPlot()
-                await results_container.mount(plot_widget)
+                plot_widget, _ = await ensure_results_widget(PlotextPlot)
 
                 # Configure the plot using the plt property
                 plt_term = plot_widget.plt
-                plt_term.clf()
+                plt_term.clear_data()
 
                 # Plot data as line with braille markers (use filtered data)
                 freq_mhz = filtered_freqs / 1e6
@@ -3355,13 +3490,7 @@ class VNAApp(App):
 
                 # Plot each parameter, filtering out traces with no visible data
                 for param in plot_params:
-                    # Select data based on plot type (use filtered data)
-                    if plot_type == "magnitude":
-                        param_data = filtered_sparams[param][0]
-                    elif plot_type == "phase":
-                        param_data = unwrap_phase(filtered_sparams[param][1])
-                    else:  # phase_raw
-                        param_data = filtered_sparams[param][1]
+                    param_data = get_plot_data(param)
 
                     # Skip empty traces (can happen if all data filtered out)
                     if len(param_data) == 0:
@@ -3398,9 +3527,12 @@ class VNAApp(App):
                 plot_widget.refresh()
 
             else:  # image backend
+                self._plot_render_generation += 1
+                plot_generation = self._plot_render_generation
+
                 # Generate matplotlib plot at fixed high resolution
                 # This avoids regenerating on resize and ensures quality
-                plot_file = self.plot_temp_dir / "current_plot.png"
+                plot_file = self.plot_temp_dir / f"current_plot_{plot_generation}.png"
 
                 # Log for debugging
                 self.log_message(f"Generating plot at: {plot_file}", "debug")
@@ -3424,53 +3556,88 @@ class VNAApp(App):
                 px_w = fixed_width_px
                 px_h = fixed_height_px
 
-                plot_colors = get_plot_colors(self.get_css_variables())
-
-                # Use Smith chart plotter if smith type selected (use filtered data)
-                if plot_type == "smith":
-                    create_smith_chart(
-                        filtered_freqs,
-                        filtered_sparams,
-                        plot_params,
-                        plot_file,
-                        dpi=dpi,
-                        pixel_width=px_w,
-                        pixel_height=px_h,
-                        transparent=True,
-                        render_scale=render_scale,
-                        colors=plot_colors,
+                plot_colors_snapshot = {
+                    key: dict(value) if isinstance(value, dict) else value
+                    for key, value in get_plot_colors(self.get_css_variables()).items()
+                }
+                freqs_snapshot = np.array(filtered_freqs, copy=True)
+                plot_data_snapshot = None
+                if plot_type != "smith":
+                    plot_data_snapshot = {
+                        param: np.array(get_plot_data(param), copy=True)
+                        for param in plot_params
+                    }
+                sparams_snapshot = {
+                    param: (
+                        np.array(filtered_sparams[param][0], copy=True),
+                        np.array(filtered_sparams[param][1], copy=True),
                     )
-                else:
-                    create_matplotlib_plot(
-                        filtered_freqs,
-                        filtered_sparams,
-                        plot_params,
+                    for param in plot_params
+                }
+                y_min_for_render = (
+                    user_y_min if user_y_min is not None else auto_y_min
+                )
+                y_max_for_render = (
+                    user_y_max if user_y_max is not None else auto_y_max
+                )
+
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        _render_plot_image_snapshot,
+                        freqs_snapshot,
+                        sparams_snapshot,
+                        tuple(plot_params),
                         str(plot_type),
                         plot_file,
-                        dpi=dpi,
-                        pixel_width=px_w,
-                        pixel_height=px_h,
-                        transparent=True,
-                        render_scale=render_scale,
-                        colors=plot_colors,
-                        y_min=user_y_min,
-                        y_max=user_y_max,
+                        dpi,
+                        px_w,
+                        px_h,
+                        render_scale,
+                        plot_colors_snapshot,
+                        y_min_for_render,
+                        y_max_for_render,
+                        plot_data_snapshot,
                     )
+                except Exception as e:
+                    if plot_generation != self._plot_render_generation:
+                        self.log_message(
+                            f"Discarding stale plot render failure for generation {plot_generation}",
+                            "debug",
+                        )
+                        return
+                    self.log_message(f"Failed to render plot image: {e}", "error")
+                    plot_widget, _ = await ensure_results_widget(
+                        Static,
+                        f"[red]Failed to generate plot image[/red]\n[dim]Error: {e}[/dim]",
+                        markup=True,
+                    )
+                    plot_widget.update(
+                        f"[red]Failed to generate plot image[/red]\n[dim]Error: {e}[/dim]"
+                    )
+                    plot_file = None
+
+                if plot_generation != self._plot_render_generation:
+                    self.log_message(
+                        f"Discarding stale plot render generation {plot_generation}",
+                        "debug",
+                    )
+                    return
 
                 # Store plot path for export
                 self.last_plot_path = plot_file
 
                 # Verify file was created
-                if not plot_file.exists():
+                if plot_file is None or not plot_file.exists():
                     self.log_message(
                         f"Error: Plot file not created at {plot_file}", "error"
                     )
-                    await results_container.mount(
-                        Static(
-                            "[red]Failed to generate plot image[/red]",
-                            markup=True,
-                        )
+                    plot_widget, _ = await ensure_results_widget(
+                        Static,
+                        "[red]Failed to generate plot image[/red]",
+                        markup=True,
                     )
+                    plot_widget.update("[red]Failed to generate plot image[/red]")
                 else:
                     self.log_message(
                         f"Plot file created: {plot_file.stat().st_size} bytes", "debug"
@@ -3512,7 +3679,11 @@ class VNAApp(App):
                             f"Creating image widget for: {plot_file}", "debug"
                         )
 
-                        img_widget = ImageWidget(str(plot_file))
+                        img_widget, _ = await ensure_results_widget(
+                            ImageWidget,
+                            str(plot_file),
+                        )
+                        img_widget.image = str(plot_file)
 
                         # Calculate display size based on available container width
                         # and preserve the actual aspect ratio of the generated plot
@@ -3539,6 +3710,7 @@ class VNAApp(App):
                             # Derive height from width to preserve aspect ratio
                             display_h = int(display_w / aspect_ratio)
 
+                            img_widget.set_class(False, "main-image-fallback")
                             img_widget.set_class(True, "main-image-display")
 
                             self.log_message(
@@ -3548,6 +3720,7 @@ class VNAApp(App):
                             # Fallback if container size unknown - use better fallback
                             fallback_w = 120
                             fallback_h = 60
+                            img_widget.set_class(False, "main-image-display")
                             img_widget.set_class(True, "main-image-fallback")
 
                             # Split long sizing message across two f-strings so it
@@ -3560,28 +3733,34 @@ class VNAApp(App):
                             )
 
                         self.log_message(
-                            "Mounting image widget...",
+                            "Updating image widget...",
                             "debug",
                         )
-                        await results_container.mount(img_widget)
-                        self.log_message("Image widget mounted successfully", "debug")
+                        img_widget.refresh()
+                        self.log_message("Image widget ready", "debug")
                     except Exception as e:
                         self.log_message(f"Failed to display image: {e}", "error")
                         # Fallback: show file location
-                        await results_container.mount(
-                            Static(
-                                f"[yellow]Plot generated but display failed[/yellow]\n"
-                                f"[cyan]File: {plot_file}[/cyan]\n"
-                                f"[dim]Error: {e}[/dim]",
-                                markup=True,
-                            )
+                        plot_widget, _ = await ensure_results_widget(
+                            Static,
+                            f"[yellow]Plot generated but display failed[/yellow]\n"
+                            f"[cyan]File: {plot_file}[/cyan]\n"
+                            f"[dim]Error: {e}[/dim]",
+                            markup=True,
+                        )
+                        plot_widget.update(
+                            f"[yellow]Plot generated but display failed[/yellow]\n"
+                            f"[cyan]File: {plot_file}[/cyan]\n"
+                            f"[dim]Error: {e}[/dim]"
                         )
         else:
-            await results_container.mount(
-                Static(
-                    "\n[bold yellow]No parameters selected for plotting[/bold yellow]",
-                    markup=True,
-                )
+            plot_widget, _ = await ensure_results_widget(
+                Static,
+                "\n[bold yellow]No parameters selected for plotting[/bold yellow]",
+                markup=True,
+            )
+            plot_widget.update(
+                "\n[bold yellow]No parameters selected for plotting[/bold yellow]"
             )
 
         # S-Parameters statistics using DataTable (after plot)

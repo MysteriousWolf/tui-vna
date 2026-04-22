@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -19,6 +20,8 @@ from src.tina.export import (
 )
 from src.tina.main import VNAApp
 from src.tina.utils.touchstone import TouchstoneExporter
+
+ORIGINAL_ASYNCIO_CREATE_TASK = asyncio.create_task
 
 
 @pytest.fixture
@@ -169,6 +172,13 @@ class _FakeApp:
         self.call_after_refresh = MagicMock()
         self._update_results = MagicMock(return_value=None)
         self._write_image_export = MagicMock()
+        self._run_measurement_image_export = cast(
+            Any,
+            lambda **kwargs: VNAApp._run_measurement_image_export(
+                cast(Any, self),
+                **kwargs,
+            ),
+        )
         self._import_measurement_output = MagicMock()
         self._restore_setup_from_metadata = cast(
             Any,
@@ -589,10 +599,10 @@ class TestMeasurementCompletionBundleExports:
         )
         app.notify = MagicMock()
         app._write_image_export = MagicMock()
-        app._refresh_tools_plot = MagicMock()
+        app._refresh_tools_plot = AsyncMock()
         app._run_tools_computation = MagicMock()
         app._rebuild_tools_params = MagicMock()
-        app._update_results = MagicMock()
+        app._update_results = AsyncMock()
         app.log_message = MagicMock()
         app.query_one = cast(
             Any,
@@ -619,6 +629,7 @@ class TestMeasurementCompletionBundleExports:
             frequencies=sample_measurement["freqs"],
             sparams=sample_measurement["sparams"],
         )
+        scheduled_tasks: list[asyncio.Task[Any]] = []
 
         with (
             patch(
@@ -658,6 +669,7 @@ class TestMeasurementCompletionBundleExports:
                 "export",
                 return_value=str(tmp_path / "bundle_run.s2p"),
             ),
+            patch("src.tina.main.asyncio.create_task") as create_task,
             patch("src.tina.main.asyncio.get_event_loop") as get_loop,
         ):
             loop = MagicMock()
@@ -667,10 +679,17 @@ class TestMeasurementCompletionBundleExports:
                     return func(*args)
                 return None
 
+            def schedule_task(coro):
+                task = ORIGINAL_ASYNCIO_CREATE_TASK(coro)
+                scheduled_tasks.append(task)
+                return task
+
             loop.run_in_executor.side_effect = run_in_executor
             get_loop.return_value = loop
+            create_task.side_effect = schedule_task
 
             await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+            await asyncio.gather(*scheduled_tasks)
 
         assert app.last_measurement is not None
         assert app.last_measurement["png_path"] == str(tmp_path / "bundle_run.png")
@@ -678,6 +697,11 @@ class TestMeasurementCompletionBundleExports:
             tmp_path / "bundle_run.s2p"
         )
         assert app.last_measurement["png_path"] == str(tmp_path / "bundle_run.png")
+        app._update_results.assert_called_once_with(
+            sample_measurement["freqs"],
+            sample_measurement["sparams"],
+            str(tmp_path / "bundle_run.s2p"),
+        )
         app._notify_export_result.assert_any_call(
             kind="PNG",
             path=str(tmp_path / "bundle_run.png"),
@@ -729,10 +753,10 @@ class TestMeasurementCompletionBundleExports:
         )
         app.notify = MagicMock()
         app._write_image_export = MagicMock()
-        app._refresh_tools_plot = MagicMock()
+        app._refresh_tools_plot = AsyncMock()
         app._run_tools_computation = MagicMock()
         app._rebuild_tools_params = MagicMock()
-        app._update_results = MagicMock()
+        app._update_results = AsyncMock()
         app.log_message = MagicMock()
         app.query_one = cast(
             Any,
@@ -761,6 +785,7 @@ class TestMeasurementCompletionBundleExports:
         )
         app._minimal_export_mode = True
         app._minimal_export_button.set_class(True, "-minimal-export")
+        scheduled_tasks: list[asyncio.Task[Any]] = []
 
         with (
             patch(
@@ -800,6 +825,7 @@ class TestMeasurementCompletionBundleExports:
                 "export",
                 return_value=str(tmp_path / "bundle_run.s2p"),
             ),
+            patch("src.tina.main.asyncio.create_task") as create_task,
             patch("src.tina.main.asyncio.get_event_loop") as get_loop,
         ):
             loop = MagicMock()
@@ -809,10 +835,17 @@ class TestMeasurementCompletionBundleExports:
                     return func(*args)
                 return None
 
+            def schedule_task(coro):
+                task = ORIGINAL_ASYNCIO_CREATE_TASK(coro)
+                scheduled_tasks.append(task)
+                return task
+
             loop.run_in_executor.side_effect = run_in_executor
             get_loop.return_value = loop
+            create_task.side_effect = schedule_task
 
             await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+            await asyncio.gather(*scheduled_tasks)
 
         assert app.last_measurement is not None
         assert app.last_measurement["png_path"] == str(tmp_path / "bundle_run.png")
@@ -862,10 +895,10 @@ class TestMeasurementCompletionBundleExports:
         )
         app.notify = MagicMock()
         app._write_image_export = MagicMock()
-        app._refresh_tools_plot = MagicMock()
+        app._refresh_tools_plot = AsyncMock()
         app._run_tools_computation = MagicMock()
         app._rebuild_tools_params = MagicMock()
-        app._update_results = MagicMock()
+        app._update_results = AsyncMock()
         app.log_message = MagicMock()
         app.query_one = cast(
             Any,
@@ -892,6 +925,7 @@ class TestMeasurementCompletionBundleExports:
             frequencies=sample_measurement["freqs"],
             sparams=sample_measurement["sparams"],
         )
+        scheduled_tasks: list[asyncio.Task[Any]] = []
 
         with (
             patch(
@@ -931,6 +965,7 @@ class TestMeasurementCompletionBundleExports:
                 "export",
                 return_value=str(tmp_path / "bundle_run.s2p"),
             ),
+            patch("src.tina.main.asyncio.create_task") as create_task,
             patch("src.tina.main.asyncio.get_event_loop") as get_loop,
         ):
             loop = MagicMock()
@@ -940,10 +975,17 @@ class TestMeasurementCompletionBundleExports:
                     return func(*args)
                 return None
 
+            def schedule_task(coro):
+                task = ORIGINAL_ASYNCIO_CREATE_TASK(coro)
+                scheduled_tasks.append(task)
+                return task
+
             loop.run_in_executor.side_effect = run_in_executor
             get_loop.return_value = loop
+            create_task.side_effect = schedule_task
 
             await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+            await asyncio.gather(*scheduled_tasks)
 
         assert app.last_measurement is not None
         assert app.last_measurement["svg_path"] == str(tmp_path / "bundle_run.svg")
@@ -951,6 +993,11 @@ class TestMeasurementCompletionBundleExports:
             tmp_path / "bundle_run.s2p"
         )
         assert app.last_measurement["svg_path"] == str(tmp_path / "bundle_run.svg")
+        app._update_results.assert_called_once_with(
+            sample_measurement["freqs"],
+            sample_measurement["sparams"],
+            str(tmp_path / "bundle_run.s2p"),
+        )
         app._notify_export_result.assert_any_call(
             kind="SVG",
             path=str(tmp_path / "bundle_run.svg"),
@@ -1002,10 +1049,10 @@ class TestMeasurementCompletionBundleExports:
         )
         app.notify = MagicMock()
         app._write_image_export = MagicMock()
-        app._refresh_tools_plot = MagicMock()
+        app._refresh_tools_plot = AsyncMock()
         app._run_tools_computation = MagicMock()
         app._rebuild_tools_params = MagicMock()
-        app._update_results = MagicMock()
+        app._update_results = AsyncMock()
         app.log_message = MagicMock()
         app.query_one = cast(
             Any,
@@ -1034,6 +1081,7 @@ class TestMeasurementCompletionBundleExports:
         )
         app._minimal_export_mode = True
         app._minimal_export_button.set_class(True, "-minimal-export")
+        scheduled_tasks: list[asyncio.Task[Any]] = []
 
         with (
             patch(
@@ -1073,6 +1121,7 @@ class TestMeasurementCompletionBundleExports:
                 "export",
                 return_value=str(tmp_path / "bundle_run.s2p"),
             ),
+            patch("src.tina.main.asyncio.create_task") as create_task,
             patch("src.tina.main.asyncio.get_event_loop") as get_loop,
         ):
             loop = MagicMock()
@@ -1082,13 +1131,150 @@ class TestMeasurementCompletionBundleExports:
                     return func(*args)
                 return None
 
+            def schedule_task(coro):
+                task = ORIGINAL_ASYNCIO_CREATE_TASK(coro)
+                scheduled_tasks.append(task)
+                return task
+
             loop.run_in_executor.side_effect = run_in_executor
             get_loop.return_value = loop
+            create_task.side_effect = schedule_task
 
             await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+            await asyncio.gather(*scheduled_tasks)
 
         assert app.last_measurement is not None
         assert app.last_measurement["svg_path"] == str(tmp_path / "bundle_run.svg")
+
+    @pytest.mark.asyncio
+    async def test_measurement_complete_updates_results_before_bundle_exports_finish(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Plot refresh should not wait for bundled PNG and SVG exports."""
+        app = _FakeApp(
+            None,
+            selected_params=("S11", "S21"),
+            output_folder=str(tmp_path),
+        )
+        app.measurement_notes = sample_measurement["notes"]
+        app.settings = SimpleNamespace(
+            filename_template="measurement_{date}_{time}",
+            folder_template="measurement",
+            freq_unit="MHz",
+            plot_type="magnitude",
+        )
+        app.settings_manager = SimpleNamespace(
+            touch_template_history=MagicMock(),
+            save=MagicMock(),
+        )
+        app.notify = MagicMock()
+        app._refresh_tools_plot = AsyncMock()
+        app._run_tools_computation = MagicMock()
+        app._rebuild_tools_params = MagicMock()
+        app.log_message = MagicMock()
+
+        call_order: list[str] = []
+
+        async def record_update_results(*_args):
+            call_order.append("update_results")
+
+        def record_write_image_export(*, file_path: str, **_kwargs):
+            call_order.append(f"image_export:{Path(file_path).suffix}")
+
+        app._update_results = AsyncMock(side_effect=record_update_results)
+        app._write_image_export = MagicMock(side_effect=record_write_image_export)
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#check_export_s11": _FakeCheckbox(True),
+                "#check_export_s21": _FakeCheckbox(True),
+                "#check_export_s12": _FakeCheckbox(False),
+                "#check_export_s22": _FakeCheckbox(False),
+                "#check_export_bundle_csv": _FakeCheckbox(False),
+                "#check_export_bundle_png": _FakeCheckbox(True),
+                "#check_export_bundle_svg": _FakeCheckbox(True),
+                "#check_minimal_export": app._minimal_export_button,
+                "#check_plot_s11": _FakeCheckbox(True),
+                "#check_plot_s21": _FakeCheckbox(True),
+                "#check_plot_s12": _FakeCheckbox(False),
+                "#check_plot_s22": _FakeCheckbox(False),
+                "#select_freq_unit": _FakeSelect("MHz"),
+                "#input_filename_prefix": SimpleNamespace(value="bundle_run"),
+                "#input_output_folder": SimpleNamespace(value=str(tmp_path)),
+            }[selector],
+        )
+
+        result = SimpleNamespace(
+            frequencies=sample_measurement["freqs"],
+            sparams=sample_measurement["sparams"],
+        )
+        pending_image_coroutines: list[Any] = []
+
+        with (
+            patch(
+                "src.tina.main.setup_logic.validate_export_template_for_app",
+                side_effect=lambda *args, **kwargs: SimpleNamespace(
+                    has_errors=False,
+                    has_warnings=False,
+                    unknown_tags=(),
+                ),
+            ),
+            patch("src.tina.main.setup_logic.apply_template_input_state"),
+            patch(
+                "src.tina.main.setup_logic.build_export_template_context_for_app",
+                return_value={},
+            ),
+            patch(
+                "src.tina.main.render_template",
+                side_effect=[
+                    SimpleNamespace(
+                        rendered="bundle_run",
+                        validation=SimpleNamespace(
+                            has_warnings=False,
+                            unknown_tags=(),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        rendered=str(tmp_path),
+                        validation=SimpleNamespace(
+                            has_warnings=False,
+                            unknown_tags=(),
+                        ),
+                    ),
+                ],
+            ),
+            patch.object(
+                TouchstoneExporter,
+                "export",
+                return_value=str(tmp_path / "bundle_run.s2p"),
+            ),
+            patch("src.tina.main.asyncio.create_task") as create_task,
+            patch("src.tina.main.asyncio.get_event_loop") as get_loop,
+        ):
+            loop = MagicMock()
+
+            async def run_in_executor(_executor, func, *args):
+                if callable(func):
+                    return func(*args)
+                return None
+
+            def capture_task(coro):
+                pending_image_coroutines.append(coro)
+                return MagicMock()
+
+            loop.run_in_executor.side_effect = run_in_executor
+            get_loop.return_value = loop
+            create_task.side_effect = capture_task
+
+            await VNAApp._handle_measurement_complete(cast(Any, app), cast(Any, result))
+
+        assert call_order == ["update_results"]
+        assert len(pending_image_coroutines) == 2
+
+        for coro in pending_image_coroutines:
+            await coro
+
+        assert call_order == ["update_results", "image_export:.png", "image_export:.svg"]
 
 
 @pytest.mark.unit
@@ -1563,6 +1749,57 @@ class TestMeasurementImportNotifications:
         assert plot_s21.value is False
         assert plot_s22.value is True
         assert app._tabbed_content.active == "tab_measure"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_plot_control_changes_are_debounced(sample_measurement: dict[str, Any]) -> None:
+    """Rapid plot control changes should collapse into one redraw."""
+
+    class _FakeTimer:
+        def __init__(self, callback) -> None:
+            self.callback = callback
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    app = object.__new__(VNAApp)
+    app.last_measurement = sample_measurement
+    app._plot_refresh_timer = None
+    app._update_results = AsyncMock()
+
+    timers: list[_FakeTimer] = []
+
+    def set_timer(delay: float, callback):
+        assert delay == pytest.approx(0.15)
+        timer = _FakeTimer(callback)
+        timers.append(timer)
+        return timer
+
+    app.set_timer = set_timer
+    app._redraw_plot = cast(Any, lambda: VNAApp._redraw_plot(cast(Any, app)))
+    app._schedule_plot_refresh = cast(
+        Any,
+        lambda: VNAApp._schedule_plot_refresh(cast(Any, app)),
+    )
+
+    await VNAApp.on_plot_param_change(cast(Any, app), cast(Any, SimpleNamespace()))
+    await VNAApp.on_plot_type_change(cast(Any, app), cast(Any, SimpleNamespace()))
+    await VNAApp.on_plot_param_change(cast(Any, app), cast(Any, SimpleNamespace()))
+
+    assert len(timers) == 3
+    assert timers[0].stopped is True
+    assert timers[1].stopped is True
+    assert timers[2].stopped is False
+
+    await timers[-1].callback()
+
+    app._update_results.assert_awaited_once_with(
+        sample_measurement["freqs"],
+        sample_measurement["sparams"],
+        sample_measurement["output_path"],
+    )
 
     def test_setup_only_import_restores_setup_without_measurement_state(self) -> None:
         """Setup-only import should restore Setup widgets without replacing measurement data."""
