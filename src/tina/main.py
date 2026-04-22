@@ -52,8 +52,6 @@ from .export import (
     build_image_export_metadata,
     embed_png_metadata,
     embed_svg_metadata,
-    read_png_metadata,
-    read_svg_metadata,
     render_template,
 )
 from .gui.components import (
@@ -104,6 +102,8 @@ from .utils.update_checker import (
     get_update_info,
 )
 from .worker import (
+    ImportRequest,
+    ImportResult,
     LogMessage,
     MeasurementResult,
     MeasurementWorker,
@@ -227,6 +227,7 @@ class VNAApp(App):
         self.config = VNAConfig()
         self.connected = False
         self.measuring = False
+        self._import_in_flight = False
         self.last_measurement = None  # Store last measurement data
         self._measurement_plot_cache = {}
         self._measurement_plot_cache_measurement_id = None
@@ -671,103 +672,39 @@ class VNAApp(App):
         except Exception:
             pass
 
-    def _import_measurement_output_from_path(
-        self, file_path: str, restore_measurement: bool
-    ) -> None:
-        """Process an import from a given file path (no file dialog).
-
-        Raises FileNotFoundError if the file does not exist. Raises ValueError
-        for unsupported or invalid payloads.
-        """
-        if not file_path:
-            return
-
-        self.log_message(f"Importing: {file_path}", "progress")
-
-        suffix = Path(file_path).suffix.lower()
-        freqs: np.ndarray | None = None
-        sparams: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
-        notes_markdown = ""
-        imported_metadata: dict[str, object] = {}
-
-        if suffix == ".s2p":
-            import_result = TouchstoneExporter.import_with_metadata(file_path)
-            freqs = import_result.frequencies_hz
-            sparams = import_result.s_parameters
-            notes_markdown = import_result.metadata.notes_markdown
-            imported_metadata = import_result.metadata.machine_settings or {}
-        elif suffix == ".png":
-            image_metadata = read_png_metadata(file_path)
-            notes_markdown = image_metadata.notes_markdown
-            imported_metadata = image_metadata.machine_settings
-        elif suffix == ".svg":
-            image_metadata = read_svg_metadata(file_path)
-            notes_markdown = image_metadata.notes_markdown
-            imported_metadata = image_metadata.machine_settings
-        else:
-            raise ValueError(f"Unsupported measurement output format: {suffix}")
-
+    def _apply_import_result(self, result: ImportResult) -> None:
+        """Restore UI state from a worker-produced import result."""
+        imported_metadata = {
+            "setup": dict(result.setup),
+            "measurement": (
+                dict(result.measurement.get("metadata", {}))
+                if isinstance(result.measurement.get("metadata", {}), dict)
+                else {}
+            ),
+        }
         self._restore_setup_from_metadata(imported_metadata)
 
-        imported_measurement = imported_metadata.get("measurement", {})
+        file_path = str(result.paths.get("selected_path") or "")
         restored_panels = ["Setup"]
+        restore_measurement = bool(result.measurement.get("restore_measurement", False))
 
         if restore_measurement:
-            if freqs is None or sparams is None:
-                raw_data = (
-                    imported_measurement.get("raw_data", {})
-                    if isinstance(imported_measurement, dict)
-                    else {}
+            freqs = result.measurement.get("frequencies")
+            sparams = result.measurement.get("sparams")
+            imported_freq_unit = result.measurement.get("freq_unit", "MHz")
+            if not isinstance(freqs, np.ndarray) or not isinstance(sparams, dict):
+                raise ValueError(
+                    "Measurement output does not contain recoverable measurement data"
                 )
-                if not isinstance(raw_data, dict):
-                    raise ValueError(
-                        "Measurement output does not contain recoverable measurement data"
-                    )
 
-                freqs_hz = raw_data.get("freqs_hz", [])
-                raw_sparams = raw_data.get("sparams", {})
-                if not isinstance(freqs_hz, list) or not isinstance(raw_sparams, dict):
-                    raise ValueError(
-                        "Measurement output contains invalid recovery payload"
-                    )
-
-                freqs = np.array(freqs_hz, dtype=float)
-                sparams = {}
-                for name, values in raw_sparams.items():
-                    if not isinstance(name, str) or not isinstance(values, dict):
-                        continue
-                    magnitude_db = values.get("magnitude_db", [])
-                    phase_deg = values.get("phase_deg", [])
-                    if isinstance(magnitude_db, list) and isinstance(phase_deg, list):
-                        sparams[name] = (
-                            np.array(magnitude_db, dtype=float),
-                            np.array(phase_deg, dtype=float),
-                        )
-
-                if len(freqs) == 0 or not sparams:
-                    raise ValueError(
-                        "Measurement output does not contain recoverable measurement data"
-                    )
-
-            imported_freq_unit = "MHz"
-            imported_setup = imported_metadata.get("setup", {})
-            if isinstance(imported_setup, dict):
-                imported_freq_unit_value = imported_setup.get("freq_unit")
-                if isinstance(imported_freq_unit_value, str):
-                    imported_freq_unit = imported_freq_unit_value
-
-            self.measurement_notes = notes_markdown
-            # Store absolute paths so later save-back checks remain valid even
-            # if the working directory changes. Use resolve() to normalize.
-            abs_file_path = str(Path(file_path).resolve())
-
+            self.measurement_notes = result.notes
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
-                "output_path": abs_file_path,
-                "touchstone_path": abs_file_path if suffix == ".s2p" else None,
-                "png_path": abs_file_path if suffix == ".png" else None,
-                "svg_path": abs_file_path if suffix == ".svg" else None,
+                "output_path": result.paths.get("output_path"),
+                "touchstone_path": result.paths.get("touchstone_path"),
+                "png_path": result.paths.get("png_path"),
+                "svg_path": result.paths.get("svg_path"),
                 "freq_unit": imported_freq_unit,
                 "notes": self.measurement_notes,
                 "metadata": imported_metadata,
@@ -779,7 +716,6 @@ class VNAApp(App):
                 imported_metadata,
                 sparams=sparams,
             )
-            # Restore measurement (do not automatically switch tabs)
             restored_panels.append("Measurement")
 
             self.log_message(
@@ -797,11 +733,6 @@ class VNAApp(App):
                     f"restored {', '.join(restored_panels)}"
                 ),
             )
-            try:
-                self.settings_manager.add_recent_imported_measurement(file_path)
-                self.settings_manager.save(self.settings)
-            except Exception:
-                pass
         else:
             self.log_message("Imported setup from measurement output", "success")
             self.notify(
@@ -809,11 +740,31 @@ class VNAApp(App):
                 severity="information",
                 timeout=4,
             )
-            try:
-                self.settings_manager.add_recent_imported_measurement(file_path)
-                self.settings_manager.save(self.settings)
-            except Exception:
-                pass
+
+        try:
+            self.settings_manager.add_recent_imported_measurement(file_path)
+            self.settings_manager.save(self.settings)
+        except Exception:
+            pass
+
+    def _start_measurement_import(
+        self, file_path: str, restore_measurement: bool
+    ) -> None:
+        """Queue a threaded import request and update footer state."""
+        if not file_path or self._import_in_flight:
+            return
+
+        self._import_in_flight = True
+        self.disable_all_buttons()
+        self.set_progress("Importing...", 0)
+        self.log_message(f"Importing: {file_path}", "progress")
+        self.worker.send_command(
+            MessageType.IMPORT,
+            ImportRequest(
+                file_path=file_path,
+                restore_measurement=restore_measurement,
+            ),
+        )
 
     def _notify_import_result(
         self,
@@ -1139,16 +1090,7 @@ class VNAApp(App):
         finally:
             root.destroy()
 
-        # Delegate actual import processing to helper that accepts a path
-        try:
-            # Call the class-bound helper so tests using a fake instance
-            # without the bound helper still work (call the function with
-            # `self` explicitly).
-            VNAApp._import_measurement_output_from_path(
-                self, file_path, restore_measurement
-            )
-        except FileNotFoundError:
-            raise
+        VNAApp._start_measurement_import(self, file_path, restore_measurement)
 
     def _start_message_polling(self):
         """Start polling worker thread for messages."""
@@ -1176,7 +1118,12 @@ class VNAApp(App):
         returned a STATUS_UPDATE — prevents backlog when polls take longer than
         the polling interval.
         """
-        if self.connected and not self.measuring and not self._status_poll_in_flight:
+        if (
+            self.connected
+            and not self.measuring
+            and not self._import_in_flight
+            and not self._status_poll_in_flight
+        ):
             self._status_poll_in_flight = True
             self.worker.send_command(MessageType.STATUS_POLL)
 
@@ -1198,6 +1145,21 @@ class VNAApp(App):
         elif msg.type == MessageType.PROGRESS:
             update: ProgressUpdate = msg.data
             self.set_progress(update.message, update.progress_pct)
+
+        elif msg.type == MessageType.IMPORT_PROGRESS:
+            update: ProgressUpdate = msg.data
+            self.set_progress(update.message, update.progress_pct)
+
+        elif msg.type == MessageType.IMPORT_COMPLETE:
+            import_result: ImportResult = msg.data
+            try:
+                self._apply_import_result(import_result)
+            except Exception as e:
+                self.log_message(f"Import failed: {e}", "error")
+            finally:
+                self.enable_buttons_for_state()
+                self.reset_progress()
+                self._import_in_flight = False
 
         elif msg.type == MessageType.CONNECTED:
             display_name = msg.data
@@ -1264,6 +1226,7 @@ class VNAApp(App):
             self.enable_buttons_for_state()
             self.reset_progress()
             self.measuring = False
+            self._import_in_flight = False
 
     @on(Select.Changed, "#sb_poll_interval")
     def on_poll_interval_change(self, event: Select.Changed) -> None:
@@ -2051,10 +2014,6 @@ class VNAApp(App):
         """Import and display results from a Touchstone file."""
         try:
             self._import_measurement_output(restore_measurement=True)
-        except FileNotFoundError as e:
-            self.log_message(str(e), "error")
-        except ValueError as e:
-            self.log_message(f"Invalid file format: {e}", "error")
         except Exception as e:
             self.log_message(f"Import failed: {e}", "error")
 
@@ -2062,32 +2021,20 @@ class VNAApp(App):
         """Restore only the Setup tab from an exported measurement file."""
         try:
             self._import_measurement_output(restore_measurement=False)
-        except FileNotFoundError as e:
-            self.log_message(str(e), "error")
-        except ValueError as e:
-            self.log_message(f"Invalid file format: {e}", "error")
         except Exception as e:
             self.log_message(f"Setup import failed: {e}", "error")
 
     def action_restore_setup_from_path(self, path: str) -> None:
         """Restore setup from the provided exported measurement path."""
         try:
-            self._import_measurement_output_from_path(path, restore_measurement=False)
-        except FileNotFoundError as e:
-            self.log_message(str(e), "error")
-        except ValueError as e:
-            self.log_message(f"Invalid file format: {e}", "error")
+            self._start_measurement_import(path, restore_measurement=False)
         except Exception as e:
             self.log_message(f"Setup import failed: {e}", "error")
 
     def action_open_recent_measurement(self, path: str) -> None:
         """Open/import a recent measurement (path) and restore measurement state."""
         try:
-            self._import_measurement_output_from_path(path, restore_measurement=True)
-        except FileNotFoundError as e:
-            self.log_message(str(e), "error")
-        except ValueError as e:
-            self.log_message(f"Invalid file format: {e}", "error")
+            self._start_measurement_import(path, restore_measurement=True)
         except Exception as e:
             self.log_message(f"Import failed: {e}", "error")
 
@@ -2679,7 +2626,10 @@ class VNAApp(App):
                     s2p_resolved = str(Path(s2p_path).resolve())
                 except Exception:
                     s2p_resolved = s2p_path
-                if os.path.exists(s2p_resolved) and Path(s2p_resolved).suffix.lower() == ".s2p":
+                if (
+                    os.path.exists(s2p_resolved)
+                    and Path(s2p_resolved).suffix.lower() == ".s2p"
+                ):
                     # Report resolved s2p path in success log below
                     target_for_history = s2p_resolved
                     # Read original file
@@ -2694,7 +2644,9 @@ class VNAApp(App):
                             f"Failed to parse original .s2p for save-back: {e}", "error"
                         )
                         self.notify(
-                            f"Failed to parse original .s2p: {e}", severity="error", timeout=3
+                            f"Failed to parse original .s2p: {e}",
+                            severity="error",
+                            timeout=3,
                         )
                         return
 
@@ -2720,7 +2672,9 @@ class VNAApp(App):
                             # replaced by regenerated notes/metadata blocks below
                             if stripped.startswith("!"):
                                 # Check for TINA markers and skip existing TINA blocks
-                                content = TouchstoneExporter._strip_comment_prefix(stripped)
+                                content = TouchstoneExporter._strip_comment_prefix(
+                                    stripped
+                                )
                                 if content in (
                                     "TINA NOTES BEGIN",
                                     "TINA NOTES END",
@@ -2737,8 +2691,10 @@ class VNAApp(App):
                     notes_lines = TouchstoneExporter._build_notes_comment_lines(
                         str(self.measurement_notes or "")
                     )
-                    metadata_lines = TouchstoneExporter._serialize_metadata_comment_lines(
-                        new_touchstone_metadata
+                    metadata_lines = (
+                        TouchstoneExporter._serialize_metadata_comment_lines(
+                            new_touchstone_metadata
+                        )
                     )
 
                     # Compose final file content
@@ -2774,7 +2730,9 @@ class VNAApp(App):
                     )
                     # Touch history
                     try:
-                        self.settings_manager.touch_setup_restore_history(str(s2p_resolved))
+                        self.settings_manager.touch_setup_restore_history(
+                            str(s2p_resolved)
+                        )
                         self.settings_manager.save(self.settings)
                     except Exception:
                         pass
@@ -2794,7 +2752,9 @@ class VNAApp(App):
                     image_meta = build_image_export_metadata(
                         notes_markdown=self.measurement_notes,
                         machine_settings=self._build_touchstone_export_metadata(
-                            exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
+                            exported_traces=list(
+                                self.last_measurement.get("sparams", {}).keys()
+                            ),
                         ),
                     )
                     embed_png_metadata(
@@ -2802,7 +2762,9 @@ class VNAApp(App):
                         notes_markdown=image_meta.notes_markdown,
                         machine_settings=image_meta.machine_settings,
                     )
-                    self.log_message(f"Embedded notes into PNG: {png_resolved}", "success")
+                    self.log_message(
+                        f"Embedded notes into PNG: {png_resolved}", "success"
+                    )
                     self.notify(
                         f"Saved notes to {Path(png_resolved).name}",
                         severity="information",
@@ -2811,7 +2773,9 @@ class VNAApp(App):
                     target_for_history = png_resolved
                 except Exception as e:
                     self.log_message(f"Failed to embed PNG metadata: {e}", "error")
-                    self.notify(f"PNG save-back failed: {e}", severity="error", timeout=3)
+                    self.notify(
+                        f"PNG save-back failed: {e}", severity="error", timeout=3
+                    )
                     return
 
             elif svg_path and os.path.exists(svg_path):
@@ -2824,7 +2788,9 @@ class VNAApp(App):
                     image_meta = build_image_export_metadata(
                         notes_markdown=self.measurement_notes,
                         machine_settings=self._build_touchstone_export_metadata(
-                            exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
+                            exported_traces=list(
+                                self.last_measurement.get("sparams", {}).keys()
+                            ),
                         ),
                     )
                     embed_svg_metadata(
@@ -2832,7 +2798,9 @@ class VNAApp(App):
                         notes_markdown=image_meta.notes_markdown,
                         machine_settings=image_meta.machine_settings,
                     )
-                    self.log_message(f"Embedded notes into SVG: {svg_resolved}", "success")
+                    self.log_message(
+                        f"Embedded notes into SVG: {svg_resolved}", "success"
+                    )
                     self.notify(
                         f"Saved notes to {Path(svg_resolved).name}",
                         severity="information",
@@ -2841,7 +2809,9 @@ class VNAApp(App):
                     target_for_history = svg_resolved
                 except Exception as e:
                     self.log_message(f"Failed to embed SVG metadata: {e}", "error")
-                    self.notify(f"SVG save-back failed: {e}", severity="error", timeout=3)
+                    self.notify(
+                        f"SVG save-back failed: {e}", severity="error", timeout=3
+                    )
                     return
 
             else:
@@ -2855,7 +2825,9 @@ class VNAApp(App):
             # Update setup restore history if we saved into an image
             try:
                 if target_for_history:
-                    self.settings_manager.touch_setup_restore_history(str(target_for_history))
+                    self.settings_manager.touch_setup_restore_history(
+                        str(target_for_history)
+                    )
                     self.settings_manager.save(self.settings)
             except Exception:
                 pass
@@ -3328,7 +3300,9 @@ class VNAApp(App):
             existing_children = list(results_container.children)
             existing_widget = existing_children[0] if existing_children else None
 
-            if existing_widget is not None and isinstance(existing_widget, widget_class):
+            if existing_widget is not None and isinstance(
+                existing_widget, widget_class
+            ):
                 for child in existing_children[1:]:
                     await child.remove()
                 return existing_widget, True
@@ -3574,12 +3548,8 @@ class VNAApp(App):
                     )
                     for param in plot_params
                 }
-                y_min_for_render = (
-                    user_y_min if user_y_min is not None else auto_y_min
-                )
-                y_max_for_render = (
-                    user_y_max if user_y_max is not None else auto_y_max
-                )
+                y_min_for_render = user_y_min if user_y_min is not None else auto_y_min
+                y_max_for_render = user_y_max if user_y_max is not None else auto_y_max
 
                 try:
                     await asyncio.get_running_loop().run_in_executor(

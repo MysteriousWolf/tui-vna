@@ -11,12 +11,15 @@ import threading
 import traceback
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from .drivers import VNABase, VNAConfig, detect_vna_driver
+from .export import read_png_metadata, read_svg_metadata
 from .utils import LoggingVNAWrapper
+from .utils.touchstone import TouchstoneExporter
 
 
 class MessageType(Enum):
@@ -25,6 +28,7 @@ class MessageType(Enum):
     # Commands (UI -> Worker)
     CONNECT = "connect"
     DISCONNECT = "disconnect"
+    IMPORT = "import"
     READ_PARAMS = "read_params"
     MEASURE = "measure"
     STATUS_POLL = "status_poll"
@@ -34,6 +38,8 @@ class MessageType(Enum):
     # Responses (Worker -> UI)
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
+    IMPORT_COMPLETE = "import_complete"
+    IMPORT_PROGRESS = "import_progress"
     PARAMS_READ = "params_read"
     MEASUREMENT_COMPLETE = "measurement_complete"
     STATUS_UPDATE = "status_update"
@@ -58,6 +64,24 @@ class ProgressUpdate:
 
     message: str
     progress_pct: float
+
+
+@dataclass
+class ImportRequest:
+    """Import request data."""
+
+    file_path: str
+    restore_measurement: bool
+
+
+@dataclass
+class ImportResult:
+    """Imported setup/measurement state restored from a file."""
+
+    setup: dict[str, object]
+    measurement: dict[str, object]
+    notes: str
+    paths: dict[str, str | None]
 
 
 @dataclass
@@ -211,6 +235,13 @@ class MeasurementWorker:
             ProgressUpdate(message=message, progress_pct=progress_pct),
         )
 
+    def _send_import_progress(self, message: str, progress_pct: float) -> None:
+        """Send import-specific progress updates to UI thread."""
+        self._send_response(
+            MessageType.IMPORT_PROGRESS,
+            ProgressUpdate(message=message, progress_pct=progress_pct),
+        )
+
     def _log(self, message: str, level: str = "info"):
         """Send log message to UI thread."""
         self._send_response(MessageType.LOG, LogMessage(message=message, level=level))
@@ -233,6 +264,8 @@ class MeasurementWorker:
                     self._handle_connect(msg.data)
                 elif msg.type == MessageType.DISCONNECT:
                     self._handle_disconnect()
+                elif msg.type == MessageType.IMPORT:
+                    self._handle_import(msg.data)
                 elif msg.type == MessageType.READ_PARAMS:
                     self._handle_read_params()
                 elif msg.type == MessageType.MEASURE:
@@ -341,6 +374,140 @@ class MeasurementWorker:
 
         except Exception as e:
             self._send_response(MessageType.ERROR, error=f"Disconnect failed: {str(e)}")
+
+    def _handle_import(self, data: ImportRequest | dict[str, object] | None) -> None:
+        """Handle measurement import entirely in the worker thread."""
+        try:
+            if isinstance(data, ImportRequest):
+                request = data
+            elif isinstance(data, dict):
+                file_path = data.get("file_path")
+                request = ImportRequest(
+                    file_path=str(file_path) if file_path is not None else "",
+                    restore_measurement=bool(data.get("restore_measurement", False)),
+                )
+            else:
+                raise ValueError("Invalid import request")
+
+            if not request.file_path:
+                raise ValueError("No measurement output path provided")
+
+            file_path = Path(request.file_path)
+            if not file_path.exists():
+                raise FileNotFoundError(
+                    f"Measurement output not found: {request.file_path}"
+                )
+
+            self._send_import_progress("Resolving import path...", 5)
+
+            suffix = file_path.suffix.lower()
+            freqs: np.ndarray | None = None
+            sparams: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
+            notes_markdown = ""
+            imported_metadata: dict[str, object] = {}
+
+            self._send_import_progress("Parsing measurement output...", 20)
+            if suffix == ".s2p":
+                import_result = TouchstoneExporter.import_with_metadata(str(file_path))
+                freqs = import_result.frequencies_hz
+                sparams = import_result.s_parameters
+                notes_markdown = import_result.metadata.notes_markdown
+                imported_metadata = import_result.metadata.machine_settings or {}
+            elif suffix == ".png":
+                image_metadata = read_png_metadata(file_path)
+                notes_markdown = image_metadata.notes_markdown
+                imported_metadata = image_metadata.machine_settings
+            elif suffix == ".svg":
+                image_metadata = read_svg_metadata(file_path)
+                notes_markdown = image_metadata.notes_markdown
+                imported_metadata = image_metadata.machine_settings
+            else:
+                raise ValueError(f"Unsupported measurement output format: {suffix}")
+
+            if not isinstance(imported_metadata, dict):
+                imported_metadata = {}
+
+            self._send_import_progress("Extracting setup metadata...", 45)
+            setup_metadata = imported_metadata.get("setup", {})
+            if not isinstance(setup_metadata, dict):
+                setup_metadata = {}
+
+            measurement_metadata = imported_metadata.get("measurement", {})
+            if not isinstance(measurement_metadata, dict):
+                measurement_metadata = {}
+
+            imported_freq_unit = "MHz"
+            imported_freq_unit_value = setup_metadata.get("freq_unit")
+            if isinstance(imported_freq_unit_value, str):
+                imported_freq_unit = imported_freq_unit_value
+
+            if request.restore_measurement:
+                self._send_import_progress("Restoring measurement data...", 70)
+                if freqs is None or sparams is None:
+                    raw_data = measurement_metadata.get("raw_data", {})
+                    if not isinstance(raw_data, dict):
+                        raise ValueError(
+                            "Measurement output does not contain recoverable measurement data"
+                        )
+
+                    freqs_hz = raw_data.get("freqs_hz", [])
+                    raw_sparams = raw_data.get("sparams", {})
+                    if not isinstance(freqs_hz, list) or not isinstance(
+                        raw_sparams, dict
+                    ):
+                        raise ValueError(
+                            "Measurement output contains invalid recovery payload"
+                        )
+
+                    freqs = np.array(freqs_hz, dtype=float)
+                    sparams = {}
+                    for name, values in raw_sparams.items():
+                        if not isinstance(name, str) or not isinstance(values, dict):
+                            continue
+                        magnitude_db = values.get("magnitude_db", [])
+                        phase_deg = values.get("phase_deg", [])
+                        if isinstance(magnitude_db, list) and isinstance(
+                            phase_deg, list
+                        ):
+                            sparams[name] = (
+                                np.array(magnitude_db, dtype=float),
+                                np.array(phase_deg, dtype=float),
+                            )
+
+                    if len(freqs) == 0 or not sparams:
+                        raise ValueError(
+                            "Measurement output does not contain recoverable measurement data"
+                        )
+            else:
+                freqs = None
+                sparams = None
+
+            resolved_path = str(file_path.resolve())
+            self._send_import_progress("Packaging imported state...", 90)
+            result = ImportResult(
+                setup=dict(setup_metadata),
+                measurement={
+                    "restore_measurement": request.restore_measurement,
+                    "metadata": dict(measurement_metadata),
+                    "freq_unit": imported_freq_unit,
+                    "frequencies": freqs,
+                    "sparams": sparams,
+                },
+                notes=notes_markdown,
+                paths={
+                    "selected_path": request.file_path,
+                    "output_path": resolved_path,
+                    "touchstone_path": resolved_path if suffix == ".s2p" else None,
+                    "png_path": resolved_path if suffix == ".png" else None,
+                    "svg_path": resolved_path if suffix == ".svg" else None,
+                },
+            )
+
+            self._send_import_progress("Import complete", 100)
+            self._send_response(MessageType.IMPORT_COMPLETE, data=result)
+
+        except Exception as e:
+            self._send_response(MessageType.ERROR, error=f"Import failed: {str(e)}")
 
     def _handle_read_params(self) -> None:
         """Handle read parameters command using driver abstraction."""

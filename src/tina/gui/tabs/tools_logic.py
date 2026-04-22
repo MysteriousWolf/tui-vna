@@ -105,6 +105,25 @@ def _style_tools_axes(
     return base_size
 
 
+def _get_tools_base_data(
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    trace: str,
+    plot_type: str,
+) -> tuple[np.ndarray, str, str, object]:
+    """Return plotted data and a stable cache key for the base trace."""
+    mag, phase = sparams[trace]
+    if plot_type == "magnitude":
+        return mag, "Magnitude (dB)", f"{trace} Magnitude", (trace, plot_type, id(mag))
+    if plot_type == "phase":
+        return (
+            unwrap_phase(phase),
+            "Phase (°)",
+            f"{trace} Phase (Unwrapped)",
+            (trace, plot_type, id(phase)),
+        )
+    return phase, "Phase (°)", f"{trace} Phase (Raw)", (trace, plot_type, id(phase))
+
+
 def get_tools_trace(app) -> str:
     """Return the currently selected tools trace, defaulting to S21."""
     try:
@@ -685,19 +704,9 @@ async def refresh_tools_plot(app) -> None:
         )
         return
 
-    mag, phase = sparams[trace]
-    if plot_type == "magnitude":
-        data = mag
-        y_label = "Magnitude (dB)"
-        plot_title = f"{trace} Magnitude"
-    elif plot_type == "phase":
-        data = unwrap_phase(phase)
-        y_label = "Phase (°)"
-        plot_title = f"{trace} Phase (Unwrapped)"
-    else:
-        data = phase
-        y_label = "Phase (°)"
-        plot_title = f"{trace} Phase (Raw)"
+    data, y_label, plot_title, base_data_key = _get_tools_base_data(
+        sparams, trace, plot_type
+    )
 
     auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
         data, outlier_percentile=1.0, safety_margin=0.05
@@ -762,9 +771,7 @@ async def refresh_tools_plot(app) -> None:
         plot_widget.refresh()
 
     else:
-        plot_generation = getattr(app, "_tools_plot_generation", 0) + 1
-        app._tools_plot_generation = plot_generation
-        plot_file = app.plot_temp_dir / f"tools_plot_{plot_generation}.png"
+        plot_file = app.plot_temp_dir / "tools_plot.png"
         dpi = 150
         fixed_width_px = 1920
         fixed_height_px = 1080
@@ -775,9 +782,7 @@ async def refresh_tools_plot(app) -> None:
         state = _tools_plot_state(app)
         base_signature = (
             id(freqs),
-            id(data),
-            trace,
-            plot_type,
+            base_data_key,
             freq_unit,
             float(auto_y_min),
             float(auto_y_max),
@@ -923,8 +928,10 @@ async def refresh_tools_plot(app) -> None:
                     # Previously display_w/aspect were used to compute programmatic
                     # widget.styles.width/height. We now use a CSS class so sizing
                     # is declarative and centralized in tcss.
+                    img_widget.set_class(False, "tools-image-fallback")
                     img_widget.set_class(True, "tools-image-display")
                 else:
+                    img_widget.set_class(False, "tools-image-display")
                     img_widget.set_class(True, "tools-image-fallback")
                 img_widget.refresh()
             except Exception as e:

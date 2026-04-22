@@ -20,6 +20,7 @@ from src.tina.export import (
 )
 from src.tina.main import VNAApp
 from src.tina.utils.touchstone import TouchstoneExporter
+from src.tina.worker import ImportRequest, ImportResult, MessageType
 
 ORIGINAL_ASYNCIO_CREATE_TASK = asyncio.create_task
 
@@ -211,12 +212,15 @@ class _FakeApp:
             lambda minimal_export: VNAApp._minimal_export_suffix(minimal_export),
         )
         self.set_progress = MagicMock()
+        self.disable_all_buttons = MagicMock()
         self.enable_buttons_for_state = MagicMock()
         self.reset_progress = MagicMock()
         self._filename_template_validation = None
         self._folder_template_validation = None
         self.sub_title = ""
         self.measuring = False
+        self._import_in_flight = False
+        self.worker = SimpleNamespace(send_command=MagicMock())
         self._tabbed_content = SimpleNamespace(active="tab_measure")
 
     def query_one(self, selector: str, _widget_type=None):
@@ -260,6 +264,61 @@ class _FakeApp:
         if selector == TabbedContent:
             return self._tabbed_content
         raise AssertionError(f"Unexpected selector: {selector}")
+
+
+def _build_import_result(
+    *,
+    file_path: str,
+    restore_measurement: bool,
+    notes: str = "",
+    setup: dict[str, Any] | None = None,
+    measurement_metadata: dict[str, Any] | None = None,
+    freqs: np.ndarray | None = None,
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
+) -> ImportResult:
+    """Build a worker-style ImportResult for UI restoration tests."""
+    suffix = Path(file_path).suffix.lower()
+    resolved = str(Path(file_path).resolve())
+    return ImportResult(
+        setup=dict(setup or {}),
+        measurement={
+            "restore_measurement": restore_measurement,
+            "metadata": dict(measurement_metadata or {}),
+            "freq_unit": str((setup or {}).get("freq_unit", "MHz")),
+            "frequencies": freqs if restore_measurement else None,
+            "sparams": sparams if restore_measurement else None,
+        },
+        notes=notes,
+        paths={
+            "selected_path": file_path,
+            "output_path": resolved,
+            "touchstone_path": resolved if suffix == ".s2p" else None,
+            "png_path": resolved if suffix == ".png" else None,
+            "svg_path": resolved if suffix == ".svg" else None,
+        },
+    )
+
+
+def _queue_import_request(
+    app: _FakeApp, *, file_path: str, restore_measurement: bool
+) -> None:
+    """Drive the file dialog path and assert that import is delegated to the worker."""
+    fake_root = MagicMock()
+    with (
+        patch("src.tina.main.tk.Tk", return_value=fake_root),
+        patch("src.tina.main.filedialog.askopenfilename", return_value=file_path),
+    ):
+        VNAApp._import_measurement_output(
+            cast(Any, app), restore_measurement=restore_measurement
+        )
+
+    app.disable_all_buttons.assert_called_once()
+    app.set_progress.assert_called_once_with("Importing...", 0)
+    app.log_message.assert_any_call(f"Importing: {file_path}", "progress")
+    app.worker.send_command.assert_called_once_with(
+        MessageType.IMPORT,
+        ImportRequest(file_path=file_path, restore_measurement=restore_measurement),
+    )
 
 
 @pytest.mark.unit
@@ -1274,7 +1333,11 @@ class TestMeasurementCompletionBundleExports:
         for coro in pending_image_coroutines:
             await coro
 
-        assert call_order == ["update_results", "image_export:.png", "image_export:.svg"]
+        assert call_order == [
+            "update_results",
+            "image_export:.png",
+            "image_export:.svg",
+        ]
 
 
 @pytest.mark.unit
@@ -1499,45 +1562,34 @@ class TestMeasurementImportNotifications:
             ),
         }
 
-        fake_root = MagicMock()
+        _queue_import_request(app, file_path=chosen_path, restore_measurement=True)
 
-        import_result = SimpleNamespace(
-            frequencies_hz=freqs,
-            s_parameters=sparams,
-            metadata=SimpleNamespace(
-                notes_markdown="## Imported notes",
-                machine_settings={
-                    "setup": {"freq_unit": "MHz"},
-                    "measurement": {
+        with (
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._apply_import_result(
+                cast(Any, app),
+                _build_import_result(
+                    file_path=chosen_path,
+                    restore_measurement=True,
+                    notes="## Imported notes",
+                    setup={"freq_unit": "MHz"},
+                    measurement_metadata={
                         "plot_s11": True,
                         "plot_s21": True,
                         "plot_s12": False,
                         "plot_s22": False,
                     },
-                },
-            ),
-        )
-
-        with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=chosen_path,
-            ),
-            patch(
-                "src.tina.main.TouchstoneExporter.import_with_metadata",
-                return_value=import_result,
-            ),
-            patch("src.tina.main.asyncio.create_task"),
-            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
-        ):
-            VNAApp._import_measurement_output(
-                cast(Any, app),
-                restore_measurement=True,
+                    freqs=freqs,
+                    sparams=sparams,
+                ),
             )
 
         assert app.last_measurement is not None
-        assert app.last_measurement["touchstone_path"] == chosen_path
+        assert app.last_measurement["touchstone_path"] == str(
+            Path(chosen_path).resolve()
+        )
         assert app.last_measurement["notes"] == "## Imported notes"
         app._notify_import_result.assert_called_once_with(
             path=chosen_path,
@@ -1557,33 +1609,22 @@ class TestMeasurementImportNotifications:
             ),
         }
 
-        fake_root = MagicMock()
-
-        import_result = SimpleNamespace(
-            frequencies_hz=freqs,
-            s_parameters=sparams,
-            metadata=SimpleNamespace(
-                notes_markdown="",
-                machine_settings={},
-            ),
-        )
+        _queue_import_request(app, file_path=chosen_path, restore_measurement=True)
 
         with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=chosen_path,
-            ),
-            patch(
-                "src.tina.main.TouchstoneExporter.import_with_metadata",
-                return_value=import_result,
-            ),
             patch("src.tina.main.asyncio.create_task"),
             patch("src.tina.main.setup_logic.refresh_export_template_validation"),
         ):
-            VNAApp._import_measurement_output(
+            VNAApp._apply_import_result(
                 cast(Any, app),
-                restore_measurement=True,
+                _build_import_result(
+                    file_path=chosen_path,
+                    restore_measurement=True,
+                    setup={},
+                    measurement_metadata={},
+                    freqs=freqs,
+                    sparams=sparams,
+                ),
             )
 
         app._notify_import_result.assert_called_once_with(
@@ -1663,13 +1704,19 @@ class TestMeasurementImportNotifications:
             }[selector],
         )
 
-        import_result = SimpleNamespace(
-            frequencies_hz=freqs,
-            s_parameters=sparams,
-            metadata=SimpleNamespace(
-                notes_markdown="## Imported notes",
-                machine_settings={
-                    "setup": {
+        _queue_import_request(app, file_path=chosen_path, restore_measurement=True)
+
+        with (
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._apply_import_result(
+                cast(Any, app),
+                _build_import_result(
+                    file_path=chosen_path,
+                    restore_measurement=True,
+                    notes="## Imported notes",
+                    setup={
                         "host": "192.168.1.50",
                         "port": "inst0",
                         "freq_unit": "GHz",
@@ -1693,35 +1740,16 @@ class TestMeasurementImportNotifications:
                         "export_bundle_png": True,
                         "export_bundle_svg": False,
                     },
-                    "measurement": {
+                    measurement_metadata={
                         "plot_type": "phase",
                         "plot_s11": True,
                         "plot_s21": False,
                         "plot_s12": False,
                         "plot_s22": True,
                     },
-                },
-            ),
-        )
-
-        fake_root = MagicMock()
-
-        with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=chosen_path,
-            ),
-            patch(
-                "src.tina.main.TouchstoneExporter.import_with_metadata",
-                return_value=import_result,
-            ),
-            patch("src.tina.main.asyncio.create_task"),
-            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
-        ):
-            VNAApp._import_measurement_output(
-                cast(Any, app),
-                restore_measurement=True,
+                    freqs=freqs,
+                    sparams=sparams,
+                ),
             )
 
         assert host_input.value == "192.168.1.50"
@@ -1753,7 +1781,9 @@ class TestMeasurementImportNotifications:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_plot_control_changes_are_debounced(sample_measurement: dict[str, Any]) -> None:
+async def test_plot_control_changes_are_debounced(
+    sample_measurement: dict[str, Any],
+) -> None:
     """Rapid plot control changes should collapse into one redraw."""
 
     class _FakeTimer:
@@ -1864,18 +1894,16 @@ async def test_plot_control_changes_are_debounced(sample_measurement: dict[str, 
             }[selector],
         )
 
-        import_result = SimpleNamespace(
-            frequencies_hz=np.array([1.0e6, 2.0e6], dtype=float),
-            s_parameters={
-                "S21": (
-                    np.array([-1.0, -2.0], dtype=float),
-                    np.array([45.0, 46.0], dtype=float),
-                )
-            },
-            metadata=SimpleNamespace(
-                notes_markdown="ignored",
-                machine_settings={
-                    "setup": {
+        _queue_import_request(app, file_path=chosen_path, restore_measurement=False)
+
+        with patch("src.tina.main.setup_logic.refresh_export_template_validation"):
+            VNAApp._apply_import_result(
+                cast(Any, app),
+                _build_import_result(
+                    file_path=chosen_path,
+                    restore_measurement=False,
+                    notes="ignored",
+                    setup={
                         "host": "10.0.0.5",
                         "port": "hislip0",
                         "freq_unit": "kHz",
@@ -1898,28 +1926,8 @@ async def test_plot_control_changes_are_debounced(sample_measurement: dict[str, 
                         "export_bundle_csv": False,
                         "export_bundle_png": False,
                         "export_bundle_svg": True,
-                    }
-                },
-            ),
-        )
-
-        fake_root = MagicMock()
-
-        with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=chosen_path,
-            ),
-            patch(
-                "src.tina.main.TouchstoneExporter.import_with_metadata",
-                return_value=import_result,
-            ),
-            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
-        ):
-            VNAApp._import_measurement_output(
-                cast(Any, app),
-                restore_measurement=False,
+                    },
+                ),
             )
 
         assert host_input.value == "10.0.0.5"
@@ -2057,20 +2065,29 @@ class TestMeasurementOutputRoundTrips:
             }[selector],
         )
 
-        fake_root = MagicMock()
+        _queue_import_request(app, file_path=str(export_path), restore_measurement=True)
+
+        import_payload = TouchstoneExporter.import_with_metadata(str(export_path))
 
         with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=export_path,
-            ),
             patch("src.tina.main.asyncio.create_task"),
             patch("src.tina.main.setup_logic.refresh_export_template_validation"),
         ):
-            VNAApp._import_measurement_output(
+            VNAApp._apply_import_result(
                 cast(Any, app),
-                restore_measurement=True,
+                _build_import_result(
+                    file_path=str(export_path),
+                    restore_measurement=True,
+                    notes=import_payload.metadata.notes_markdown,
+                    setup=(import_payload.metadata.machine_settings or {}).get(
+                        "setup", {}
+                    ),
+                    measurement_metadata=(
+                        import_payload.metadata.machine_settings or {}
+                    ).get("measurement", {}),
+                    freqs=import_payload.frequencies_hz,
+                    sparams=import_payload.s_parameters,
+                ),
             )
 
         assert app.last_measurement is not None
@@ -2079,7 +2096,9 @@ class TestMeasurementOutputRoundTrips:
         )
         assert set(app.last_measurement["sparams"]) == {"S11", "S21"}
         assert app.last_measurement["notes"] == sample_measurement["notes"]
-        assert app.last_measurement["touchstone_path"] == export_path
+        assert app.last_measurement["touchstone_path"] == str(
+            Path(export_path).resolve()
+        )
         assert host_input.value == "192.168.1.50"
         assert folder_input.value == "exports/{host}"
         assert filename_input.value == "roundtrip_{date}"
@@ -2205,20 +2224,38 @@ class TestMeasurementOutputRoundTrips:
             }[selector],
         )
 
-        fake_root = MagicMock()
+        _queue_import_request(app, file_path=str(export_path), restore_measurement=True)
+
+        from src.tina.export import read_png_metadata
+
+        image_metadata = read_png_metadata(export_path)
+        machine_settings = image_metadata.machine_settings
+        raw_data = machine_settings.get("measurement", {}).get("raw_data", {})
+        restored_freqs = np.array(raw_data.get("freqs_hz", []), dtype=float)
+        restored_sparams = {
+            name: (
+                np.array(values.get("magnitude_db", []), dtype=float),
+                np.array(values.get("phase_deg", []), dtype=float),
+            )
+            for name, values in raw_data.get("sparams", {}).items()
+            if isinstance(name, str) and isinstance(values, dict)
+        }
 
         with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=str(export_path),
-            ),
             patch("src.tina.main.asyncio.create_task"),
             patch("src.tina.main.setup_logic.refresh_export_template_validation"),
         ):
-            VNAApp._import_measurement_output(
+            VNAApp._apply_import_result(
                 cast(Any, app),
-                restore_measurement=True,
+                _build_import_result(
+                    file_path=str(export_path),
+                    restore_measurement=True,
+                    notes=image_metadata.notes_markdown,
+                    setup=machine_settings.get("setup", {}),
+                    measurement_metadata=machine_settings.get("measurement", {}),
+                    freqs=restored_freqs,
+                    sparams=restored_sparams,
+                ),
             )
 
         assert app.last_measurement is not None
@@ -2226,7 +2263,7 @@ class TestMeasurementOutputRoundTrips:
             app.last_measurement["freqs"], sample_measurement["freqs"]
         )
         assert set(app.last_measurement["sparams"]) == {"S11", "S21", "S12", "S22"}
-        assert app.last_measurement["png_path"] == str(export_path)
+        assert app.last_measurement["png_path"] == str(export_path.resolve())
         assert app.last_measurement["notes"] == sample_measurement["notes"]
         assert host_input.value == "10.0.0.5"
         assert folder_input.value == "exports/png/{date}"
@@ -2353,20 +2390,38 @@ class TestMeasurementOutputRoundTrips:
             }[selector],
         )
 
-        fake_root = MagicMock()
+        _queue_import_request(app, file_path=str(export_path), restore_measurement=True)
+
+        from src.tina.export import read_svg_metadata
+
+        image_metadata = read_svg_metadata(export_path)
+        machine_settings = image_metadata.machine_settings
+        raw_data = machine_settings.get("measurement", {}).get("raw_data", {})
+        restored_freqs = np.array(raw_data.get("freqs_hz", []), dtype=float)
+        restored_sparams = {
+            name: (
+                np.array(values.get("magnitude_db", []), dtype=float),
+                np.array(values.get("phase_deg", []), dtype=float),
+            )
+            for name, values in raw_data.get("sparams", {}).items()
+            if isinstance(name, str) and isinstance(values, dict)
+        }
 
         with (
-            patch("src.tina.main.tk.Tk", return_value=fake_root),
-            patch(
-                "src.tina.main.filedialog.askopenfilename",
-                return_value=str(export_path),
-            ),
             patch("src.tina.main.asyncio.create_task"),
             patch("src.tina.main.setup_logic.refresh_export_template_validation"),
         ):
-            VNAApp._import_measurement_output(
+            VNAApp._apply_import_result(
                 cast(Any, app),
-                restore_measurement=True,
+                _build_import_result(
+                    file_path=str(export_path),
+                    restore_measurement=True,
+                    notes=image_metadata.notes_markdown,
+                    setup=machine_settings.get("setup", {}),
+                    measurement_metadata=machine_settings.get("measurement", {}),
+                    freqs=restored_freqs,
+                    sparams=restored_sparams,
+                ),
             )
 
         assert app.last_measurement is not None
@@ -2374,7 +2429,7 @@ class TestMeasurementOutputRoundTrips:
             app.last_measurement["freqs"], sample_measurement["freqs"]
         )
         assert set(app.last_measurement["sparams"]) == {"S11", "S21", "S12", "S22"}
-        assert app.last_measurement["svg_path"] == str(export_path)
+        assert app.last_measurement["svg_path"] == str(export_path.resolve())
         assert app.last_measurement["notes"] == sample_measurement["notes"]
         assert host_input.value == "172.16.0.10"
         assert folder_input.value == "exports/svg/{model}"
