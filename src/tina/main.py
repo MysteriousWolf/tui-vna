@@ -2562,15 +2562,7 @@ class VNAApp(App):
             # Log the configured path and whether it currently exists so we can
             # diagnose save-back failures. Resolve to absolute path to avoid
             # issues when cwd changes or relative paths are used.
-            try:
-                # Log raw touchstone_path value so we can diagnose what is
-                # being stored (including None or relative paths). Use repr
-                # style formatting to make empties and special chars visible.
-                self.log_message(
-                    f"action_save_back: touchstone_path={s2p_path!r}", "debug"
-                )
-            except Exception:
-                pass
+            # (Removed debug logging; embedding will correctly include notes)
             # If we have an s2p path and it exists, use the existing save-back
             # behavior that rewrites the touchstone file. Otherwise, if a PNG or
             # SVG path exists, embed the metadata into the image file.
@@ -2585,15 +2577,14 @@ class VNAApp(App):
             )
 
             # Prefer .s2p for applying save-back since it stores numeric data + metadata
-            self.log_message("save-back: checking s2p path", "debug")
+            # Check for existing .s2p path first
             if s2p_path:
                 try:
                     s2p_resolved = str(Path(s2p_path).resolve())
                 except Exception:
                     s2p_resolved = s2p_path
                 if os.path.exists(s2p_resolved) and Path(s2p_resolved).suffix.lower() == ".s2p":
-                    # Debug: report resolved s2p path
-                    self.log_message(f"save-back: s2p exists, resolved={s2p_resolved!r}", "debug")
+                    # Report resolved s2p path in success log below
                     target_for_history = s2p_resolved
                     # Read original file
                     with open(s2p_resolved, encoding="utf-8") as f:
@@ -2693,34 +2684,27 @@ class VNAApp(App):
                         pass
                     return
                 else:
-                    self.log_message("save-back: s2p path does not exist or wrong suffix", "debug")
+                    # s2p path not available; will try image embedding below
+                    pass
 
             # If we reach here, no valid s2p save-back occurred; try embedding into PNG or SVG
-            self.log_message("save-back: checking png path", "debug")
             if png_path and os.path.exists(png_path):
                 try:
                     try:
                         png_resolved = str(Path(png_path).resolve())
                     except Exception:
                         png_resolved = png_path
-                    # Debug PNG resolution and existence
-                    try:
-                        self.log_message(
-                            f"save-back: png resolved={png_resolved!r}, exists={os.path.exists(png_resolved)}",
-                            "debug",
-                        )
-                    except Exception:
-                        pass
-                    new_image_metadata = self._build_image_export_metadata(
-                        exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
-                        plot_type=str(self.settings.plot_type or "magnitude"),
-                        output_path=png_resolved,
+                    # Build image export metadata including notes and machine settings
+                    image_meta = build_image_export_metadata(
+                        notes_markdown=self.measurement_notes,
+                        machine_settings=self._build_touchstone_export_metadata(
+                            exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
+                        ),
                     )
-                    # Avoid double-embedding notes: machine_settings already contains notes
                     embed_png_metadata(
                         png_resolved,
-                        notes_markdown="",
-                        machine_settings=new_image_metadata,
+                        notes_markdown=image_meta.notes_markdown,
+                        machine_settings=image_meta.machine_settings,
                     )
                     self.log_message(f"Embedded notes into PNG: {png_resolved}", "success")
                     self.notify(
@@ -2734,31 +2718,23 @@ class VNAApp(App):
                     self.notify(f"PNG save-back failed: {e}", severity="error", timeout=3)
                     return
 
-            self.log_message("save-back: checking svg path", "debug")
             elif svg_path and os.path.exists(svg_path):
                 try:
                     try:
                         svg_resolved = str(Path(svg_path).resolve())
                     except Exception:
                         svg_resolved = svg_path
-                    # Debug SVG resolution and existence
-                    try:
-                        self.log_message(
-                            f"save-back: svg resolved={svg_resolved!r}, exists={os.path.exists(svg_resolved)}",
-                            "debug",
-                        )
-                    except Exception:
-                        pass
-                    new_image_metadata = self._build_image_export_metadata(
-                        exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
-                        plot_type=str(self.settings.plot_type or "magnitude"),
-                        output_path=svg_resolved,
+                    # Build image export metadata including notes and machine settings
+                    image_meta = build_image_export_metadata(
+                        notes_markdown=self.measurement_notes,
+                        machine_settings=self._build_touchstone_export_metadata(
+                            exported_traces=list(self.last_measurement.get("sparams", {}).keys()),
+                        ),
                     )
-                    # Avoid double-embedding notes: machine_settings already contains notes
                     embed_svg_metadata(
                         svg_resolved,
-                        notes_markdown="",
-                        machine_settings=new_image_metadata,
+                        notes_markdown=image_meta.notes_markdown,
+                        machine_settings=image_meta.machine_settings,
                     )
                     self.log_message(f"Embedded notes into SVG: {svg_resolved}", "success")
                     self.notify(
