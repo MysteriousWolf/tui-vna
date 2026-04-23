@@ -16,12 +16,14 @@ from .base import (
 
 # Import specific drivers for direct access if needed
 from .hp_e5071b import HPE5071B
+from .keysight_p5007a import KeysightP5007A
 
 __all__ = [
     "IDNInfo",
     "VNABase",
     "VNAConfig",
     "HPE5071B",
+    "KeysightP5007A",
     "detect_vna_driver",
     "discover_drivers",
     "list_available_drivers",
