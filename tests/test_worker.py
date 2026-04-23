@@ -24,6 +24,7 @@ from src.tina.worker import (
     MeasurementWorker,
     MessageType,
     ParamsResult,
+    _render_tools_plot_snapshot,
 )
 
 
@@ -560,6 +561,95 @@ class TestWorkerQueueManagement:
         assert worker._debug_scpi is False
 
         worker.stop()
+
+
+class TestWorkerToolsRendering:
+    """Test worker-side tools render/computation integration."""
+
+    @pytest.mark.unit
+    def test_tools_render_reuses_precomputed_distortion_result(self, tmp_path: Path):
+        """Distortion overlays should use the supplied tool result without recomputing."""
+        freqs = np.linspace(0.9e9, 1.1e9, 11)
+        sparams = {
+            "S21": (
+                np.linspace(-1.0, -2.0, 11),
+                np.linspace(0.0, 10.0, 11),
+            )
+        }
+        tool_result = {
+            "tool_name": "distortion",
+            "unit_label": "dB",
+            "extra": {
+                "coeffs": [1.0, 0.1, 0.05, 0.0, 0.0, 0.0],
+                "x_norm": np.linspace(-1.0, 1.0, 11).tolist(),
+                "f_band_hz": freqs.tolist(),
+            },
+        }
+
+        with patch("src.tina.worker.DistortionTool.compute") as mock_compute:
+            result = _render_tools_plot_snapshot(
+                freqs,
+                sparams,
+                "S21",
+                "magnitude",
+                "GHz",
+                float(freqs[0]),
+                float(freqs[-1]),
+                "distortion",
+                "▼",
+                {
+                    "fg": "#ffffff",
+                    "grid": "#888888",
+                    "trace": "#00ff00",
+                    "cursor1": "#ff0000",
+                    "cursor2": "#0000ff",
+                    "distortion_overlays": ["#aaaaaa"] * 6,
+                },
+                [False, True, True, False, False, False],
+                tool_result,
+                str(tmp_path / "tools_plot.png"),
+            )
+
+        mock_compute.assert_not_called()
+        assert result["path"].endswith("tools_plot.png")
+
+    @pytest.mark.unit
+    def test_handle_tools_render_includes_tool_result(self) -> None:
+        """Combined tools render should return the computed tool payload."""
+        worker = MeasurementWorker()
+        payload = {
+            "freqs": [0.9e9, 1.0e9, 1.1e9, 1.2e9, 1.3e9, 1.4e9, 1.5e9],
+            "sparams": {
+                "S21": [
+                    [-1.0, -1.1, -1.2, -1.3, -1.4, -1.5, -1.6],
+                    [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                ]
+            },
+            "trace": "S21",
+            "plot_type": "magnitude",
+            "freq_unit": "GHz",
+            "cursor1_hz": 0.9e9,
+            "cursor2_hz": 1.5e9,
+            "active_tool": "distortion",
+            "marker_symbol": "▼",
+            "colors": {
+                "fg": "#ffffff",
+                "grid": "#888888",
+                "trace": "#00ff00",
+                "cursor1": "#ff0000",
+                "cursor2": "#0000ff",
+                "distortion_overlays": ["#aaaaaa"] * 6,
+            },
+            "distortion_components": [False, True, True, False, False, False],
+            "output_path": str(Path("/tmp") / "worker_tools_render.png"),
+        }
+
+        result = worker._handle_tools_render(payload, lambda *_args: None)
+
+        assert result["path"].endswith("worker_tools_render.png")
+        assert isinstance(result.get("tool_result"), dict)
+        assert result["tool_result"]["tool_name"] == "distortion"
+        assert "coeffs" in result["tool_result"]["extra"]
 
 
 class TestWorkerLogging:

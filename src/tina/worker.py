@@ -325,6 +325,7 @@ def _render_tools_plot_snapshot(
     marker_symbol: str,
     colors: dict[str, Any],
     distortion_components: list[bool],
+    tool_result: dict[str, Any] | None,
     output_path: str,
 ) -> dict[str, Any]:
     """Render the tools image plot from a pure snapshot payload."""
@@ -368,15 +369,17 @@ def _render_tools_plot_snapshot(
             and cursor2_hz is not None
             and cursor1_hz != cursor2_hz
         ):
-            distortion = DistortionTool().compute(
-                freqs,
-                sparams,
-                trace,
-                plot_type,
-                cursor1_hz,
-                cursor2_hz,
+            distortion_result = (
+                tool_result
+                if isinstance(tool_result, dict)
+                and str(tool_result.get("tool_name", "")) == "distortion"
+                else None
             )
-            extra = distortion.extra or {}
+            extra = (
+                dict(distortion_result.get("extra", {}))
+                if distortion_result is not None
+                else {}
+            )
             coeffs = extra.get("coeffs")
             x_norm = extra.get("x_norm")
             f_band_hz = extra.get("f_band_hz")
@@ -1170,23 +1173,79 @@ class MeasurementWorker:
             )
             for name, values in dict(data["sparams"]).items()
         }
+        active_tool = str(data.get("active_tool") or "")
+        trace = str(data["trace"])
+        plot_type = str(data["plot_type"])
+        cursor1_hz = (
+            float(data["cursor1_hz"]) if data.get("cursor1_hz") is not None else None
+        )
+        cursor2_hz = (
+            float(data["cursor2_hz"]) if data.get("cursor2_hz") is not None else None
+        )
+        tool_result = self._compute_tools_result_payload(
+            freqs,
+            sparams,
+            active_tool,
+            trace,
+            plot_type,
+            cursor1_hz,
+            cursor2_hz,
+        )
         report("Tools plot: rendering image...", 65)
         result = _render_tools_plot_snapshot(
             freqs,
             sparams,
-            str(data["trace"]),
-            str(data["plot_type"]),
+            trace,
+            plot_type,
             str(data["freq_unit"]),
-            float(data["cursor1_hz"]) if data.get("cursor1_hz") is not None else None,
-            float(data["cursor2_hz"]) if data.get("cursor2_hz") is not None else None,
-            str(data["active_tool"]) if data.get("active_tool") is not None else None,
+            cursor1_hz,
+            cursor2_hz,
+            active_tool or None,
             str(data.get("marker_symbol", "▼")),
             dict(data["colors"]),
             [bool(item) for item in list(data.get("distortion_components", []))],
+            tool_result,
             str(data["output_path"]),
         )
         report("Tools plot: finalizing image...", 90)
-        return result
+        return {**result, "tool_result": tool_result}
+
+    def _compute_tools_result_payload(
+        self,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        active_tool: str,
+        trace: str,
+        plot_type: str,
+        cursor1_hz: float | None,
+        cursor2_hz: float | None,
+    ) -> dict[str, Any]:
+        """Compute the active Tools tab result as a serializable payload."""
+        if active_tool == "cursor":
+            return asdict(
+                MeasureTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    cursor1_hz,
+                    cursor2_hz,
+                )
+            )
+
+        if active_tool == "distortion":
+            return asdict(
+                DistortionTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    cursor1_hz,
+                    cursor2_hz,
+                )
+            )
+
+        return {"tool_name": "", "unit_label": "dB", "extra": {}}
 
     def _handle_tools_compute(
         self,
@@ -1215,28 +1274,26 @@ class MeasurementWorker:
 
         if active_tool == "cursor":
             report("Tools: measuring cursor values...", 55)
-            return asdict(
-                MeasureTool().compute(
-                    freqs,
-                    sparams,
-                    trace,
-                    plot_type,
-                    cursor1_hz,
-                    cursor2_hz,
-                )
+            return self._compute_tools_result_payload(
+                freqs,
+                sparams,
+                active_tool,
+                trace,
+                plot_type,
+                cursor1_hz,
+                cursor2_hz,
             )
 
         if active_tool == "distortion":
             report("Tools: fitting distortion model...", 45)
-            result = asdict(
-                DistortionTool().compute(
-                    freqs,
-                    sparams,
-                    trace,
-                    plot_type,
-                    cursor1_hz,
-                    cursor2_hz,
-                )
+            result = self._compute_tools_result_payload(
+                freqs,
+                sparams,
+                active_tool,
+                trace,
+                plot_type,
+                cursor1_hz,
+                cursor2_hz,
             )
             report("Tools: packaging distortion results...", 85)
             return result

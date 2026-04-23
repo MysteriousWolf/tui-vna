@@ -279,6 +279,7 @@ class VNAApp(App):
         self._tools_plot_generation = 0
         self._tools_plot_cache_key = None
         self._tools_plot_display_key = None
+        self._latest_tools_render_result: dict[str, object] | None = None
         self._tools_distortion_cache = {}
         self._tools_distortion_cache_last_data_key = None
         self._template_input_timer = None
@@ -1171,35 +1172,6 @@ class VNAApp(App):
         )
         return dict(result)
 
-    async def _run_tools_compute_job(self) -> dict[str, object]:
-        """Compute active tools results via the worker job system."""
-        if self.last_measurement is None:
-            raise ValueError("No measurement loaded")
-
-        self._cancel_background_jobs_by_operation("Tools compute")
-        trace = self._get_tools_trace()
-        plot_type_value = self.query_one("#select_tools_plot_type", Select).value
-        plot_type = (
-            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
-        )
-        result = await self._run_background_worker_job(
-            msg_type=MessageType.TOOLS_COMPUTE,
-            operation="Tools compute",
-            payload={
-                "freqs": self.last_measurement["freqs"].tolist(),
-                "sparams": {
-                    name: [values[0].tolist(), values[1].tolist()]
-                    for name, values in self.last_measurement["sparams"].items()
-                },
-                "active_tool": self.settings.tools_active_tool,
-                "trace": trace,
-                "plot_type": plot_type,
-                "cursor1_hz": self._tools_cursor1_hz,
-                "cursor2_hz": self._tools_cursor2_hz,
-            },
-        )
-        return dict(result)
-
     async def _run_save_back_job(self, payload: dict[str, object]) -> str:
         """Save notes/metadata back through the worker job system."""
         if not VNAApp._supports_unified_background_jobs(self):
@@ -1565,6 +1537,11 @@ class VNAApp(App):
             future = tracked_job.get("future")
             if isinstance(future, asyncio.Future) and not future.done():
                 future.set_result(job.result)
+        if job.operation == "Tools render" and isinstance(job.result, dict):
+            self._latest_tools_render_result = dict(job.result)
+            tool_result = job.result.get("tool_result")
+            if tool_result is not None:
+                render_tools_computation_result(self, tool_result)
         self.set_progress(f"{job.operation} complete", job.progress)
 
     @on(Select.Changed, "#sb_poll_interval")
@@ -3425,9 +3402,16 @@ class VNAApp(App):
             run_tools_computation(self)
             return
         try:
-            self.set_progress("Tools compute: queued", 0)
-            result = await self._run_tools_compute_job()
-            render_tools_computation_result(self, result)
+            cached_result = self._latest_tools_render_result
+            if isinstance(cached_result, dict):
+                tool_result = cached_result.get("tool_result")
+                if tool_result is not None:
+                    render_tools_computation_result(self, tool_result)
+                    return
+            self.set_progress("Tools plot: queued", 0)
+            result = await self._run_tools_render_job()
+            self._latest_tools_render_result = result
+            render_tools_computation_result(self, result.get("tool_result"))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
