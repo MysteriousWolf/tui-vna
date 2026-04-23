@@ -641,6 +641,7 @@ class TestWorkerToolsRendering:
                 "distortion_overlays": ["#aaaaaa"] * 6,
             },
             "distortion_components": [False, True, True, False, False, False],
+            "render_cache_key": ("tools", "state"),
             "output_path": str(Path("/tmp") / "worker_tools_render.png"),
         }
 
@@ -650,6 +651,7 @@ class TestWorkerToolsRendering:
         assert isinstance(result.get("tool_result"), dict)
         assert result["tool_result"]["tool_name"] == "distortion"
         assert "coeffs" in result["tool_result"]["extra"]
+        assert result["render_cache_key"] == ("tools", "state")
 
 
 class TestWorkerLogging:

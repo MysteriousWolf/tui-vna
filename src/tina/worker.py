@@ -1208,7 +1208,11 @@ class MeasurementWorker:
             str(data["output_path"]),
         )
         report("Tools plot: finalizing image...", 90)
-        return {**result, "tool_result": tool_result}
+        return {
+            **result,
+            "tool_result": tool_result,
+            "render_cache_key": data.get("render_cache_key"),
+        }
 
     def _compute_tools_result_payload(
         self,

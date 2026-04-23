@@ -180,6 +180,8 @@ class _FakeApp:
         self._rebuild_tools_params = MagicMock()
         self.call_after_refresh = MagicMock()
         self._update_results = MagicMock(return_value=None)
+        self._latest_tools_render_result = None
+        self._latest_tools_render_cache_key = None
         self._write_image_export = MagicMock()
         self._run_measurement_image_export = cast(
             Any,
@@ -210,6 +212,14 @@ class _FakeApp:
         self._activate_measurement_tab = cast(
             Any,
             lambda: VNAApp._activate_measurement_tab(cast(Any, self)),
+        )
+        self._invalidate_tools_render_result_cache = cast(
+            Any,
+            lambda: VNAApp._invalidate_tools_render_result_cache(cast(Any, self)),
+        )
+        self._current_tools_render_cache_key = cast(
+            Any,
+            lambda: VNAApp._current_tools_render_cache_key(cast(Any, self)),
         )
         self._is_minimal_export_enabled = cast(
             Any,
@@ -2603,3 +2613,87 @@ class TestPlotRedrawCaching:
         await tools_logic.delayed_redraw_tools_plot(cast(Any, app))
 
         app._refresh_tools_plot.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestToolsRenderResultCaching:
+    """Tests for worker-render result reuse in the Tools tab."""
+
+    @pytest.mark.asyncio
+    async def test_run_tools_computation_skips_stale_cached_result(
+        self, sample_measurement: dict[str, Any]
+    ) -> None:
+        """Stale cached worker results must not be reused for new tool state."""
+        app = _FakeApp(sample_measurement)
+        app.settings.plot_backend = "image"
+        app.settings.tools_active_tool = "cursor"
+        app._tools_cursor1_hz = 1.0e6
+        app._tools_cursor2_hz = 2.0e6
+        app._get_distortion_comp_enabled = cast(Any, lambda: [False] * 6)
+        app._get_tools_trace = cast(Any, lambda: "S21")
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#select_tools_plot_type": _FakeSelect("magnitude"),
+                "#tools_radio_s11": _FakeCheckbox(False),
+                "#tools_radio_s21": _FakeCheckbox(True),
+                "#tools_radio_s12": _FakeCheckbox(False),
+                "#tools_radio_s22": _FakeCheckbox(False),
+            }[selector],
+        )
+        app._latest_tools_render_result = {
+            "tool_result": {"tool_name": "measure", "unit_label": "dB"}
+        }
+        app._latest_tools_render_cache_key = ("stale",)
+        fresh_result = {
+            "tool_result": {
+                "tool_name": "measure",
+                "cursor1_freq_hz": 1.0e6,
+                "cursor2_freq_hz": 2.0e6,
+                "cursor1_value": -1.0,
+                "cursor2_value": -2.0,
+                "delta_value": -1.0,
+                "unit_label": "dB",
+                "extra": {},
+            },
+            "render_cache_key": tools_logic.get_tools_plot_cache_key(cast(Any, app)),
+        }
+
+        with patch("src.tina.main.render_tools_computation_result") as mock_render:
+            app._run_tools_render_job = AsyncMock(return_value=fresh_result)
+
+            await VNAApp._run_tools_computation_async(cast(Any, app))
+
+        app._run_tools_render_job.assert_awaited_once()
+        mock_render.assert_called_once_with(cast(Any, app), fresh_result["tool_result"])
+        assert app._latest_tools_render_result == fresh_result
+        assert app._latest_tools_render_cache_key == fresh_result["render_cache_key"]
+
+    def test_apply_import_result_clears_stale_tools_render_cache(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Importing a measurement should discard stale cached tool results first."""
+        export_path = tmp_path / "roundtrip.s2p"
+        export_path.write_text("! dummy", encoding="utf-8")
+        app = _FakeApp(None)
+        app._latest_tools_render_result = {"tool_result": {"tool_name": "measure"}}
+        app._latest_tools_render_cache_key = ("stale",)
+
+        result = _build_import_result(
+            file_path=str(export_path),
+            restore_measurement=True,
+            notes=sample_measurement["notes"],
+            setup={"freq_unit": "MHz"},
+            measurement_metadata={"plot_type": "magnitude"},
+            freqs=sample_measurement["freqs"],
+            sparams=sample_measurement["sparams"],
+        )
+
+        with (
+            patch("src.tina.main.asyncio.create_task"),
+            patch("src.tina.main.setup_logic.refresh_export_template_validation"),
+        ):
+            VNAApp._apply_import_result(cast(Any, app), result)
+
+        assert app._latest_tools_render_result is None
+        assert app._latest_tools_render_cache_key is None

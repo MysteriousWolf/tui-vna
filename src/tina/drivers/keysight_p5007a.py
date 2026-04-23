@@ -84,12 +84,12 @@ class KeysightP5007A(VNABase):
         try:
             self.inst = resource_manager.open_resource(address)
             self.inst.timeout = COMMAND_TIMEOUT_MS
+            self._connected = True
 
             report("Verifying connection...", 80)
             self._idn = self._query("*IDN?").strip()
 
             report("Connected", 100)
-            self._connected = True
             return True
         except Exception:
             self._cleanup_failed_connection()

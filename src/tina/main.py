@@ -119,18 +119,6 @@ from .worker import (
 )
 
 
-def _freeze_cache_value(value: object) -> object:
-    """Return a hashable, recursively frozen representation for cache keys."""
-    if isinstance(value, dict):
-        return tuple(
-            (str(key), _freeze_cache_value(item))
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        )
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze_cache_value(item) for item in value)
-    return value
-
-
 def _render_plot_image_snapshot(
     freqs: np.ndarray,
     sparams: dict[str, tuple[np.ndarray, np.ndarray]],
@@ -280,6 +268,7 @@ class VNAApp(App):
         self._tools_plot_cache_key = None
         self._tools_plot_display_key = None
         self._latest_tools_render_result: dict[str, object] | None = None
+        self._latest_tools_render_cache_key: tuple[object, ...] | None = None
         self._tools_distortion_cache = {}
         self._tools_distortion_cache_last_data_key = None
         self._template_input_timer = None
@@ -715,6 +704,7 @@ class VNAApp(App):
         file_path = str(result.paths.get("selected_path") or "")
         restored_panels = ["Setup"]
         restore_measurement = bool(result.measurement.get("restore_measurement", False))
+        self._invalidate_tools_render_result_cache()
 
         if restore_measurement:
             freqs = result.measurement.get("frequencies")
@@ -1133,6 +1123,7 @@ class VNAApp(App):
             raise ValueError("No measurement loaded")
 
         self._cancel_background_jobs_by_operation("Tools render")
+        render_cache_key = tools_logic.get_tools_plot_cache_key(self)
         trace = self._get_tools_trace()
         plot_type_value = self.query_one("#select_tools_plot_type", Select).value
         plot_type = (
@@ -1167,10 +1158,20 @@ class VNAApp(App):
                     ],
                 },
                 "distortion_components": self._get_distortion_comp_enabled(),
+                "render_cache_key": render_cache_key,
                 "output_path": str(self.plot_temp_dir / "tools_plot.png"),
             },
         )
         return dict(result)
+
+    def _invalidate_tools_render_result_cache(self) -> None:
+        """Drop any cached worker-side Tools render result payload."""
+        self._latest_tools_render_result = None
+        self._latest_tools_render_cache_key = None
+
+    def _current_tools_render_cache_key(self) -> tuple[object, ...] | None:
+        """Return the current tools-state key used for render/result reuse."""
+        return tools_logic.get_tools_plot_cache_key(self)
 
     async def _run_save_back_job(self, payload: dict[str, object]) -> str:
         """Save notes/metadata back through the worker job system."""
@@ -1372,6 +1373,9 @@ class VNAApp(App):
         finally:
             root.destroy()
 
+        if not file_path:
+            self.notify("Import cancelled", severity="warning", timeout=3)
+            return
         VNAApp._start_measurement_import(self, file_path, restore_measurement)
 
     def _start_message_polling(self):
@@ -1538,8 +1542,15 @@ class VNAApp(App):
             if isinstance(future, asyncio.Future) and not future.done():
                 future.set_result(job.result)
         if job.operation == "Tools render" and isinstance(job.result, dict):
-            self._latest_tools_render_result = dict(job.result)
-            tool_result = job.result.get("tool_result")
+            result_cache_key = job.result.get("render_cache_key")
+            current_cache_key = self._current_tools_render_cache_key()
+            if result_cache_key == current_cache_key:
+                self._latest_tools_render_result = dict(job.result)
+                self._latest_tools_render_cache_key = current_cache_key
+                tool_result = job.result.get("tool_result")
+            else:
+                self._invalidate_tools_render_result_cache()
+                tool_result = None
             if tool_result is not None:
                 render_tools_computation_result(self, tool_result)
         self.set_progress(f"{job.operation} complete", job.progress)
@@ -2157,8 +2168,9 @@ class VNAApp(App):
                 "#check_set_avg_count", Checkbox
             ).value
 
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             self.log_message(f"Invalid configuration: {e}", "error")
+            self.notify(f"Invalid configuration: {e}", severity="error")
             self.measuring = False
             self.enable_buttons_for_state()
             self.reset_progress()
@@ -2482,6 +2494,7 @@ class VNAApp(App):
             self._import_measurement_output(restore_measurement=True)
         except Exception as e:
             self.log_message(f"Import failed: {e}", "error")
+            self.notify(f"Import failed: {e}", severity="error")
 
     def action_import_setup_from_measurement_output(self) -> None:
         """Restore only the Setup tab from an exported measurement file."""
@@ -2489,6 +2502,7 @@ class VNAApp(App):
             self._import_measurement_output(restore_measurement=False)
         except Exception as e:
             self.log_message(f"Setup import failed: {e}", "error")
+            self.notify(f"Setup import failed: {e}", severity="error")
 
     def action_restore_setup_from_path(self, path: str) -> None:
         """Restore setup from the provided exported measurement path."""
@@ -2496,6 +2510,7 @@ class VNAApp(App):
             self._start_measurement_import(path, restore_measurement=False)
         except Exception as e:
             self.log_message(f"Setup import failed: {e}", "error")
+            self.notify(f"Setup import failed: {e}", severity="error")
 
     def action_open_recent_measurement(self, path: str) -> None:
         """Open/import a recent measurement (path) and restore measurement state."""
@@ -2503,6 +2518,7 @@ class VNAApp(App):
             self._start_measurement_import(path, restore_measurement=True)
         except Exception as e:
             self.log_message(f"Import failed: {e}", "error")
+            self.notify(f"Import failed: {e}", severity="error")
 
     def _get_selected_export_params(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """Return the currently selected S-parameters available in cached data."""
@@ -3054,7 +3070,7 @@ class VNAApp(App):
         freq_max = self.query_one("#input_plot_freq_max", Input).value.strip()
         y_min = self.query_one("#input_plot_y_min", Input).value.strip()
         y_max = self.query_one("#input_plot_y_max", Input).value.strip()
-        colors_signature = _freeze_cache_value(
+        colors_signature = tools_logic._freeze_cache_value(
             get_plot_colors(self.get_css_variables())
         )
         data_signature = (
@@ -3360,9 +3376,11 @@ class VNAApp(App):
     async def _refresh_tools_plot(self) -> None:
         """Render the Tools tab plot for the currently selected trace."""
         if self.last_measurement is None:
+            self._invalidate_tools_render_result_cache()
             return
 
         if self.settings.plot_backend == "terminal":
+            self._invalidate_tools_render_result_cache()
             await refresh_tools_plot(self)
             return
 
@@ -3387,10 +3405,14 @@ class VNAApp(App):
             self._tools_plot_generation += 1
             self._tools_plot_cache_key = cache_key
             self._tools_plot_display_key = display_key
+            self._latest_tools_render_result = dict(result)
+            self._latest_tools_render_cache_key = cache_key
         except Exception as exc:
             self._tools_plot_cache_key = None
             self._tools_plot_display_key = None
+            self._invalidate_tools_render_result_cache()
             await apply_tools_render_result(self, error=str(exc))
+            self.reset_progress()
 
     def _run_tools_computation(self) -> None:
         """Run the currently selected tools module and populate the results display."""
@@ -3399,23 +3421,34 @@ class VNAApp(App):
     async def _run_tools_computation_async(self) -> None:
         """Compute tools output through the unified worker job path."""
         if self.last_measurement is None:
+            self._invalidate_tools_render_result_cache()
             run_tools_computation(self)
             return
         try:
+            current_cache_key = self._current_tools_render_cache_key()
             cached_result = self._latest_tools_render_result
             if isinstance(cached_result, dict):
                 tool_result = cached_result.get("tool_result")
-                if tool_result is not None:
+                if (
+                    tool_result is not None
+                    and self._latest_tools_render_cache_key == current_cache_key
+                ):
                     render_tools_computation_result(self, tool_result)
                     return
+            self._invalidate_tools_render_result_cache()
             self.set_progress("Tools plot: queued", 0)
             result = await self._run_tools_render_job()
-            self._latest_tools_render_result = result
-            render_tools_computation_result(self, result.get("tool_result"))
+            result_cache_key = result.get("render_cache_key")
+            if result_cache_key == current_cache_key:
+                self._latest_tools_render_result = dict(result)
+                self._latest_tools_render_cache_key = current_cache_key
+                render_tools_computation_result(self, result.get("tool_result"))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self.log_message(f"Tools compute failed: {exc}", "error")
+            self.notify(f"Tools compute failed: {exc}", severity="error")
+            self.reset_progress()
 
     def _update_output_path_label(self) -> None:
         """
@@ -3758,8 +3791,9 @@ class VNAApp(App):
 
         # Get frequency unit from the current measurement snapshot
         measurement = self.last_measurement or {}
-        measurement_snapshot = (freqs, sparams)
-        measurement_id = id(measurement_snapshot)
+        # Use id of the actual measurement dict to detect when a new measurement
+        # is loaded; freqs/sparams are derived from it so they change together.
+        measurement_id = id(measurement) if measurement is self.last_measurement else None
         if measurement_id != self._measurement_plot_cache_measurement_id:
             self._measurement_plot_cache = {}
             self._measurement_plot_cache_measurement_id = measurement_id
