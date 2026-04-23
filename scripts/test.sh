@@ -58,7 +58,7 @@ done
 CMD="uv run pytest"
 
 if [ "$COVERAGE" = true ]; then
-    CMD="$CMD --cov=src/tina --cov-report=term-missing --cov-report=html"
+    CMD="$CMD --cov=src/tina --cov-report=term-missing --cov-report=html --cov-fail-under=10"
 else
     CMD="$CMD --no-cov"
 fi
@@ -77,7 +77,7 @@ fi
 
 # Run tests
 echo -e "${YELLOW}Command: $CMD${NC}\n"
-eval $CMD
+$CMD
 
 # Show coverage report location
 if [ "$COVERAGE" = true ]; then
