@@ -18,6 +18,7 @@ from src.tina.export import (
     embed_png_metadata,
     embed_svg_metadata,
 )
+from src.tina.gui.tabs import tools_logic
 from src.tina.main import VNAApp
 from src.tina.utils.touchstone import TouchstoneExporter
 from src.tina.worker import ImportRequest, ImportResult, MessageType
@@ -96,6 +97,13 @@ class _FakeSelect:
 
     def __init__(self, value: str) -> None:
         self.value = value
+
+
+class _FakeContainer:
+    """Minimal container stub exposing Textual-like content sizing."""
+
+    def __init__(self, width: int = 80, height: int = 24) -> None:
+        self.content_size = SimpleNamespace(width=width, height=height)
 
 
 class _FakeApp:
@@ -2480,3 +2488,118 @@ class TestMeasurementOutputRoundTrips:
         assert plot_s21.value is True
         assert plot_s22.value is True
         assert app._tabbed_content.active == "tab_measure"
+
+
+@pytest.mark.unit
+class TestPlotRedrawCaching:
+    """Tests for skipping redundant plot redraw work on tab switches."""
+
+    @pytest.mark.asyncio
+    async def test_delayed_redraw_plot_skips_when_results_plot_is_current(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Results tab activation should no-op when the image is already current."""
+        app = _FakeApp(sample_measurement)
+        app.settings.plot_backend = "image"
+        container = _FakeContainer(width=120, height=30)
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#select_plot_type": _FakeSelect("magnitude"),
+                "#check_plot_s11": _FakeCheckbox(True),
+                "#check_plot_s21": _FakeCheckbox(True),
+                "#check_plot_s12": _FakeCheckbox(False),
+                "#check_plot_s22": _FakeCheckbox(False),
+                "#input_plot_freq_min": SimpleNamespace(value=""),
+                "#input_plot_freq_max": SimpleNamespace(value=""),
+                "#input_plot_y_min": SimpleNamespace(value=""),
+                "#input_plot_y_max": SimpleNamespace(value=""),
+                "#results_container": container,
+            }[selector],
+        )
+        app._results_plot_generation = 1
+        app._results_plot_cache_key = VNAApp._get_results_plot_cache_key(
+            cast(Any, app),
+            sample_measurement["freqs"],
+            sample_measurement["sparams"],
+        )
+        app._results_plot_display_key = (120, 30)
+        app._results_plot_pixel_size = (1920, 1080)
+        plot_file = tmp_path / "current_plot_1.png"
+        plot_file.write_bytes(b"png")
+        app.last_plot_path = str(plot_file)
+        app._update_results = AsyncMock()
+
+        await VNAApp._delayed_redraw_plot(cast(Any, app))
+
+        app._update_results.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delayed_redraw_plot_refreshes_when_results_plot_is_stale(
+        self, sample_measurement: dict[str, Any]
+    ) -> None:
+        """Results tab activation should rerender when cached data is stale."""
+        app = _FakeApp(sample_measurement)
+        app.settings.plot_backend = "image"
+        app._results_plot_cache_key = ("stale",)
+        app._results_plot_display_key = (120, 30)
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#select_plot_type": _FakeSelect("magnitude"),
+                "#check_plot_s11": _FakeCheckbox(True),
+                "#check_plot_s21": _FakeCheckbox(True),
+                "#check_plot_s12": _FakeCheckbox(False),
+                "#check_plot_s22": _FakeCheckbox(False),
+                "#input_plot_freq_min": SimpleNamespace(value=""),
+                "#input_plot_freq_max": SimpleNamespace(value=""),
+                "#input_plot_y_min": SimpleNamespace(value=""),
+                "#input_plot_y_max": SimpleNamespace(value=""),
+                "#results_container": _FakeContainer(width=120, height=30),
+            }[selector],
+        )
+        app._update_results = AsyncMock()
+
+        await VNAApp._delayed_redraw_plot(cast(Any, app))
+
+        app._update_results.assert_awaited_once_with(
+            sample_measurement["freqs"],
+            sample_measurement["sparams"],
+            sample_measurement["output_path"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_delayed_redraw_tools_plot_skips_when_tools_plot_is_current(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """Tools tab activation should no-op when the image is already current."""
+        app = _FakeApp(sample_measurement)
+        app.settings.plot_backend = "image"
+        app.settings.tools_plot_type = "magnitude"
+        app.settings.tools_active_tool = None
+        app._tools_cursor1_hz = None
+        app._tools_cursor2_hz = None
+        app.plot_temp_dir = tmp_path
+        (tmp_path / "tools_plot.png").write_bytes(b"png")
+        container = _FakeContainer(width=96, height=24)
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#select_tools_plot_type": _FakeSelect("magnitude"),
+                "#tools_radio_s11": _FakeCheckbox(False),
+                "#tools_radio_s21": _FakeCheckbox(True),
+                "#tools_radio_s12": _FakeCheckbox(False),
+                "#tools_radio_s22": _FakeCheckbox(False),
+                "#tools_plot_container": container,
+            }[selector],
+        )
+        app._get_distortion_comp_enabled = cast(Any, lambda: [False] * 6)
+        app._tools_plot_cache_key = tools_logic.get_tools_plot_cache_key(cast(Any, app))
+        app._tools_plot_display_key = tools_logic.get_tools_plot_display_key(
+            cast(Any, app)
+        )
+        app._refresh_tools_plot = AsyncMock()
+
+        await tools_logic.delayed_redraw_tools_plot(cast(Any, app))
+
+        app._refresh_tools_plot.assert_not_awaited()

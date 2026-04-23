@@ -119,6 +119,18 @@ from .worker import (
 )
 
 
+def _freeze_cache_value(value: object) -> object:
+    """Return a hashable, recursively frozen representation for cache keys."""
+    if isinstance(value, dict):
+        return tuple(
+            (str(key), _freeze_cache_value(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_cache_value(item) for item in value)
+    return value
+
+
 def _render_plot_image_snapshot(
     freqs: np.ndarray,
     sparams: dict[str, tuple[np.ndarray, np.ndarray]],
@@ -237,6 +249,10 @@ class VNAApp(App):
         self._measurement_plot_cache = {}
         self._measurement_plot_cache_measurement_id = None
         self._plot_render_generation = 0
+        self._results_plot_generation = 0
+        self._results_plot_cache_key = None
+        self._results_plot_display_key = None
+        self._results_plot_pixel_size = None
         self._current_background_job_id = 0
         self._background_jobs: dict[int, dict[str, object]] = {}
         self._manual_export_jobs_in_flight = 0
@@ -260,6 +276,9 @@ class VNAApp(App):
         self._tools_cursor2_hz: float | None = None
         self._tools_resize_timer = None
         self._tools_input_timer = None  # Timer for debouncing cursor input changes
+        self._tools_plot_generation = 0
+        self._tools_plot_cache_key = None
+        self._tools_plot_display_key = None
         self._tools_distortion_cache = {}
         self._tools_distortion_cache_last_data_key = None
         self._template_input_timer = None
@@ -928,15 +947,19 @@ class VNAApp(App):
                     "dpi": dpi,
                     "image_format": image_format,
                     "minimal_export": minimal_export,
-                    "notes_markdown": str(self.last_measurement.get("notes", ""))
-                    if self.last_measurement
-                    else "",
-                    "metadata": None
-                    if minimal_export
-                    else self._build_image_export_metadata(
-                        exported_traces=plot_params,
-                        plot_type=str(plot_type),
-                        output_path=file_path,
+                    "notes_markdown": (
+                        str(self.last_measurement.get("notes", ""))
+                        if self.last_measurement
+                        else ""
+                    ),
+                    "metadata": (
+                        None
+                        if minimal_export
+                        else self._build_image_export_metadata(
+                            exported_traces=plot_params,
+                            plot_type=str(plot_type),
+                            output_path=file_path,
+                        )
                     ),
                     "freqs": self.last_measurement["freqs"].tolist(),
                     "sparams": {
@@ -1091,11 +1114,14 @@ class VNAApp(App):
                 "colors": colors,
                 "y_min": y_min,
                 "y_max": y_max,
-                "plot_data": {
-                    name: values.tolist() for name, values in (plot_data or {}).items()
-                }
-                if plot_data is not None
-                else None,
+                "plot_data": (
+                    {
+                        name: values.tolist()
+                        for name, values in (plot_data or {}).items()
+                    }
+                    if plot_data is not None
+                    else None
+                ),
             },
         )
         return dict(result)
@@ -1108,7 +1134,9 @@ class VNAApp(App):
         self._cancel_background_jobs_by_operation("Tools render")
         trace = self._get_tools_trace()
         plot_type_value = self.query_one("#select_tools_plot_type", Select).value
-        plot_type = str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
         result = await self._run_background_worker_job(
             msg_type=MessageType.TOOLS_RENDER,
             operation="Tools render",
@@ -1128,10 +1156,14 @@ class VNAApp(App):
                 "colors": {
                     "fg": get_plot_colors(self.get_css_variables())["fg"],
                     "grid": get_plot_colors(self.get_css_variables())["grid"],
-                    "trace": get_plot_colors(self.get_css_variables())["traces"].get(trace, "#ffffff"),
+                    "trace": get_plot_colors(self.get_css_variables())["traces"].get(
+                        trace, "#ffffff"
+                    ),
                     "cursor1": get_plot_colors(self.get_css_variables())["cursor1"],
                     "cursor2": get_plot_colors(self.get_css_variables())["cursor2"],
-                    "distortion_overlays": get_plot_colors(self.get_css_variables())["distortion_overlays"],
+                    "distortion_overlays": get_plot_colors(self.get_css_variables())[
+                        "distortion_overlays"
+                    ],
                 },
                 "distortion_components": self._get_distortion_comp_enabled(),
                 "output_path": str(self.plot_temp_dir / "tools_plot.png"),
@@ -1147,7 +1179,9 @@ class VNAApp(App):
         self._cancel_background_jobs_by_operation("Tools compute")
         trace = self._get_tools_trace()
         plot_type_value = self.query_one("#select_tools_plot_type", Select).value
-        plot_type = str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
         result = await self._run_background_worker_job(
             msg_type=MessageType.TOOLS_COMPUTE,
             operation="Tools compute",
@@ -1563,9 +1597,8 @@ class VNAApp(App):
         Tools tabs are opened.
 
         When the Log tab is activated, scroll the log widget to the end. When
-        the Results or Tools tab is activated, schedule a delayed redraw
-        (0.3 seconds) of the corresponding plot if a measurement is
-        available.
+        the Results or Tools tab is activated, schedule an after-refresh check
+        of the corresponding plot if a measurement is available.
 
         Parameters:
             event (TabbedContent.TabActivated): The tab activation event
@@ -1578,11 +1611,11 @@ class VNAApp(App):
         elif event.pane.id == "tab_results":
             # Redraw plot with correct sizing when switching to results tab
             if self.last_measurement is not None:
-                self.set_timer(0.3, self._delayed_redraw_plot)
+                self.call_after_refresh(self._delayed_redraw_plot)
         elif event.pane.id == "tab_tools":
             # Redraw tools plot when switching to tools tab
             if self.last_measurement is not None:
-                self.set_timer(0.3, self._delayed_redraw_tools_plot)
+                self.call_after_refresh(self._delayed_redraw_tools_plot)
 
     @on(
         Checkbox.Changed,
@@ -2395,7 +2428,7 @@ class VNAApp(App):
                 png_path = str(Path(export_folder) / f"{export_filename}.png")
                 self.last_measurement["png_path"] = png_path
                 image_export_tasks.append(
-                        asyncio.create_task(
+                    asyncio.create_task(
                         VNAApp._run_measurement_image_export(
                             self,
                             file_path=png_path,
@@ -2414,7 +2447,7 @@ class VNAApp(App):
                 svg_path = str(Path(export_folder) / f"{export_filename}.svg")
                 self.last_measurement["svg_path"] = svg_path
                 image_export_tasks.append(
-                        asyncio.create_task(
+                    asyncio.create_task(
                         VNAApp._run_measurement_image_export(
                             self,
                             file_path=svg_path,
@@ -2627,7 +2660,9 @@ class VNAApp(App):
     def handle_export_csv(self, event: Button.Pressed | None = None) -> None:
         """Export current measurement as a CSV file."""
         del event
-        VNAApp._schedule_manual_export_action(self, VNAApp._handle_export_csv_async(self))
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_csv_async(self)
+        )
 
     async def _handle_export_csv_async(self) -> None:
         """Async CSV export wrapper using the unified background job path."""
@@ -2681,7 +2716,9 @@ class VNAApp(App):
     def handle_export_png(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as PNG."""
         del event
-        VNAApp._schedule_manual_export_action(self, VNAApp._handle_export_png_async(self))
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_png_async(self)
+        )
 
     async def _handle_export_png_async(self) -> None:
         """Async PNG export wrapper using the unified background job path."""
@@ -2752,7 +2789,9 @@ class VNAApp(App):
     def handle_export_svg(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as SVG."""
         del event
-        VNAApp._schedule_manual_export_action(self, VNAApp._handle_export_svg_async(self))
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_svg_async(self)
+        )
 
     async def _handle_export_svg_async(self) -> None:
         """Async SVG export wrapper using the unified background job path."""
@@ -2918,10 +2957,10 @@ class VNAApp(App):
         Handle window resize events and schedule debounced UI updates.
 
         If a measurement is loaded, cancels any pending main-plot timer and
-        schedules a debounced redraw of the results plot after 300
+        schedules a debounced redraw of the results plot after 150
         milliseconds. If the Tools tab is active and a measurement exists,
         cancels any pending tools-plot timer and schedules a debounced
-        tools-plot refresh after 300 milliseconds. If an output path is set,
+        tools-plot refresh after 150 milliseconds. If an output path is set,
         cancels any pending path-update timer and schedules a debounced
         update of the displayed output-file label after 300 milliseconds.
 
@@ -2932,14 +2971,14 @@ class VNAApp(App):
             # Cancel any pending resize timer
             if self._resize_timer is not None:
                 self._resize_timer.stop()
-            # Debounce: redraw only after 300ms of no resize events
-            self._resize_timer = self.set_timer(0.3, self._redraw_plot)
+            # Debounce: redraw only after resize activity settles briefly.
+            self._resize_timer = self.set_timer(0.15, self._redraw_plot)
 
         # Debounce tools plot redraw — only when Tools tab is visible
         if self.last_measurement is not None and self._is_tools_tab_active():
             if self._tools_resize_timer is not None:
                 self._tools_resize_timer.stop()
-            self._tools_resize_timer = self.set_timer(0.3, self._refresh_tools_plot)
+            self._tools_resize_timer = self.set_timer(0.15, self._refresh_tools_plot)
 
         # Update output file path label
         if self.last_output_path is not None:
@@ -2951,12 +2990,7 @@ class VNAApp(App):
 
     async def _delayed_redraw_plot(self) -> None:
         """Delayed plot redraw to ensure proper container sizing."""
-        if self.last_measurement is not None:
-            await self._update_results(
-                self.last_measurement["freqs"],
-                self.last_measurement["sparams"],
-                self.last_measurement["output_path"],
-            )
+        await VNAApp._refresh_results_plot_if_needed(self)
 
     async def _redraw_plot(self) -> None:
         """
@@ -2964,12 +2998,7 @@ class VNAApp(App):
 
         If no last measurement is available this method does nothing.
         """
-        if self.last_measurement is not None:
-            await self._update_results(
-                self.last_measurement["freqs"],
-                self.last_measurement["sparams"],
-                self.last_measurement["output_path"],
-            )
+        await VNAApp._refresh_results_plot_if_needed(self)
 
     def _schedule_plot_refresh(self) -> None:
         """Schedule a debounced refresh of the results plot."""
@@ -3015,8 +3044,150 @@ class VNAApp(App):
 
     async def _refresh_results_plot(self) -> None:
         """Re-render the Measurement tab plot from cached data (e.g. after a theme change)."""
+        await VNAApp._refresh_results_plot_if_needed(self, force=True)
+
+    def _get_results_plot_display_key(self) -> tuple[int, int]:
+        """Return the current Results container size used for display decisions."""
+        try:
+            container = self.query_one("#results_container", Container)
+            return (
+                int(container.content_size.width or 0),
+                int(container.content_size.height or 0),
+            )
+        except Exception:
+            return (0, 0)
+
+    def _get_results_plot_cache_key(
+        self,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    ) -> tuple[object, ...]:
+        """Return a cache key describing the current Results plot inputs."""
+        plot_type_value = self.query_one("#select_plot_type", Select).value
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
+        selected_traces = tuple(
+            param
+            for param in ("S11", "S21", "S12", "S22")
+            if param in sparams
+            and self.query_one(f"#check_plot_{param.lower()}", Checkbox).value
+        )
+        freq_min = self.query_one("#input_plot_freq_min", Input).value.strip()
+        freq_max = self.query_one("#input_plot_freq_max", Input).value.strip()
+        y_min = self.query_one("#input_plot_y_min", Input).value.strip()
+        y_max = self.query_one("#input_plot_y_max", Input).value.strip()
+        colors_signature = _freeze_cache_value(
+            get_plot_colors(self.get_css_variables())
+        )
+        data_signature = (
+            id(freqs),
+            tuple(
+                (name, id(values[0]), id(values[1]))
+                for name, values in sorted(sparams.items())
+            ),
+        )
+        return (
+            self.settings.plot_backend,
+            plot_type,
+            selected_traces,
+            freq_min,
+            freq_max,
+            y_min,
+            y_max,
+            colors_signature,
+            data_signature,
+        )
+
+    async def _apply_cached_results_plot_display(self) -> bool:
+        """Reuse the already-rendered Results image when only layout changed."""
+        if self.settings.plot_backend != "image" or not self.last_plot_path:
+            return False
+
+        plot_file = Path(self.last_plot_path)
+        if not plot_file.exists():
+            return False
+
+        try:
+            results_container = self.query_one("#results_container", Container)
+        except Exception:
+            return False
+
+        async def ensure_results_widget(widget_class, *args, **kwargs):
+            existing_children = list(results_container.children)
+            existing_widget = existing_children[0] if existing_children else None
+
+            if existing_widget is not None and isinstance(
+                existing_widget, widget_class
+            ):
+                for child in existing_children[1:]:
+                    await child.remove()
+                return existing_widget, True
+
+            await results_container.remove_children()
+            widget = widget_class(*args, **kwargs)
+            await results_container.mount(widget)
+            return widget, False
+
+        try:
+            if not TEXTUAL_IMAGE_AVAILABLE:
+                raise ImportError("textual-image not available")
+
+            pixel_size = self._results_plot_pixel_size
+            if pixel_size is None:
+                plot_type_value = self.query_one("#select_plot_type", Select).value
+                plot_type = (
+                    str(plot_type_value)
+                    if isinstance(plot_type_value, str)
+                    else "magnitude"
+                )
+                pixel_size = (1920, 1920) if plot_type == "smith" else (1920, 1080)
+            px_w, px_h = pixel_size
+
+            img_widget, _ = await ensure_results_widget(ImageWidget, str(plot_file))
+            img_widget.image = str(plot_file)
+            container_w = results_container.content_size.width
+
+            if container_w and container_w > 10 and px_w and px_h:
+                img_widget.set_class(False, "main-image-fallback")
+                img_widget.set_class(True, "main-image-display")
+            else:
+                img_widget.set_class(False, "main-image-display")
+                img_widget.set_class(True, "main-image-fallback")
+
+            img_widget.refresh()
+            self._results_plot_display_key = VNAApp._get_results_plot_display_key(self)
+            return True
+        except Exception as e:
+            self.log_message(f"Failed to reuse cached plot image: {e}", "error")
+            return False
+
+    async def _refresh_results_plot_if_needed(self, *, force: bool = False) -> None:
+        """Refresh the Results plot only when data or visible layout changed."""
         if self.last_measurement is None:
             return
+
+        try:
+            cache_key = VNAApp._get_results_plot_cache_key(
+                self,
+                self.last_measurement["freqs"],
+                self.last_measurement["sparams"],
+            )
+            display_key = VNAApp._get_results_plot_display_key(self)
+        except Exception:
+            await self._update_results(
+                self.last_measurement["freqs"],
+                self.last_measurement["sparams"],
+                self.last_measurement["output_path"],
+            )
+            return
+
+        if not force and cache_key == self._results_plot_cache_key:
+            if display_key == self._results_plot_display_key:
+                return
+            if await VNAApp._apply_cached_results_plot_display(self):
+                return
+
         await self._update_results(
             self.last_measurement["freqs"],
             self.last_measurement["sparams"],
@@ -3060,7 +3231,9 @@ class VNAApp(App):
         exists and the file is a .s2p. Rewrites TINA comment blocks (notes and
         machine-readable metadata) while preserving the numeric Touchstone data.
         """
-        VNAApp._schedule_manual_export_action(self, VNAApp._action_save_back_async(self))
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._action_save_back_async(self)
+        )
 
     async def _action_save_back_async(self) -> None:
         """Async save-back wrapper using the unified background job path."""
@@ -3216,11 +3389,30 @@ class VNAApp(App):
             await refresh_tools_plot(self)
             return
 
+        cache_key = tools_logic.get_tools_plot_cache_key(self)
+        display_key = tools_logic.get_tools_plot_display_key(self)
+        plot_file = self.plot_temp_dir / "tools_plot.png"
+        if (
+            cache_key == self._tools_plot_cache_key
+            and plot_file.exists()
+            and display_key == self._tools_plot_display_key
+        ):
+            return
+        if cache_key == self._tools_plot_cache_key and plot_file.exists():
+            await apply_tools_render_result(self)
+            self._tools_plot_display_key = display_key
+            return
+
         try:
             self.set_progress("Tools plot: queued", 0)
             result = await self._run_tools_render_job()
             await apply_tools_render_result(self, result)
+            self._tools_plot_generation += 1
+            self._tools_plot_cache_key = cache_key
+            self._tools_plot_display_key = display_key
         except Exception as exc:
+            self._tools_plot_cache_key = None
+            self._tools_plot_display_key = None
             await apply_tools_render_result(self, error=str(exc))
 
     def _run_tools_computation(self) -> None:
@@ -3564,6 +3756,22 @@ class VNAApp(App):
             "debug",
         )
 
+        results_cache_key = self._get_results_plot_cache_key(freqs, sparams)
+
+        def mark_results_rendered(
+            *,
+            pixel_size: tuple[int, int] | None = None,
+            generation: int | None = None,
+        ) -> None:
+            """Record the currently rendered Results plot state for reuse checks."""
+            if generation is None:
+                self._results_plot_generation += 1
+            else:
+                self._results_plot_generation = generation
+            self._results_plot_cache_key = results_cache_key
+            self._results_plot_display_key = self._get_results_plot_display_key()
+            self._results_plot_pixel_size = pixel_size
+
         # Get frequency unit from the current measurement snapshot
         measurement = self.last_measurement or {}
         measurement_snapshot = (freqs, sparams)
@@ -3809,6 +4017,7 @@ class VNAApp(App):
                     "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
                     "[dim]Please switch to Image backend to view Smith charts.[/dim]"
                 )
+                mark_results_rendered()
             elif plot_backend == "terminal":
                 # Use plotext for terminal-based plotting
                 from textual_plotext import PlotextPlot
@@ -3868,6 +4077,7 @@ class VNAApp(App):
 
                 # Refresh the plot widget to display
                 plot_widget.refresh()
+                mark_results_rendered()
 
             else:  # image backend
                 self._plot_render_generation += 1
@@ -3969,6 +4179,9 @@ class VNAApp(App):
                     self.log_message(
                         f"Error: Plot file not created at {plot_file}", "error"
                     )
+                    self._results_plot_cache_key = None
+                    self._results_plot_display_key = None
+                    self._results_plot_pixel_size = None
                     plot_widget, _ = await ensure_results_widget(
                         Static,
                         "[red]Failed to generate plot image[/red]",
@@ -4090,6 +4303,10 @@ class VNAApp(App):
                             f"[cyan]File: {plot_file}[/cyan]\n"
                             f"[dim]Error: {e}[/dim]"
                         )
+                    mark_results_rendered(
+                        pixel_size=(px_w, px_h),
+                        generation=plot_generation,
+                    )
         else:
             plot_widget, _ = await ensure_results_widget(
                 Static,
@@ -4099,6 +4316,7 @@ class VNAApp(App):
             plot_widget.update(
                 "\n[bold yellow]No parameters selected for plotting[/bold yellow]"
             )
+            mark_results_rendered()
 
         # S-Parameters statistics using DataTable (after plot)
         # Disabled for now - feels redundant with plot data

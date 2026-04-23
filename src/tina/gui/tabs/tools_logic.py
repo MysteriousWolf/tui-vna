@@ -20,6 +20,18 @@ from ...tools.base import ToolResult
 from ...tools.distortion import COMPONENT_NAMES as DISTORTION_COMPONENT_NAMES
 
 
+def _freeze_cache_value(value: object) -> object:
+    """Return a hashable, recursively frozen representation for cache keys."""
+    if isinstance(value, dict):
+        return tuple(
+            (str(key), _freeze_cache_value(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_cache_value(item) for item in value)
+    return value
+
+
 def _tools_plot_state(app) -> dict:
     """Return the cached Matplotlib state for the Tools plot."""
     state = getattr(app, "_tools_mpl_plot_state", None)
@@ -661,8 +673,67 @@ def handle_frequency_mode_change(
 
 async def delayed_redraw_tools_plot(app) -> None:
     """Trigger a deferred tools plot refresh after layout settles."""
-    if app.last_measurement is not None:
-        await app._refresh_tools_plot()
+    if app.last_measurement is None:
+        return
+
+    cache_key = get_tools_plot_cache_key(app)
+    display_key = get_tools_plot_display_key(app)
+    plot_file = app.plot_temp_dir / "tools_plot.png"
+    if (
+        cache_key == getattr(app, "_tools_plot_cache_key", None)
+        and display_key == getattr(app, "_tools_plot_display_key", None)
+        and plot_file.exists()
+    ):
+        return
+
+    await app._refresh_tools_plot()
+
+
+def get_tools_plot_display_key(app) -> tuple[int, int]:
+    """Return the current Tools plot container size used for display decisions."""
+    try:
+        container = app.query_one("#tools_plot_container")
+        return (
+            int(container.content_size.width or 0),
+            int(container.content_size.height or 0),
+        )
+    except Exception:
+        return (0, 0)
+
+
+def get_tools_plot_cache_key(app) -> tuple[object, ...] | None:
+    """Return a cache key describing the current Tools plot inputs."""
+    if app.last_measurement is None:
+        return None
+
+    freqs = app.last_measurement["freqs"]
+    sparams = app.last_measurement["sparams"]
+    trace = get_tools_trace(app)
+    try:
+        plot_type_value = app.query_one("#select_tools_plot_type", Select).value
+    except Exception:
+        plot_type_value = app.settings.tools_plot_type or "magnitude"
+    plot_type = (
+        str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+    )
+    colors = get_plot_colors(app.get_css_variables())
+    distortion_components = tuple(app._get_distortion_comp_enabled())
+
+    return (
+        app.settings.plot_backend,
+        trace,
+        plot_type,
+        app.settings.tools_active_tool,
+        app._tools_cursor1_hz,
+        app._tools_cursor2_hz,
+        distortion_components,
+        _freeze_cache_value(colors),
+        id(freqs),
+        tuple(
+            (name, id(values[0]), id(values[1]))
+            for name, values in sorted(sparams.items())
+        ),
+    )
 
 
 async def delayed_tools_refresh(app) -> None:
@@ -728,9 +799,7 @@ async def apply_tools_render_result(
             )
             err_widget.update(f"[red]Image display error: {exc}[/red]")
     elif not TEXTUAL_IMAGE_AVAILABLE:
-        msg = (
-            "[yellow]Image backend available, but image display support is missing.[/yellow]"
-        )
+        msg = "[yellow]Image backend available, but image display support is missing.[/yellow]"
         msg_widget, _ = await _ensure_tools_plot_widget(
             container,
             Static,
@@ -1007,7 +1076,11 @@ def render_tools_computation_result(app, result: ToolResult | dict | None) -> No
             display.update("[dim]Enter cursor frequencies above.[/dim]")
             return
 
-        freq_unit = app.last_measurement.get("freq_unit", "MHz") if app.last_measurement else "MHz"
+        freq_unit = (
+            app.last_measurement.get("freq_unit", "MHz")
+            if app.last_measurement
+            else "MHz"
+        )
         unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
         multiplier = unit_multipliers.get(freq_unit, 1e6)
         plot_colors = get_plot_colors(app.get_css_variables())
