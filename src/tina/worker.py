@@ -9,17 +9,36 @@ communication.
 import queue
 import threading
 import traceback
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import matplotlib
 import numpy as np
+from matplotlib import pyplot as plt
 
 from .drivers import VNABase, VNAConfig, detect_vna_driver
-from .export import read_png_metadata, read_svg_metadata
+from .export import (
+    CsvExporter,
+    build_image_export_metadata,
+    embed_png_metadata,
+    embed_svg_metadata,
+    read_png_metadata,
+    read_svg_metadata,
+)
+from .gui.plotting import (
+    DISTORTION_OVERLAY_LABELS,
+    DISTORTION_OVERLAY_STYLES,
+    create_matplotlib_plot,
+    create_smith_chart,
+    unwrap_phase,
+)
+from .tools import DistortionTool, MeasureTool
 from .utils import LoggingVNAWrapper
 from .utils.touchstone import TouchstoneExporter
+
+matplotlib.use("Agg")
 
 
 class MessageType(Enum):
@@ -34,6 +53,10 @@ class MessageType(Enum):
     STATUS_POLL = "status_poll"
     SHUTDOWN = "shutdown"
     SET_DEBUG_SCPI = "set_debug_scpi"
+    EXPORT = "export"
+    SAVE_BACK = "save_back"
+    TOOLS_RENDER = "tools_render"
+    TOOLS_COMPUTE = "tools_compute"
 
     # Responses (Worker -> UI)
     CONNECTED = "connected"
@@ -64,6 +87,17 @@ class ProgressUpdate:
 
     message: str
     progress_pct: float
+    job_id: int | None = None
+
+
+@dataclass
+class BackgroundJob:
+    """Background job completion payload."""
+
+    job_id: int
+    operation: str
+    progress: float
+    result: Any = None
 
 
 @dataclass
@@ -124,6 +158,298 @@ class LogMessage:
     level: str  # "tx", "rx", "info", "progress", etc.
 
 
+class BackgroundJobCancelledError(RuntimeError):
+    """Raised when a background job has been superseded or cancelled."""
+
+
+def _render_plot_image_snapshot(
+    freqs: np.ndarray,
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    plot_params: tuple[str, ...],
+    plot_type: str,
+    output_path: Path,
+    dpi: int,
+    pixel_width: int,
+    pixel_height: int,
+    render_scale: int,
+    colors: dict,
+    y_min: float | None,
+    y_max: float | None,
+    plot_data: dict[str, np.ndarray] | None = None,
+) -> None:
+    """Render a measurement plot image snapshot from immutable inputs."""
+    if plot_type == "smith":
+        create_smith_chart(
+            freqs,
+            sparams,
+            list(plot_params),
+            output_path,
+            dpi=dpi,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            transparent=True,
+            render_scale=render_scale,
+            colors=colors,
+        )
+    else:
+        create_matplotlib_plot(
+            freqs,
+            sparams,
+            list(plot_params),
+            plot_type,
+            output_path,
+            dpi=dpi,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            transparent=True,
+            render_scale=render_scale,
+            colors=colors,
+            y_min=y_min,
+            y_max=y_max,
+            plot_data=plot_data,
+        )
+
+
+def _write_touchstone_save_back(
+    target_path: str,
+    measurement_notes: str,
+    metadata: dict[str, object],
+) -> str:
+    """Rewrite notes and TINA metadata into an existing Touchstone file."""
+    resolved = str(Path(target_path).resolve())
+
+    with open(resolved, encoding="utf-8") as handle:
+        original_text = handle.read()
+
+    TouchstoneExporter.import_with_metadata(resolved)
+
+    lines = original_text.splitlines()
+    header_lines: list[str] = []
+    option_and_data_lines: list[str] = []
+    in_data = False
+
+    for raw in lines:
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if not in_data and stripped and not stripped.startswith("!"):
+            in_data = True
+        if in_data:
+            option_and_data_lines.append(line)
+            continue
+
+        if stripped.startswith("!"):
+            content = TouchstoneExporter._strip_comment_prefix(stripped)
+            if content in (
+                "TINA NOTES BEGIN",
+                "TINA NOTES END",
+                "TINA METADATA BEGIN",
+                "TINA METADATA END",
+            ):
+                continue
+        header_lines.append(line)
+
+    notes_lines = TouchstoneExporter._build_notes_comment_lines(measurement_notes)
+    metadata_lines = TouchstoneExporter._serialize_metadata_comment_lines(metadata)
+
+    out_lines: list[str] = []
+    if header_lines:
+        out_lines.extend(header_lines)
+    else:
+        out_lines.append("! HP E5071B S-Parameter Data")
+    out_lines.extend(notes_lines)
+    out_lines.extend(option_and_data_lines)
+    out_lines.extend(metadata_lines)
+
+    destination = Path(resolved)
+    temp_path = destination.with_suffix(".s2p.tmp")
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(out_lines) + "\n")
+    temp_path.replace(destination)
+    return resolved
+
+
+def _write_image_save_back(
+    target_path: str,
+    measurement_notes: str,
+    metadata: dict[str, object],
+    image_format: str,
+) -> str:
+    """Embed notes and machine metadata into an existing PNG or SVG export."""
+    resolved = str(Path(target_path).resolve())
+    image_meta = build_image_export_metadata(
+        notes_markdown=measurement_notes,
+        machine_settings=metadata,
+    )
+    if image_format == "png":
+        embed_png_metadata(
+            resolved,
+            notes_markdown=image_meta.notes_markdown,
+            machine_settings=image_meta.machine_settings,
+        )
+    else:
+        embed_svg_metadata(
+            resolved,
+            notes_markdown=image_meta.notes_markdown,
+            machine_settings=image_meta.machine_settings,
+        )
+    return resolved
+
+
+def _compute_tools_data(
+    freqs: np.ndarray,
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    trace: str,
+    plot_type: str,
+) -> tuple[np.ndarray, str, str]:
+    """Return the tools trace data and labels for the selected plot type."""
+    if trace not in sparams:
+        raise ValueError(f"Trace {trace} not available in current measurement")
+
+    mag, phase = sparams[trace]
+    if plot_type == "magnitude":
+        return mag, "Magnitude (dB)", f"{trace} Magnitude"
+    if plot_type == "phase":
+        return unwrap_phase(phase), "Phase (°)", f"{trace} Phase (Unwrapped)"
+    return phase, "Phase (°)", f"{trace} Phase (Raw)"
+
+
+def _render_tools_plot_snapshot(
+    freqs: np.ndarray,
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    trace: str,
+    plot_type: str,
+    freq_unit: str,
+    cursor1_hz: float | None,
+    cursor2_hz: float | None,
+    active_tool: str | None,
+    marker_symbol: str,
+    colors: dict[str, Any],
+    distortion_components: list[bool],
+    output_path: str,
+) -> dict[str, Any]:
+    """Render the tools image plot from a pure snapshot payload."""
+    unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+    multiplier = unit_multipliers.get(freq_unit, 1e6)
+    data, y_label, plot_title = _compute_tools_data(freqs, sparams, trace, plot_type)
+    freq_axis = freqs / multiplier
+
+    fig, ax = plt.subplots(figsize=(1920 / 150, 1080 / 150))
+    try:
+        fg = str(colors["fg"])
+        grid = str(colors["grid"])
+        trace_color = str(colors["trace"])
+        cursor1_color = str(colors["cursor1"])
+        cursor2_color = str(colors["cursor2"])
+        overlay_colors = list(colors.get("distortion_overlays", []))
+        marker_map = {"▼": "v", "✕": "x", "○": "o"}
+        marker = marker_map.get(marker_symbol, "v")
+
+        fig.patch.set_alpha(0.0)
+        ax.set_facecolor("none")
+        ax.plot(freq_axis, data, color=trace_color, linewidth=1.5, label=trace)
+
+        if cursor1_hz is not None:
+            x1 = cursor1_hz / multiplier
+            y1 = float(np.interp(cursor1_hz, freqs, data))
+            ax.axvline(x1, color=cursor1_color, linewidth=1.2, zorder=3)
+            if active_tool in ("cursor", "distortion"):
+                ax.scatter([x1], [y1], color=cursor1_color, marker=marker, s=80, zorder=5)
+
+        if cursor2_hz is not None:
+            x2 = cursor2_hz / multiplier
+            y2 = float(np.interp(cursor2_hz, freqs, data))
+            ax.axvline(x2, color=cursor2_color, linewidth=1.2, zorder=3)
+            if active_tool in ("cursor", "distortion"):
+                ax.scatter([x2], [y2], color=cursor2_color, marker=marker, s=80, zorder=5)
+
+        if (
+            active_tool == "distortion"
+            and cursor1_hz is not None
+            and cursor2_hz is not None
+            and cursor1_hz != cursor2_hz
+        ):
+            distortion = DistortionTool().compute(
+                freqs,
+                sparams,
+                trace,
+                plot_type,
+                cursor1_hz,
+                cursor2_hz,
+            )
+            extra = distortion.extra or {}
+            coeffs = extra.get("coeffs")
+            x_norm = extra.get("x_norm")
+            f_band_hz = extra.get("f_band_hz")
+            if (
+                isinstance(coeffs, list)
+                and isinstance(x_norm, list)
+                and isinstance(f_band_hz, list)
+            ):
+                band_axis = np.array(f_band_hz, dtype=float) / multiplier
+                ax.axvspan(
+                    min(cursor1_hz, cursor2_hz) / multiplier,
+                    max(cursor1_hz, cursor2_hz) / multiplier,
+                    alpha=0.08,
+                    color=fg,
+                    zorder=0,
+                )
+                x_values = np.array(x_norm, dtype=float)
+                for idx in range(min(6, len(coeffs), len(distortion_components))):
+                    if not distortion_components[idx]:
+                        continue
+                    cumulative = np.zeros(idx + 1)
+                    cumulative[:] = np.array(coeffs[: idx + 1], dtype=float)
+                    cumulative_y = np.polynomial.legendre.legval(x_values, cumulative)
+                    color = (
+                        overlay_colors[idx]
+                        if idx < len(overlay_colors)
+                        else trace_color
+                    )
+                    linestyle = DISTORTION_OVERLAY_STYLES[idx]
+                    label = DISTORTION_OVERLAY_LABELS[idx]
+                    ax.plot(
+                        band_axis,
+                        cumulative_y,
+                        color=color,
+                        linestyle=linestyle,
+                        linewidth=1.5,
+                        label=label,
+                        zorder=4,
+                    )
+
+        ax.set_xlabel(f"Frequency ({freq_unit})", color=fg)
+        ax.set_ylabel(y_label, color=fg)
+        ax.set_title(plot_title, color=fg)
+        ax.tick_params(colors=fg)
+        ax.grid(True, alpha=0.2, color=grid, linestyle="-", linewidth=0.5)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(grid)
+            spine.set_linewidth(1)
+
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            legend = ax.legend(edgecolor=grid, labelcolor=fg, fontsize=9)
+            legend.get_frame().set_alpha(0.5)
+            legend.get_frame().set_facecolor("none")
+
+        fig.tight_layout()
+        fig.savefig(
+            output_path,
+            dpi=150,
+            facecolor=fig.get_facecolor(),
+            edgecolor="none",
+            bbox_inches="tight",
+            transparent=True,
+        )
+    finally:
+        plt.close(fig)
+
+    return {"path": output_path, "pixel_width": 1920, "pixel_height": 1080}
+
+
 class MeasurementWorker:
     """
     Worker thread for VNA measurements.
@@ -161,6 +487,7 @@ class MeasurementWorker:
         self._config: VNAConfig | None = None
         self._measuring = False
         self._debug_scpi = False
+        self._job_tokens: dict[int, int] = {}
 
     def start(self):
         """Start the worker thread."""
@@ -228,19 +555,44 @@ class MeasurementWorker:
         """Send response to UI thread."""
         self._response_queue.put(Message(type=msg_type, data=data, error=error))
 
-    def _send_progress(self, message: str, progress_pct: float):
+    def _send_progress(
+        self, message: str, progress_pct: float, job_id: int | None = None
+    ):
         """Send progress update to UI thread."""
         self._send_response(
             MessageType.PROGRESS,
-            ProgressUpdate(message=message, progress_pct=progress_pct),
+            ProgressUpdate(
+                message=message,
+                progress_pct=progress_pct,
+                job_id=job_id,
+            ),
         )
 
     def _send_import_progress(self, message: str, progress_pct: float) -> None:
         """Send import-specific progress updates to UI thread."""
         self._send_response(
             MessageType.IMPORT_PROGRESS,
-            ProgressUpdate(message=message, progress_pct=progress_pct),
+            ProgressUpdate(message=message, progress_pct=progress_pct, job_id=None),
         )
+
+    def cancel_job(self, job_id: int) -> int:
+        """Invalidate the current generation token for a background job id."""
+        next_token = self._job_tokens.get(job_id, 0) + 1
+        self._job_tokens[job_id] = next_token
+        return next_token
+
+    def _get_job_token(self, job_id: int) -> int:
+        """Return the current token for a background job id, creating one if needed."""
+        token = self._job_tokens.get(job_id)
+        if token is None:
+            token = 1
+            self._job_tokens[job_id] = token
+        return token
+
+    def _check_job_cancelled(self, job_id: int, token: int) -> None:
+        """Raise if the job token no longer matches the active generation."""
+        if self._job_tokens.get(job_id) != token:
+            raise BackgroundJobCancelledError(f"Background job {job_id} cancelled")
 
     def _log(self, message: str, level: str = "info"):
         """Send log message to UI thread."""
@@ -274,6 +626,13 @@ class MeasurementWorker:
                     self._handle_status_poll()
                 elif msg.type == MessageType.SET_DEBUG_SCPI:
                     self._handle_set_debug_scpi(msg.data)
+                elif msg.type in {
+                    MessageType.EXPORT,
+                    MessageType.SAVE_BACK,
+                    MessageType.TOOLS_RENDER,
+                    MessageType.TOOLS_COMPUTE,
+                }:
+                    self._handle_background_job(msg.type, msg.data)
 
             except Exception as e:
                 # Catch-all error handler
@@ -585,6 +944,305 @@ class MeasurementWorker:
             MessageType.SCPI_ERROR_UPDATE,
             data={"command": command, "error": raw_error},
         )
+
+    def _handle_background_job(
+        self, msg_type: MessageType, data: dict[str, Any] | None
+    ) -> None:
+        """Execute a background job command and stream unified progress updates."""
+        if not isinstance(data, dict):
+            self._send_response(
+                MessageType.ERROR,
+                error="Background job failed: invalid job payload",
+            )
+            return
+
+        job_id_raw = data.get("job_id")
+        operation_raw = data.get("operation")
+        if not isinstance(job_id_raw, int) or not isinstance(operation_raw, str):
+            self._send_response(
+                MessageType.ERROR,
+                error="Background job failed: missing job_id or operation",
+            )
+            return
+
+        job_id = job_id_raw
+        operation = operation_raw
+        token = self._get_job_token(job_id)
+
+        def report(message: str, progress: float) -> None:
+            self._check_job_cancelled(job_id, token)
+            self._send_progress(message, progress, job_id=job_id)
+
+        try:
+            result: Any
+            report(f"{operation} starting...", 0)
+
+            if msg_type == MessageType.EXPORT:
+                kind = str(data.get("kind", "export"))
+                report(f"{kind}: preparing data...", 10)
+                export_kind = str(data.get("export_kind", ""))
+                if export_kind == "touchstone":
+                    exporter = TouchstoneExporter(freq_unit=str(data.get("freq_unit", "MHz")))
+                    report(f"{kind}: writing Touchstone...", 45)
+                    result = exporter.export(
+                        np.array(data["freqs"], dtype=float),
+                        {
+                            str(name): (
+                                np.array(values[0], dtype=float),
+                                np.array(values[1], dtype=float),
+                            )
+                            for name, values in dict(data["sparams"]).items()
+                        },
+                        str(data["output_folder"]),
+                        str(data.get("filename", "measurement")),
+                        str(data.get("output_name", "measurement")),
+                        notes_markdown=str(data.get("notes_markdown", "")),
+                        metadata=data.get("metadata"),
+                    )
+                elif export_kind == "csv":
+                    report(f"{kind}: writing CSV...", 40)
+                    exporter = CsvExporter(freq_unit=str(data.get("freq_unit", "MHz")))
+                    result = exporter.export(
+                        np.array(data["freqs"], dtype=float),
+                        {
+                            str(name): (
+                                np.array(values[0], dtype=float),
+                                np.array(values[1], dtype=float),
+                            )
+                            for name, values in dict(data["sparams"]).items()
+                        },
+                        str(data["output_folder"]),
+                        str(data.get("filename", "measurement")),
+                        str(data.get("output_name", "measurement")),
+                    )
+                elif export_kind == "image":
+                    report(f"{kind}: rendering image...", 35)
+                    file_path = str(data["file_path"])
+                    output = Path(file_path)
+                    plot_type = str(data["plot_type"])
+                    plot_params = tuple(str(item) for item in list(data["plot_params"]))
+                    freqs = np.array(data["freqs"], dtype=float)
+                    sparams = {
+                        str(name): (
+                            np.array(values[0], dtype=float),
+                            np.array(values[1], dtype=float),
+                        )
+                        for name, values in dict(data["sparams"]).items()
+                    }
+                    colors = dict(data["colors"])
+                    if plot_type == "smith":
+                        create_smith_chart(
+                            freqs,
+                            sparams,
+                            list(plot_params),
+                            output,
+                            dpi=int(data["dpi"]),
+                            colors=colors,
+                        )
+                    else:
+                        create_matplotlib_plot(
+                            freqs,
+                            sparams,
+                            list(plot_params),
+                            plot_type,
+                            output,
+                            dpi=int(data["dpi"]),
+                            colors=colors,
+                        )
+                    if not bool(data.get("minimal_export", False)):
+                        report(f"{kind}: embedding metadata...", 80)
+                        image_meta = build_image_export_metadata(
+                            notes_markdown=str(data.get("notes_markdown", "")),
+                            machine_settings=data.get("metadata"),
+                        )
+                        if str(data["image_format"]) == "png":
+                            embed_png_metadata(
+                                file_path,
+                                notes_markdown=image_meta.notes_markdown,
+                                machine_settings=image_meta.machine_settings,
+                            )
+                        else:
+                            embed_svg_metadata(
+                                file_path,
+                                notes_markdown=image_meta.notes_markdown,
+                                machine_settings=image_meta.machine_settings,
+                            )
+                    result = file_path
+                elif export_kind == "results_plot":
+                    report(f"{kind}: rendering plot...", 40)
+                    result = _render_plot_image_snapshot(
+                        np.array(data["freqs"], dtype=float),
+                        {
+                            str(name): (
+                                np.array(values[0], dtype=float),
+                                np.array(values[1], dtype=float),
+                            )
+                            for name, values in dict(data["sparams"]).items()
+                        },
+                        tuple(str(item) for item in list(data["plot_params"])),
+                        str(data["plot_type"]),
+                        Path(str(data["output_path"])),
+                        int(data["dpi"]),
+                        int(data["pixel_width"]),
+                        int(data["pixel_height"]),
+                        int(data.get("render_scale", 1)),
+                        dict(data["colors"]),
+                        float(data["y_min"]) if data.get("y_min") is not None else None,
+                        float(data["y_max"]) if data.get("y_max") is not None else None,
+                        {
+                            str(name): np.array(values, dtype=float)
+                            for name, values in dict(data.get("plot_data", {})).items()
+                        }
+                        if data.get("plot_data") is not None
+                        else None,
+                    )
+                    result = {
+                        "path": str(data["output_path"]),
+                        "pixel_width": int(data["pixel_width"]),
+                        "pixel_height": int(data["pixel_height"]),
+                    }
+                else:
+                    raise ValueError(f"Unsupported export kind: {export_kind}")
+
+            elif msg_type == MessageType.SAVE_BACK:
+                report("Save-back: preparing metadata...", 15)
+                target_kind = str(data.get("target_kind", ""))
+                if target_kind == "touchstone":
+                    report("Save-back: rewriting Touchstone metadata...", 60)
+                    result = _write_touchstone_save_back(
+                        str(data["target_path"]),
+                        str(data.get("measurement_notes", "")),
+                        dict(data.get("metadata", {})),
+                    )
+                elif target_kind in {"png", "svg"}:
+                    report(f"Save-back: embedding {target_kind.upper()} metadata...", 60)
+                    result = _write_image_save_back(
+                        str(data["target_path"]),
+                        str(data.get("measurement_notes", "")),
+                        dict(data.get("metadata", {})),
+                        target_kind,
+                    )
+                else:
+                    raise ValueError("No original file available to save")
+
+            elif msg_type == MessageType.TOOLS_RENDER:
+                result = self._handle_tools_render(data, report)
+
+            elif msg_type == MessageType.TOOLS_COMPUTE:
+                result = self._handle_tools_compute(data, report)
+
+            else:
+                raise ValueError(f"Unsupported background job message: {msg_type.value}")
+
+            self._check_job_cancelled(job_id, token)
+            self._send_response(
+                MessageType.PROGRESS,
+                data=BackgroundJob(
+                    job_id=job_id,
+                    operation=operation,
+                    progress=100.0,
+                    result=result,
+                ),
+            )
+
+        except BackgroundJobCancelledError:
+            return
+        except Exception as e:
+            self._send_response(
+                MessageType.ERROR,
+                data={"job_id": job_id, "operation": operation},
+                error=f"{operation} failed: {str(e)}",
+            )
+
+    def _handle_tools_render(
+        self,
+        data: dict[str, Any],
+        report,
+    ) -> dict[str, Any]:
+        """Render the Tools image plot from a worker-side snapshot payload."""
+        report("Tools plot: preparing render...", 20)
+        freqs = np.array(data["freqs"], dtype=float)
+        report("Tools plot: loading traces...", 35)
+        sparams = {
+            str(name): (
+                np.array(values[0], dtype=float),
+                np.array(values[1], dtype=float),
+            )
+            for name, values in dict(data["sparams"]).items()
+        }
+        report("Tools plot: rendering image...", 65)
+        result = _render_tools_plot_snapshot(
+            freqs,
+            sparams,
+            str(data["trace"]),
+            str(data["plot_type"]),
+            str(data["freq_unit"]),
+            float(data["cursor1_hz"]) if data.get("cursor1_hz") is not None else None,
+            float(data["cursor2_hz"]) if data.get("cursor2_hz") is not None else None,
+            str(data["active_tool"]) if data.get("active_tool") is not None else None,
+            str(data.get("marker_symbol", "▼")),
+            dict(data["colors"]),
+            [bool(item) for item in list(data.get("distortion_components", []))],
+            str(data["output_path"]),
+        )
+        report("Tools plot: finalizing image...", 90)
+        return result
+
+    def _handle_tools_compute(
+        self,
+        data: dict[str, Any],
+        report,
+    ) -> dict[str, Any]:
+        """Compute Tools tab results from a worker-side snapshot payload."""
+        report("Tools: preparing computation...", 15)
+        freqs = np.array(data["freqs"], dtype=float)
+        sparams = {
+            str(name): (
+                np.array(values[0], dtype=float),
+                np.array(values[1], dtype=float),
+            )
+            for name, values in dict(data["sparams"]).items()
+        }
+        active_tool = str(data.get("active_tool") or "")
+        trace = str(data.get("trace", "S21"))
+        plot_type = str(data.get("plot_type", "magnitude"))
+        cursor1_hz = (
+            float(data["cursor1_hz"]) if data.get("cursor1_hz") is not None else None
+        )
+        cursor2_hz = (
+            float(data["cursor2_hz"]) if data.get("cursor2_hz") is not None else None
+        )
+
+        if active_tool == "cursor":
+            report("Tools: measuring cursor values...", 55)
+            return asdict(
+                MeasureTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    cursor1_hz,
+                    cursor2_hz,
+                )
+            )
+
+        if active_tool == "distortion":
+            report("Tools: fitting distortion model...", 45)
+            result = asdict(
+                DistortionTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    cursor1_hz,
+                    cursor2_hz,
+                )
+            )
+            report("Tools: packaging distortion results...", 85)
+            return result
+
+        report("Tools: no active tool selected", 90)
+        return {"tool_name": "", "unit_label": "dB", "extra": {}}
 
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""

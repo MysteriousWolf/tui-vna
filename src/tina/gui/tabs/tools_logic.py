@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
+from pathlib import Path
+
 import numpy as np
 from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from ...gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
 from ...gui.plotting import (
-    DISTORTION_OVERLAY_LABELS,
-    DISTORTION_OVERLAY_STYLES,
     calculate_plot_range_with_outlier_filtering,
     get_plot_colors,
     get_terminal_font,
     unwrap_phase,
 )
 from ...tools import DistortionTool, MeasureTool
+from ...tools.base import ToolResult
 from ...tools.distortion import COMPONENT_NAMES as DISTORTION_COMPONENT_NAMES
 
 
@@ -671,6 +671,84 @@ async def delayed_tools_refresh(app) -> None:
     app._run_tools_computation()
 
 
+async def apply_tools_render_result(
+    app,
+    result: dict[str, object] | None = None,
+    error: str | None = None,
+) -> None:
+    """Apply a worker-rendered Tools image result to the UI."""
+    if app.last_measurement is None:
+        return
+
+    try:
+        container = app.query_one("#tools_plot_container")
+    except Exception:
+        return
+
+    plot_file = app.plot_temp_dir / "tools_plot.png"
+    if isinstance(result, dict):
+        result_path = result.get("path")
+        if isinstance(result_path, str) and result_path:
+            plot_file = app.plot_temp_dir / Path(result_path).name
+
+    if error is not None:
+        msg_widget, _ = await _ensure_tools_plot_widget(
+            container,
+            Static,
+            f"[red]Failed to generate tools plot image.[/red]\n[dim]Error: {error}[/dim]",
+            markup=True,
+        )
+        msg_widget.update(
+            f"[red]Failed to generate tools plot image.[/red]\n[dim]Error: {error}[/dim]"
+        )
+        return
+
+    if plot_file.exists() and TEXTUAL_IMAGE_AVAILABLE:
+        try:
+            img_widget, _ = await _ensure_tools_plot_widget(
+                container,
+                ImageWidget,
+                str(plot_file),
+            )
+            img_widget.image = str(plot_file)
+            container_w = container.content_size.width
+            if container_w and container_w > 10:
+                img_widget.set_class(False, "tools-image-fallback")
+                img_widget.set_class(True, "tools-image-display")
+            else:
+                img_widget.set_class(False, "tools-image-display")
+                img_widget.set_class(True, "tools-image-fallback")
+            img_widget.refresh()
+        except Exception as exc:
+            err_widget, _ = await _ensure_tools_plot_widget(
+                container,
+                Static,
+                f"[red]Image display error: {exc}[/red]",
+                markup=True,
+            )
+            err_widget.update(f"[red]Image display error: {exc}[/red]")
+    elif not TEXTUAL_IMAGE_AVAILABLE:
+        msg = (
+            "[yellow]Image backend available, but image display support is missing.[/yellow]"
+        )
+        msg_widget, _ = await _ensure_tools_plot_widget(
+            container,
+            Static,
+            msg,
+            markup=True,
+        )
+        msg_widget.update(msg)
+    else:
+        msg = "[red]Failed to generate tools plot image.[/red]"
+        msg_widget, _ = await _ensure_tools_plot_widget(
+            container,
+            Static,
+            msg,
+            markup=True,
+        )
+        msg_widget.update(msg)
+
+
 async def refresh_tools_plot(app) -> None:
     """Render the Tools tab plot for the currently selected trace."""
     if app.last_measurement is None:
@@ -714,20 +792,10 @@ async def refresh_tools_plot(app) -> None:
     freq_axis = freqs / multiplier
     plot_colors = get_plot_colors(app.get_css_variables())
     trace_color_rgb = plot_colors["traces_rgb"].get(trace, (255, 255, 255))
-    trace_color_hex = plot_colors["traces"].get(trace, "#ffffff")
-
     cursor1_hz = app._tools_cursor1_hz
     cursor2_hz = app._tools_cursor2_hz
-    active_tool = app.settings.tools_active_tool
-    marker_symbol = app.settings.cursor_marker_style
-
-    cursor1_hex = plot_colors["cursor1"]
-    cursor2_hex = plot_colors["cursor2"]
     cursor1_rgb = plot_colors["cursor1_rgb"]
     cursor2_rgb = plot_colors["cursor2_rgb"]
-
-    mpl_markers = {"▼": "v", "✕": "x", "○": "o"}
-    mpl_marker = mpl_markers.get(marker_symbol, "v")
 
     plot_backend = app.settings.plot_backend
 
@@ -771,197 +839,7 @@ async def refresh_tools_plot(app) -> None:
         plot_widget.refresh()
 
     else:
-        plot_file = app.plot_temp_dir / "tools_plot.png"
-        dpi = 150
-        fixed_width_px = 1920
-        fixed_height_px = 1080
-
-        fg = plot_colors["fg"]
-        grid = plot_colors["grid"]
-
-        state = _tools_plot_state(app)
-        base_signature = (
-            id(freqs),
-            base_data_key,
-            freq_unit,
-            float(auto_y_min),
-            float(auto_y_max),
-            trace_color_hex,
-            fg,
-            grid,
-            plot_title,
-            y_label,
-        )
-
-        fig = state.get("fig")
-        ax = state.get("ax")
-        if fig is None or ax is None:
-            fig, ax = plt.subplots(figsize=(fixed_width_px / dpi, fixed_height_px / dpi))
-            state["fig"] = fig
-            state["ax"] = ax
-            state["overlay_artists"] = []
-
-        if state.get("base_signature") != base_signature:
-            ax.clear()
-            ax.plot(freq_axis, data, color=trace_color_hex, linewidth=1.5, label=trace)
-            ax.set_ylim(auto_y_min, auto_y_max)
-            state["base_signature"] = base_signature
-            state["plot_file"] = plot_file
-            state["render_size"] = (fixed_width_px, fixed_height_px, dpi)
-        else:
-            state["plot_file"] = plot_file
-
-        _clear_tools_overlay_artists(app)
-
-        if cursor1_hz is not None:
-            x1 = cursor1_hz / multiplier
-            state["overlay_artists"].append(
-                ax.axvline(x1, color=cursor1_hex, linewidth=1.2, zorder=3)
-            )
-            if active_tool in ("cursor", "distortion"):
-                y1 = np.interp(cursor1_hz, freqs, data)
-                state["overlay_artists"].append(
-                    ax.scatter(
-                        [x1],
-                        [y1],
-                        color=cursor1_hex,
-                        marker=mpl_marker,
-                        s=80,
-                        zorder=5,
-                    )
-                )
-
-        if cursor2_hz is not None:
-            x2 = cursor2_hz / multiplier
-            state["overlay_artists"].append(
-                ax.axvline(x2, color=cursor2_hex, linewidth=1.2, zorder=3)
-            )
-            if active_tool in ("cursor", "distortion"):
-                y2 = np.interp(cursor2_hz, freqs, data)
-                state["overlay_artists"].append(
-                    ax.scatter(
-                        [x2],
-                        [y2],
-                        color=cursor2_hex,
-                        marker=mpl_marker,
-                        s=80,
-                        zorder=5,
-                    )
-                )
-
-        if (
-            active_tool == "distortion"
-            and cursor1_hz is not None
-            and cursor2_hz is not None
-            and cursor1_hz != cursor2_hz
-        ):
-            result = _get_cached_distortion_result(
-                app,
-                freqs,
-                sparams,
-                trace,
-                plot_type,
-                cursor1_hz,
-                cursor2_hz,
-            )
-            if result.extra:
-                ex = result.extra
-                coeffs = ex["coeffs"]
-                x = np.array(ex["x"])
-                f_band_axis = np.array(ex["f_band_hz"]) / multiplier
-                f_lo_axis = min(cursor1_hz, cursor2_hz) / multiplier
-                f_hi_axis = max(cursor1_hz, cursor2_hz) / multiplier
-                state["overlay_artists"].append(
-                    ax.axvspan(f_lo_axis, f_hi_axis, alpha=0.08, color=fg, zorder=0)
-                )
-                comp_enabled = get_distortion_comp_enabled(app)
-                overlay_hex = plot_colors["distortion_overlays"]
-                for n in range(6):
-                    if not comp_enabled[n]:
-                        continue
-                    cumulative = np.zeros(n + 1)
-                    cumulative[:] = coeffs[: n + 1]
-                    cumulative_y = np.polynomial.legendre.legval(x, cumulative)
-                    state["overlay_artists"].extend(
-                        ax.plot(
-                            f_band_axis,
-                            cumulative_y,
-                            color=overlay_hex[n],
-                            linestyle=DISTORTION_OVERLAY_STYLES[n],
-                            linewidth=1.5,
-                            label=DISTORTION_OVERLAY_LABELS[n],
-                            zorder=4,
-                        )
-                    )
-
-        base_size = _style_tools_axes(
-            fig,
-            ax,
-            freq_unit=freq_unit,
-            y_label=y_label,
-            plot_title=plot_title,
-            fg=fg,
-            grid=grid,
-        )
-        _update_tools_plot_legend(ax, fg, grid, base_size)
-
-        fig.tight_layout()
-        fig.savefig(
-            plot_file,
-            dpi=dpi,
-            facecolor=fig.get_facecolor(),
-            edgecolor="none",
-            bbox_inches="tight",
-            transparent=True,
-        )
-
-        if plot_file.exists() and TEXTUAL_IMAGE_AVAILABLE:
-            try:
-                img_widget, _ = await _ensure_tools_plot_widget(
-                    container,
-                    ImageWidget,
-                    str(plot_file),
-                )
-                img_widget.image = str(plot_file)
-                container_w = container.content_size.width
-                if container_w and container_w > 10:
-                    # Previously display_w/aspect were used to compute programmatic
-                    # widget.styles.width/height. We now use a CSS class so sizing
-                    # is declarative and centralized in tcss.
-                    img_widget.set_class(False, "tools-image-fallback")
-                    img_widget.set_class(True, "tools-image-display")
-                else:
-                    img_widget.set_class(False, "tools-image-display")
-                    img_widget.set_class(True, "tools-image-fallback")
-                img_widget.refresh()
-            except Exception as e:
-                err_widget, _ = await _ensure_tools_plot_widget(
-                    container,
-                    Static,
-                    f"[red]Image display error: {e}[/red]",
-                    markup=True,
-                )
-                err_widget.update(f"[red]Image display error: {e}[/red]")
-        elif not TEXTUAL_IMAGE_AVAILABLE:
-            msg = (
-                "[yellow]Image backend available, but image display support is missing.[/yellow]"
-            )
-            msg_widget, _ = await _ensure_tools_plot_widget(
-                container,
-                Static,
-                msg,
-                markup=True,
-            )
-            msg_widget.update(msg)
-        else:
-            msg = "[red]Failed to generate tools plot image.[/red]"
-            msg_widget, _ = await _ensure_tools_plot_widget(
-                container,
-                Static,
-                msg,
-                markup=True,
-            )
-            msg_widget.update(msg)
+        await apply_tools_render_result(app)
 
 
 def run_tools_computation(app) -> None:
@@ -1075,6 +953,121 @@ def run_tools_computation(app) -> None:
         ex = result.extra
         coeffs = ex["coeffs"]
         delta_y = ex["delta_y"]
+        unit = result.unit_label
+        overlay_hex = get_plot_colors(app.get_css_variables())["distortion_overlays"]
+        comp_enabled = get_distortion_comp_enabled(app)
+        nw, namew, valw = 1, 10, 9
+        hdr = (
+            f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
+            f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
+        )
+        sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
+        lines = [hdr, sep]
+
+        for n, name in enumerate(DISTORTION_COMPONENT_NAMES):
+            c_raw = f"{coeffs[n]:.4f}"
+            color = overlay_hex[n] if comp_enabled[n] else None
+            name_cell = (
+                f"[bold {color}]{name:<{namew}}[/]"
+                if color
+                else f"[dim]{name:<{namew}}[/dim]"
+            )
+            c_cell = f"[@click='app.copy_cell_value(\"{c_raw}\")']{c_raw:>{valw}}[/]"
+            if n == 0:
+                dy_cell = f"{'—':>{valw}}"
+            else:
+                dy_raw = f"{delta_y[n]:.4f}"
+                dy_cell = (
+                    f"[@click='app.copy_cell_value(\"{dy_raw}\")']{dy_raw:>{valw}}[/]"
+                )
+            lines.append(f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}")
+
+        display.update("\n".join(lines))
+        return
+
+    display.update("[dim]No tool active.[/dim]")
+
+
+def render_tools_computation_result(app, result: ToolResult | dict | None) -> None:
+    """Render a precomputed tools result into the existing results display."""
+    try:
+        display = app.query_one("#tools_results_display", Static)
+    except Exception:
+        return
+
+    if result is None:
+        display.update("[dim]No tool active.[/dim]")
+        return
+
+    if isinstance(result, dict):
+        result = ToolResult(**result)
+
+    if result.tool_name == "measure":
+        if result.cursor1_value is None and result.cursor2_value is None:
+            display.update("[dim]Enter cursor frequencies above.[/dim]")
+            return
+
+        freq_unit = app.last_measurement.get("freq_unit", "MHz") if app.last_measurement else "MHz"
+        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+        multiplier = unit_multipliers.get(freq_unit, 1e6)
+        plot_colors = get_plot_colors(app.get_css_variables())
+        c1col = plot_colors["cursor1"]
+        c2col = plot_colors["cursor2"]
+        labelw, valw = 8, 9
+        hdr = (
+            f"[dim]{'':>{labelw}}  "
+            f"{'Freq (' + freq_unit + ')':>{valw}}  "
+            f"{result.unit_label:>{valw}}[/dim]"
+        )
+        sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
+        lines = [hdr, sep]
+
+        if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
+            f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
+            v1_raw = f"{result.cursor1_value:.4f}"
+            lines.append(
+                f"[bold {c1col}]{'Cursor 1':>{labelw}}[/]  "
+                f"[@click='app.copy_cell_value(\"{f1_raw}\")']{f1_raw:>{valw}}[/]  "
+                f"[@click='app.copy_cell_value(\"{v1_raw}\")']{v1_raw:>{valw}}[/]"
+            )
+
+        if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
+            f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
+            v2_raw = f"{result.cursor2_value:.4f}"
+            lines.append(
+                f"[bold {c2col}]{'Cursor 2':>{labelw}}[/]  "
+                f"[@click='app.copy_cell_value(\"{f2_raw}\")']{f2_raw:>{valw}}[/]  "
+                f"[@click='app.copy_cell_value(\"{v2_raw}\")']{v2_raw:>{valw}}[/]"
+            )
+
+        if result.delta_value is not None:
+            if (
+                result.cursor1_freq_hz is not None
+                and result.cursor2_freq_hz is not None
+            ):
+                fd_val = abs(
+                    float(result.cursor2_freq_hz) - float(result.cursor1_freq_hz)
+                )
+                fd_raw = f"{fd_val / multiplier:.4f}"
+            else:
+                fd_raw = ""
+            dv_raw = f"{result.delta_value:.4f}"
+            lines.append(
+                f"[dim]{'Δ':>{labelw}}[/dim]  "
+                f"[@click='app.copy_cell_value(\"{fd_raw}\")']{fd_raw:>{valw}}[/]  "
+                f"[@click='app.copy_cell_value(\"{dv_raw}\")']{dv_raw:>{valw}}[/]"
+            )
+
+        display.update("\n".join(lines))
+        return
+
+    if result.tool_name == "distortion":
+        if not result.extra:
+            display.update("[dim]Enter both cursor frequencies above.[/dim]")
+            return
+
+        coeffs = result.extra["coeffs"]
+        delta_y = result.extra["delta_y"]
         unit = result.unit_label
         overlay_hex = get_plot_colors(app.get_css_variables())["distortion_overlays"]
         comp_enabled = get_distortion_comp_enabled(app)

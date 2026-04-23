@@ -7,17 +7,20 @@ from .setup import compose_setup_tab
 from .tools import compose_tools_tab
 from .tools_logic import (
     apply_tool_ui,
+    apply_tools_render_result,
     delayed_redraw_tools_plot,
     delayed_tools_refresh,
     get_distortion_comp_enabled,
     get_tools_trace,
     rebuild_tools_params,
     refresh_tools_plot,
+    render_tools_computation_result,
     run_tools_computation,
     set_active_tool,
 )
 
 __all__ = [
+    "apply_tools_render_result",
     "apply_tool_ui",
     "compose_log_tab",
     "compose_measurement_tab",
@@ -28,6 +31,7 @@ __all__ = [
     "get_distortion_comp_enabled",
     "get_tools_trace",
     "rebuild_tools_params",
+    "render_tools_computation_result",
     "refresh_tools_plot",
     "run_tools_computation",
     "set_active_tool",

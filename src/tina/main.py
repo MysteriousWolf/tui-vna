@@ -79,6 +79,7 @@ from .gui.providers import (
 )
 from .gui.tabs import (
     apply_tool_ui,
+    apply_tools_render_result,
     compose_log_tab,
     compose_measurement_tab,
     compose_setup_tab,
@@ -90,6 +91,7 @@ from .gui.tabs import (
     log_logic,
     rebuild_tools_params,
     refresh_tools_plot,
+    render_tools_computation_result,
     run_tools_computation,
     set_active_tool,
     setup_logic,
@@ -102,6 +104,7 @@ from .utils.update_checker import (
     get_update_info,
 )
 from .worker import (
+    BackgroundJob,
     ImportRequest,
     ImportResult,
     LogMessage,
@@ -111,6 +114,8 @@ from .worker import (
     ParamsResult,
     ProgressUpdate,
     StatusResult,
+    _write_image_save_back,
+    _write_touchstone_save_back,
 )
 
 
@@ -232,6 +237,9 @@ class VNAApp(App):
         self._measurement_plot_cache = {}
         self._measurement_plot_cache_measurement_id = None
         self._plot_render_generation = 0
+        self._current_background_job_id = 0
+        self._background_jobs: dict[int, dict[str, object]] = {}
+        self._manual_export_jobs_in_flight = 0
         self.measurement_notes = ""  # Store raw markdown notes for current measurement
         self.last_output_path = None  # Store last output file path
         self.last_plot_path = None  # Store last plot image path
@@ -891,16 +899,53 @@ class VNAApp(App):
     ) -> None:
         """Write a measurement bundle image export without blocking plot refresh."""
         try:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self._write_image_export(
+            if not VNAApp._supports_unified_background_jobs(self):
+                self._write_image_export(
                     file_path=file_path,
                     plot_type=plot_type,
                     plot_params=plot_params,
                     dpi=dpi,
                     metadata_writer=metadata_writer,
                     minimal_export=minimal_export,
-                ),
+                )
+                self._notify_export_result(
+                    kind=f"{kind}{self._minimal_export_suffix(minimal_export)}",
+                    path=file_path,
+                    exported_items=", ".join(plot_params),
+                )
+                return
+
+            image_format = "png" if metadata_writer is embed_png_metadata else "svg"
+            await self._run_background_worker_job(
+                msg_type=MessageType.EXPORT,
+                operation=f"Export {kind}",
+                payload={
+                    "kind": kind,
+                    "export_kind": "image",
+                    "file_path": file_path,
+                    "plot_type": plot_type,
+                    "plot_params": plot_params,
+                    "dpi": dpi,
+                    "image_format": image_format,
+                    "minimal_export": minimal_export,
+                    "notes_markdown": str(self.last_measurement.get("notes", ""))
+                    if self.last_measurement
+                    else "",
+                    "metadata": None
+                    if minimal_export
+                    else self._build_image_export_metadata(
+                        exported_traces=plot_params,
+                        plot_type=str(plot_type),
+                        output_path=file_path,
+                    ),
+                    "freqs": self.last_measurement["freqs"].tolist(),
+                    "sparams": {
+                        name: [values[0].tolist(), values[1].tolist()]
+                        for name, values in self.last_measurement["sparams"].items()
+                    },
+                    "colors": get_plot_colors(self.get_css_variables()),
+                    "freq_unit": self.last_measurement.get("freq_unit", "MHz"),
+                },
             )
             self.log_message(
                 f"Saved{self._minimal_export_suffix(minimal_export)}: {file_path}",
@@ -913,6 +958,237 @@ class VNAApp(App):
             )
         except Exception as e:
             self.log_message(f"Post-measurement processing failed: {str(e)}", "error")
+
+    async def _run_touchstone_export_job(
+        self,
+        *,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        freq_unit: str,
+        output_folder: str,
+        filename: str,
+        output_name: str,
+        notes_markdown: str,
+        metadata: dict[str, object] | None,
+        operation: str,
+    ) -> str:
+        """Run Touchstone export via the worker-backed background job path."""
+        if not VNAApp._supports_unified_background_jobs(self):
+            exporter = TouchstoneExporter(freq_unit=freq_unit)
+            return str(
+                exporter.export(
+                    freqs,
+                    sparams,
+                    output_folder,
+                    filename,
+                    output_name,
+                    notes_markdown=notes_markdown,
+                    metadata=metadata,
+                )
+            )
+
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.EXPORT,
+            operation=operation,
+            payload={
+                "kind": "Touchstone",
+                "export_kind": "touchstone",
+                "freq_unit": freq_unit,
+                "output_folder": output_folder,
+                "filename": filename,
+                "output_name": output_name,
+                "notes_markdown": notes_markdown,
+                "metadata": metadata,
+                "freqs": freqs.tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in sparams.items()
+                },
+            },
+        )
+        return str(result)
+
+    async def _run_csv_export_job(
+        self,
+        *,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        freq_unit: str,
+        output_folder: str,
+        filename: str,
+        output_name: str,
+        operation: str,
+    ) -> str:
+        """Run CSV export via the worker-backed background job path."""
+        if not VNAApp._supports_unified_background_jobs(self):
+            exporter = CsvExporter(freq_unit=freq_unit)
+            return str(
+                exporter.export(
+                    freqs,
+                    sparams,
+                    output_folder,
+                    filename=filename,
+                    output_name=output_name,
+                )
+            )
+
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.EXPORT,
+            operation=operation,
+            payload={
+                "kind": "CSV",
+                "export_kind": "csv",
+                "freq_unit": freq_unit,
+                "output_folder": output_folder,
+                "filename": filename,
+                "output_name": output_name,
+                "freqs": freqs.tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in sparams.items()
+                },
+            },
+        )
+        return str(result)
+
+    async def _run_results_plot_render_job(
+        self,
+        *,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        plot_params: list[str],
+        plot_type: str,
+        output_path: Path,
+        dpi: int,
+        pixel_width: int,
+        pixel_height: int,
+        render_scale: int,
+        colors: dict,
+        y_min: float | None,
+        y_max: float | None,
+        plot_data: dict[str, np.ndarray] | None,
+    ) -> dict[str, object]:
+        """Render the Measurement plot image via the worker job system."""
+        self._cancel_background_jobs_by_operation("Results plot render")
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.EXPORT,
+            operation="Results plot render",
+            payload={
+                "kind": "Results plot",
+                "export_kind": "results_plot",
+                "freqs": freqs.tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in sparams.items()
+                },
+                "plot_params": plot_params,
+                "plot_type": plot_type,
+                "output_path": str(output_path),
+                "dpi": dpi,
+                "pixel_width": pixel_width,
+                "pixel_height": pixel_height,
+                "render_scale": render_scale,
+                "colors": colors,
+                "y_min": y_min,
+                "y_max": y_max,
+                "plot_data": {
+                    name: values.tolist() for name, values in (plot_data or {}).items()
+                }
+                if plot_data is not None
+                else None,
+            },
+        )
+        return dict(result)
+
+    async def _run_tools_render_job(self) -> dict[str, object]:
+        """Render the Tools tab image plot via the worker job system."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement loaded")
+
+        self._cancel_background_jobs_by_operation("Tools render")
+        trace = self._get_tools_trace()
+        plot_type_value = self.query_one("#select_tools_plot_type", Select).value
+        plot_type = str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.TOOLS_RENDER,
+            operation="Tools render",
+            payload={
+                "freqs": self.last_measurement["freqs"].tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in self.last_measurement["sparams"].items()
+                },
+                "trace": trace,
+                "plot_type": plot_type,
+                "freq_unit": str(self.last_measurement.get("freq_unit", "MHz")),
+                "cursor1_hz": self._tools_cursor1_hz,
+                "cursor2_hz": self._tools_cursor2_hz,
+                "active_tool": self.settings.tools_active_tool,
+                "marker_symbol": self.settings.cursor_marker_style,
+                "colors": {
+                    "fg": get_plot_colors(self.get_css_variables())["fg"],
+                    "grid": get_plot_colors(self.get_css_variables())["grid"],
+                    "trace": get_plot_colors(self.get_css_variables())["traces"].get(trace, "#ffffff"),
+                    "cursor1": get_plot_colors(self.get_css_variables())["cursor1"],
+                    "cursor2": get_plot_colors(self.get_css_variables())["cursor2"],
+                    "distortion_overlays": get_plot_colors(self.get_css_variables())["distortion_overlays"],
+                },
+                "distortion_components": self._get_distortion_comp_enabled(),
+                "output_path": str(self.plot_temp_dir / "tools_plot.png"),
+            },
+        )
+        return dict(result)
+
+    async def _run_tools_compute_job(self) -> dict[str, object]:
+        """Compute active tools results via the worker job system."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement loaded")
+
+        self._cancel_background_jobs_by_operation("Tools compute")
+        trace = self._get_tools_trace()
+        plot_type_value = self.query_one("#select_tools_plot_type", Select).value
+        plot_type = str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.TOOLS_COMPUTE,
+            operation="Tools compute",
+            payload={
+                "freqs": self.last_measurement["freqs"].tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in self.last_measurement["sparams"].items()
+                },
+                "active_tool": self.settings.tools_active_tool,
+                "trace": trace,
+                "plot_type": plot_type,
+                "cursor1_hz": self._tools_cursor1_hz,
+                "cursor2_hz": self._tools_cursor2_hz,
+            },
+        )
+        return dict(result)
+
+    async def _run_save_back_job(self, payload: dict[str, object]) -> str:
+        """Save notes/metadata back through the worker job system."""
+        if not VNAApp._supports_unified_background_jobs(self):
+            target_kind = str(payload["target_kind"])
+            if target_kind == "touchstone":
+                return _write_touchstone_save_back(
+                    str(payload["target_path"]),
+                    str(payload.get("measurement_notes", "")),
+                    dict(payload.get("metadata", {})),
+                )
+            return _write_image_save_back(
+                str(payload["target_path"]),
+                str(payload.get("measurement_notes", "")),
+                dict(payload.get("metadata", {})),
+                target_kind,
+            )
+
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.SAVE_BACK,
+            operation="Save back",
+            payload=payload,
+        )
+        return str(result)
 
     def _restore_setup_from_metadata(self, metadata: dict[str, object]) -> None:
         """Restore Setup tab widgets and persisted settings from imported metadata."""
@@ -1143,8 +1419,19 @@ class VNAApp(App):
             self.log_message(log_msg.message, log_msg.level)
 
         elif msg.type == MessageType.PROGRESS:
-            update: ProgressUpdate = msg.data
-            self.set_progress(update.message, update.progress_pct)
+            if isinstance(msg.data, BackgroundJob):
+                self._complete_background_job(msg.data.job_id)
+                self._handle_background_job_complete(msg.data)
+            else:
+                update: ProgressUpdate = msg.data
+                if update.job_id is not None:
+                    self._update_background_job_progress(
+                        update.job_id,
+                        update.message,
+                        update.progress_pct,
+                    )
+                else:
+                    self.set_progress(update.message, update.progress_pct)
 
         elif msg.type == MessageType.IMPORT_PROGRESS:
             update: ProgressUpdate = msg.data
@@ -1217,6 +1504,15 @@ class VNAApp(App):
 
         elif msg.type == MessageType.ERROR:
             self.log_message(msg.error, "error")
+            if isinstance(msg.data, dict):
+                job_id = msg.data.get("job_id")
+                if isinstance(job_id, int):
+                    tracked_job = self._background_jobs.get(job_id)
+                    if tracked_job is not None:
+                        future = tracked_job.get("future")
+                        if isinstance(future, asyncio.Future) and not future.done():
+                            future.set_exception(RuntimeError(msg.error))
+                    self._complete_background_job(job_id)
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
                 self.connected = False
                 self.sub_title = ""
@@ -1227,6 +1523,15 @@ class VNAApp(App):
             self.reset_progress()
             self.measuring = False
             self._import_in_flight = False
+
+    def _handle_background_job_complete(self, job: BackgroundJob) -> None:
+        """Handle completion of a worker-managed background job."""
+        tracked_job = self._background_jobs.get(job.job_id)
+        if tracked_job is not None:
+            future = tracked_job.get("future")
+            if isinstance(future, asyncio.Future) and not future.done():
+                future.set_result(job.result)
+        self.set_progress(f"{job.operation} complete", job.progress)
 
     @on(Select.Changed, "#sb_poll_interval")
     def on_poll_interval_change(self, event: Select.Changed) -> None:
@@ -1299,6 +1604,164 @@ class VNAApp(App):
         """Add message to log."""
         log_logic.log_message(self, message, level)
 
+    def _next_background_job_id(self) -> int:
+        """Return the next monotonically increasing background job id."""
+        self._current_background_job_id += 1
+        return self._current_background_job_id
+
+    @staticmethod
+    def _supports_unified_background_jobs(app: object) -> bool:
+        """Return whether the object is a real app instance with job helpers."""
+        return hasattr(app, "_background_jobs") and hasattr(app, "worker")
+
+    @staticmethod
+    def _schedule_async(coro):
+        """Run a coroutine on the active loop or synchronously when none exists."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        return loop.create_task(coro)
+
+    def _register_background_job(self, operation: str) -> int:
+        """Create and track a new background job entry."""
+        job_id = self._next_background_job_id()
+        future = asyncio.get_running_loop().create_future()
+        self._background_jobs[job_id] = {
+            "operation": operation,
+            "active": True,
+            "progress": 0.0,
+            "message": f"{operation} starting...",
+            "future": future,
+        }
+        return job_id
+
+    def _has_manual_export_job(self) -> bool:
+        """Return whether a manual export/save action is currently running."""
+        return int(getattr(self, "_manual_export_jobs_in_flight", 0)) > 0
+
+    def _has_save_back_target(self) -> bool:
+        """Return whether the current measurement has a file that supports save-back."""
+        lm = self.last_measurement
+        return lm is not None and bool(
+            lm.get("touchstone_path") or lm.get("png_path") or lm.get("svg_path")
+        )
+
+    def _set_measurement_action_disabled(self, selector: str, disabled: bool) -> None:
+        """Set a Measurement-tab button disabled state when mounted."""
+        try:
+            self.query_one(selector, Button).disabled = disabled
+        except Exception:
+            pass
+
+    def _sync_measurement_action_buttons(self) -> None:
+        """Refresh export/save button state from measurement and busy state."""
+        measurement_loaded = self.last_measurement is not None
+        manual_export_busy = VNAApp._has_manual_export_job(self)
+
+        VNAApp._set_measurement_action_disabled(
+            self, "#btn_open_output", not bool(self.last_output_path)
+        )
+        for selector in (
+            "#btn_export_touchstone",
+            "#btn_export_csv",
+            "#btn_export_png",
+            "#btn_export_svg",
+        ):
+            VNAApp._set_measurement_action_disabled(
+                self, selector, (not measurement_loaded) or manual_export_busy
+            )
+        VNAApp._set_measurement_action_disabled(
+            self,
+            "#btn_save_notes",
+            (not VNAApp._has_save_back_target(self)) or manual_export_busy,
+        )
+
+    def _begin_manual_export_action(self) -> bool:
+        """Mark a manual export/save action active and disable related buttons."""
+        if VNAApp._has_manual_export_job(self):
+            return False
+        self._manual_export_jobs_in_flight = (
+            int(getattr(self, "_manual_export_jobs_in_flight", 0)) + 1
+        )
+        VNAApp._sync_measurement_action_buttons(self)
+        return True
+
+    def _end_manual_export_action(self) -> None:
+        """Mark a manual export/save action complete and restore button state."""
+        self._manual_export_jobs_in_flight = max(
+            0, int(getattr(self, "_manual_export_jobs_in_flight", 0)) - 1
+        )
+        VNAApp._sync_measurement_action_buttons(self)
+
+    def _schedule_manual_export_action(self, coro) -> None:
+        """Run a manual export/save coroutine while preventing duplicate actions."""
+        if not VNAApp._begin_manual_export_action(self):
+            return
+
+        async def runner() -> None:
+            try:
+                await coro
+            finally:
+                VNAApp._end_manual_export_action(self)
+
+        VNAApp._schedule_async(runner())
+
+    def _cancel_background_job(self, job_id: int) -> None:
+        """Cancel a tracked background job and invalidate the worker token."""
+        job = self._background_jobs.get(job_id)
+        if job is None:
+            return
+        job["active"] = False
+        future = job.get("future")
+        if isinstance(future, asyncio.Future) and not future.done():
+            future.cancel()
+        self.worker.cancel_job(job_id)
+
+    def _cancel_background_jobs_by_operation(self, operation: str) -> None:
+        """Cancel all active jobs for the provided logical operation."""
+        for job_id, job in list(self._background_jobs.items()):
+            if job.get("operation") == operation and bool(job.get("active", False)):
+                self._cancel_background_job(job_id)
+
+    def _complete_background_job(self, job_id: int) -> None:
+        """Mark a job complete and remove it from active tracking."""
+        job = self._background_jobs.get(job_id)
+        if job is not None:
+            job["active"] = False
+
+    def _update_background_job_progress(
+        self, job_id: int, message: str, progress: float
+    ) -> None:
+        """Persist and display unified progress for a tracked background job."""
+        job = self._background_jobs.get(job_id)
+        if job is None or not bool(job.get("active", False)):
+            return
+        job["message"] = message
+        job["progress"] = progress
+        self.set_progress(message, progress)
+
+    async def _run_background_worker_job(
+        self,
+        *,
+        msg_type: MessageType,
+        operation: str,
+        payload: dict[str, object],
+    ) -> object:
+        """Queue a worker-side background job with tracking metadata."""
+        job_id = self._register_background_job(operation)
+        future = self._background_jobs[job_id]["future"]
+        self._update_background_job_progress(job_id, f"{operation} starting...", 0)
+        self.worker.send_command(
+            msg_type,
+            {
+                "job_id": job_id,
+                "operation": operation,
+                **payload,
+            },
+        )
+        return await future
+
     def set_progress(self, label: str, progress: float = 0):
         """Update progress bar and label. Progress is 0-100."""
         self.query_one("#progress_label", Label).update(f"{label} ({progress:.0f}%)")
@@ -1326,17 +1789,7 @@ class VNAApp(App):
         self.query_one("#btn_read_params", Button).disabled = not self.connected
         self.query_one("#btn_measure", Button).disabled = not self.connected
         self._refresh_export_button_labels()
-        # Save-back button should be enabled when any saveable path exists
-        # (original .s2p, exported .png, or exported .svg).
-        try:
-            lm = self.last_measurement
-            can_save = lm is not None and (
-                lm.get("touchstone_path") or lm.get("png_path") or lm.get("svg_path")
-            )
-            self.query_one("#btn_save_notes", Button).disabled = not can_save
-        except Exception:
-            # If button not mounted yet, ignore
-            pass
+        self._sync_measurement_action_buttons()
 
     def update_connect_button(self):
         """
@@ -1773,7 +2226,6 @@ class VNAApp(App):
 
             freq_unit_value = self.query_one("#select_freq_unit", Select).value
             freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
-            exporter = TouchstoneExporter(freq_unit=freq_unit)
 
             filename_template = self.query_one(
                 "#input_filename_prefix", Input
@@ -1877,18 +2329,20 @@ class VNAApp(App):
                     exported_traces=exported_trace_names,
                 )
             )
-            output_path = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: exporter.export(
-                    freqs,
-                    export_params,
-                    export_folder,
-                    export_filename,
-                    export_name,
-                    notes_markdown="" if minimal_export else self.measurement_notes,
-                    metadata=touchstone_metadata,
-                ),
+            output_path = await VNAApp._run_touchstone_export_job(
+                self,
+                freqs=freqs,
+                sparams=export_params,
+                freq_unit=freq_unit,
+                output_folder=export_folder,
+                filename=export_filename,
+                output_name=export_name,
+                notes_markdown="" if minimal_export else self.measurement_notes,
+                metadata=touchstone_metadata,
+                operation="Measurement export",
             )
+            if output_path is None:
+                raise RuntimeError("Measurement export returned no output path")
 
             self.log_message(
                 f"Saved{self._minimal_export_suffix(minimal_export)}: {output_path}",
@@ -1902,15 +2356,15 @@ class VNAApp(App):
 
             csv_path = None
             if self.query_one("#check_export_bundle_csv", Checkbox).value:
-                csv_exporter = CsvExporter(freq_unit=str(self.settings.freq_unit))
-                csv_path = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    csv_exporter.export,
-                    freqs,
-                    export_params,
-                    export_folder,
-                    export_filename,
-                    export_name,
+                csv_path = await VNAApp._run_csv_export_job(
+                    self,
+                    freqs=freqs,
+                    sparams=export_params,
+                    freq_unit=str(self.settings.freq_unit),
+                    output_folder=export_folder,
+                    filename=export_filename,
+                    output_name=export_name,
+                    operation="Measurement CSV export",
                 )
                 self.log_message(f"Saved: {csv_path}", "success")
                 self._notify_export_result(
@@ -1919,13 +2373,31 @@ class VNAApp(App):
                     exported_items=", ".join(exported_trace_names),
                 )
 
+            # Store measurement data with frequency unit before launching image jobs
+            freq_unit = self.query_one("#select_freq_unit", Select).value
+            abs_output_path = str(Path(output_path).resolve())
+            self.last_measurement = {
+                "freqs": freqs,
+                "sparams": sparams,
+                "output_path": abs_output_path,
+                "touchstone_path": abs_output_path,
+                "csv_path": csv_path,
+                "png_path": None,
+                "svg_path": None,
+                "freq_unit": freq_unit,
+                "notes": self.measurement_notes,
+            }
+            self.last_output_path = abs_output_path
+
             png_path = None
             image_export_tasks = []
             if self.query_one("#check_export_bundle_png", Checkbox).value:
                 png_path = str(Path(export_folder) / f"{export_filename}.png")
+                self.last_measurement["png_path"] = png_path
                 image_export_tasks.append(
-                    asyncio.create_task(
-                        self._run_measurement_image_export(
+                        asyncio.create_task(
+                        VNAApp._run_measurement_image_export(
+                            self,
                             file_path=png_path,
                             plot_type=str(self.settings.plot_type),
                             plot_params=exported_trace_names,
@@ -1940,9 +2412,11 @@ class VNAApp(App):
             svg_path = None
             if self.query_one("#check_export_bundle_svg", Checkbox).value:
                 svg_path = str(Path(export_folder) / f"{export_filename}.svg")
+                self.last_measurement["svg_path"] = svg_path
                 image_export_tasks.append(
-                    asyncio.create_task(
-                        self._run_measurement_image_export(
+                        asyncio.create_task(
+                        VNAApp._run_measurement_image_export(
+                            self,
                             file_path=svg_path,
                             plot_type=str(self.settings.plot_type),
                             plot_params=exported_trace_names,
@@ -1953,24 +2427,6 @@ class VNAApp(App):
                         )
                     )
                 )
-
-            # Store measurement data with frequency unit
-            freq_unit = self.query_one("#select_freq_unit", Select).value
-            # Ensure we store absolute paths for consistency
-            abs_output_path = str(Path(output_path).resolve())
-
-            self.last_measurement = {
-                "freqs": freqs,
-                "sparams": sparams,
-                "output_path": abs_output_path,
-                "touchstone_path": abs_output_path,
-                "csv_path": csv_path,
-                "png_path": png_path,
-                "svg_path": svg_path,
-                "freq_unit": freq_unit,
-                "notes": self.measurement_notes,
-            }
-            self.last_output_path = abs_output_path
 
             # Set plot checkboxes to match export parameters
             self.query_one("#check_plot_s11", Checkbox).value = self.query_one(
@@ -2092,6 +2548,13 @@ class VNAApp(App):
     @on(Button.Pressed, "#btn_export_touchstone")
     def handle_export_touchstone(self, event: Button.Pressed | None = None) -> None:
         """Export current measurement as a Touchstone file."""
+        del event
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_touchstone_async(self)
+        )
+
+    async def _handle_export_touchstone_async(self) -> None:
+        """Async Touchstone export wrapper using the unified background job path."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
             return
@@ -2120,7 +2583,6 @@ class VNAApp(App):
 
             freq_unit_value = self.query_one("#select_freq_unit", Select).value
             freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
-            exporter = TouchstoneExporter(freq_unit=freq_unit)
             exported_trace_names = list(export_params.keys())
             minimal_export = self._is_minimal_export_enabled()
             notes_markdown = (
@@ -2134,13 +2596,17 @@ class VNAApp(App):
                     output_path=file_path,
                 )
             )
-            exporter.export(
-                self.last_measurement["freqs"],
-                export_params,
-                str(Path(file_path).parent),
+            await VNAApp._run_touchstone_export_job(
+                self,
+                freqs=self.last_measurement["freqs"],
+                sparams=export_params,
+                freq_unit=freq_unit,
+                output_folder=str(Path(file_path).parent),
                 filename=Path(file_path).name,
+                output_name="measurement",
                 notes_markdown=notes_markdown,
                 metadata=metadata,
+                operation="Export Touchstone",
             )
 
             self.last_measurement["touchstone_path"] = file_path
@@ -2160,6 +2626,11 @@ class VNAApp(App):
     @on(Button.Pressed, "#btn_export_csv")
     def handle_export_csv(self, event: Button.Pressed | None = None) -> None:
         """Export current measurement as a CSV file."""
+        del event
+        VNAApp._schedule_manual_export_action(self, VNAApp._handle_export_csv_async(self))
+
+    async def _handle_export_csv_async(self) -> None:
+        """Async CSV export wrapper using the unified background job path."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
             return
@@ -2184,12 +2655,15 @@ class VNAApp(App):
 
             freq_unit_value = self.query_one("#select_freq_unit", Select).value
             freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
-            exporter = CsvExporter(freq_unit=freq_unit)
-            exporter.export(
-                self.last_measurement["freqs"],
-                export_params,
-                str(Path(file_path).parent),
+            await VNAApp._run_csv_export_job(
+                self,
+                freqs=self.last_measurement["freqs"],
+                sparams=export_params,
+                freq_unit=freq_unit,
+                output_folder=str(Path(file_path).parent),
                 filename=Path(file_path).name,
+                output_name="measurement",
+                operation="Export CSV",
             )
 
             self.last_measurement["csv_path"] = file_path
@@ -2206,6 +2680,11 @@ class VNAApp(App):
     @on(Button.Pressed, "#btn_export_png")
     def handle_export_png(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as PNG."""
+        del event
+        VNAApp._schedule_manual_export_action(self, VNAApp._handle_export_png_async(self))
+
+    async def _handle_export_png_async(self) -> None:
+        """Async PNG export wrapper using the unified background job path."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
             return
@@ -2250,23 +2729,20 @@ class VNAApp(App):
 
             minimal_export = self._is_minimal_export_enabled()
 
-            self._write_image_export(
+            await VNAApp._run_measurement_image_export(
+                self,
                 file_path=file_path,
                 plot_type=str(plot_type),
                 plot_params=plot_params,
                 dpi=300,
                 metadata_writer=embed_png_metadata,
                 minimal_export=minimal_export,
+                kind="PNG",
             )
-
+            self.last_measurement["png_path"] = file_path
             self.log_message(
                 f"Exported PNG{self._minimal_export_suffix(minimal_export)}: {file_path}",
                 "success",
-            )
-            self._notify_export_result(
-                kind=f"PNG{self._minimal_export_suffix(minimal_export)}",
-                path=file_path,
-                exported_items=", ".join(plot_params),
             )
 
         except Exception as e:
@@ -2275,6 +2751,11 @@ class VNAApp(App):
     @on(Button.Pressed, "#btn_export_svg")
     def handle_export_svg(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as SVG."""
+        del event
+        VNAApp._schedule_manual_export_action(self, VNAApp._handle_export_svg_async(self))
+
+    async def _handle_export_svg_async(self) -> None:
+        """Async SVG export wrapper using the unified background job path."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
             return
@@ -2319,23 +2800,20 @@ class VNAApp(App):
 
             minimal_export = self._is_minimal_export_enabled()
 
-            self._write_image_export(
+            await VNAApp._run_measurement_image_export(
+                self,
                 file_path=file_path,
                 plot_type=str(plot_type),
                 plot_params=plot_params,
                 dpi=150,
                 metadata_writer=embed_svg_metadata,
                 minimal_export=minimal_export,
+                kind="SVG",
             )
-
+            self.last_measurement["svg_path"] = file_path
             self.log_message(
                 f"Exported SVG{self._minimal_export_suffix(minimal_export)}: {file_path}",
                 "success",
-            )
-            self._notify_export_result(
-                kind=f"SVG{self._minimal_export_suffix(minimal_export)}",
-                path=file_path,
-                exported_items=", ".join(plot_params),
             )
 
         except Exception as e:
@@ -2582,12 +3060,11 @@ class VNAApp(App):
         exists and the file is a .s2p. Rewrites TINA comment blocks (notes and
         machine-readable metadata) while preserving the numeric Touchstone data.
         """
+        VNAApp._schedule_manual_export_action(self, VNAApp._action_save_back_async(self))
+
+    async def _action_save_back_async(self) -> None:
+        """Async save-back wrapper using the unified background job path."""
         try:
-            # Ensure save button is enabled when this action is invoked
-            try:
-                self.query_one("#btn_save_notes", Button).disabled = False
-            except Exception:
-                pass
             # Sync editor contents first
             self._sync_measurement_notes_from_editor()
 
@@ -2619,8 +3096,7 @@ class VNAApp(App):
                 exported_traces=exported_traces,
             )
 
-            # Prefer .s2p for applying save-back since it stores numeric data + metadata
-            # Check for existing .s2p path first
+            save_back_payload: dict[str, object] | None = None
             if s2p_path:
                 try:
                     s2p_resolved = str(Path(s2p_path).resolve())
@@ -2630,146 +3106,34 @@ class VNAApp(App):
                     os.path.exists(s2p_resolved)
                     and Path(s2p_resolved).suffix.lower() == ".s2p"
                 ):
-                    # Report resolved s2p path in success log below
+                    save_back_payload = {
+                        "target_kind": "touchstone",
+                        "target_path": s2p_resolved,
+                        "measurement_notes": self.measurement_notes,
+                        "metadata": new_touchstone_metadata,
+                    }
                     target_for_history = s2p_resolved
-                    # Read original file
-                    with open(s2p_resolved, encoding="utf-8") as f:
-                        orig_text = f.read()
-
-                    # Parse existing import to extract numeric lines and option line
-                    try:
-                        TouchstoneExporter.import_with_metadata(s2p_resolved)
-                    except Exception as e:
-                        self.log_message(
-                            f"Failed to parse original .s2p for save-back: {e}", "error"
-                        )
-                        self.notify(
-                            f"Failed to parse original .s2p: {e}",
-                            severity="error",
-                            timeout=3,
-                        )
-                        return
-
-                    # Reconstruct file: keep non-TINA comment header lines, then notes block,
-                    # then option line + numeric data unchanged, then machine metadata block.
-                    lines = orig_text.splitlines()
-
-                    # Separate sections
-                    header_lines: list[str] = []
-                    option_and_data_lines: list[str] = []
-
-                    in_data = False
-                    for raw in lines:
-                        line = raw.rstrip("\n")
-                        stripped = line.strip()
-                        if not in_data and stripped and not stripped.startswith("!"):
-                            # First non-comment line is the option line; start data capture
-                            in_data = True
-                        if in_data:
-                            option_and_data_lines.append(line)
-                        else:
-                            # Keep header comments that are not TINA blocks; they will be
-                            # replaced by regenerated notes/metadata blocks below
-                            if stripped.startswith("!"):
-                                # Check for TINA markers and skip existing TINA blocks
-                                content = TouchstoneExporter._strip_comment_prefix(
-                                    stripped
-                                )
-                                if content in (
-                                    "TINA NOTES BEGIN",
-                                    "TINA NOTES END",
-                                    "TINA METADATA BEGIN",
-                                    "TINA METADATA END",
-                                ):
-                                    # skip marker line
-                                    continue
-                                header_lines.append(line)
-                            else:
-                                header_lines.append(line)
-
-                    # Build notes and metadata comment blocks
-                    notes_lines = TouchstoneExporter._build_notes_comment_lines(
-                        str(self.measurement_notes or "")
-                    )
-                    metadata_lines = (
-                        TouchstoneExporter._serialize_metadata_comment_lines(
-                            new_touchstone_metadata
-                        )
-                    )
-
-                    # Compose final file content
-                    out_lines: list[str] = []
-                    # Ensure basic header exists: if original had 'HP E5071B' line, keep it;
-                    # otherwise start with a minimal header
-                    if header_lines:
-                        out_lines.extend(header_lines)
-                    else:
-                        out_lines.append("! HP E5071B S-Parameter Data")
-
-                    # Append generated notes block
-                    out_lines.extend(notes_lines)
-
-                    # Append option and numeric data
-                    out_lines.extend(option_and_data_lines)
-
-                    # Append serialized metadata at EOF
-                    out_lines.extend(metadata_lines)
-
-                    # Write back atomically
-                    target_path = Path(s2p_resolved)
-                    tmp_path = target_path.with_suffix(".s2p.tmp")
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        f.write("\n".join(out_lines) + "\n")
-                    tmp_path.replace(target_path)
-
-                    self.log_message(f"Saved notes back to: {s2p_resolved}", "success")
-                    self.notify(
-                        f"Saved notes to {Path(s2p_resolved).name}",
-                        severity="information",
-                        timeout=3,
-                    )
-                    # Touch history
-                    try:
-                        self.settings_manager.touch_setup_restore_history(
-                            str(s2p_resolved)
-                        )
-                        self.settings_manager.save(self.settings)
-                    except Exception:
-                        pass
-                    return
                 else:
                     # s2p path not available; will try image embedding below
                     pass
 
             # If we reach here, no valid s2p save-back occurred; try embedding into PNG or SVG
-            if png_path and os.path.exists(png_path):
+            if save_back_payload is None and png_path and os.path.exists(png_path):
                 try:
                     try:
                         png_resolved = str(Path(png_path).resolve())
                     except Exception:
                         png_resolved = png_path
-                    # Build image export metadata including notes and machine settings
-                    image_meta = build_image_export_metadata(
-                        notes_markdown=self.measurement_notes,
-                        machine_settings=self._build_touchstone_export_metadata(
+                    save_back_payload = {
+                        "target_kind": "png",
+                        "target_path": png_resolved,
+                        "measurement_notes": self.measurement_notes,
+                        "metadata": self._build_touchstone_export_metadata(
                             exported_traces=list(
                                 self.last_measurement.get("sparams", {}).keys()
                             ),
                         ),
-                    )
-                    embed_png_metadata(
-                        png_resolved,
-                        notes_markdown=image_meta.notes_markdown,
-                        machine_settings=image_meta.machine_settings,
-                    )
-                    self.log_message(
-                        f"Embedded notes into PNG: {png_resolved}", "success"
-                    )
-                    self.notify(
-                        f"Saved notes to {Path(png_resolved).name}",
-                        severity="information",
-                        timeout=3,
-                    )
+                    }
                     target_for_history = png_resolved
                 except Exception as e:
                     self.log_message(f"Failed to embed PNG metadata: {e}", "error")
@@ -2778,34 +3142,22 @@ class VNAApp(App):
                     )
                     return
 
-            elif svg_path and os.path.exists(svg_path):
+            elif save_back_payload is None and svg_path and os.path.exists(svg_path):
                 try:
                     try:
                         svg_resolved = str(Path(svg_path).resolve())
                     except Exception:
                         svg_resolved = svg_path
-                    # Build image export metadata including notes and machine settings
-                    image_meta = build_image_export_metadata(
-                        notes_markdown=self.measurement_notes,
-                        machine_settings=self._build_touchstone_export_metadata(
+                    save_back_payload = {
+                        "target_kind": "svg",
+                        "target_path": svg_resolved,
+                        "measurement_notes": self.measurement_notes,
+                        "metadata": self._build_touchstone_export_metadata(
                             exported_traces=list(
                                 self.last_measurement.get("sparams", {}).keys()
                             ),
                         ),
-                    )
-                    embed_svg_metadata(
-                        svg_resolved,
-                        notes_markdown=image_meta.notes_markdown,
-                        machine_settings=image_meta.machine_settings,
-                    )
-                    self.log_message(
-                        f"Embedded notes into SVG: {svg_resolved}", "success"
-                    )
-                    self.notify(
-                        f"Saved notes to {Path(svg_resolved).name}",
-                        severity="information",
-                        timeout=3,
-                    )
+                    }
                     target_for_history = svg_resolved
                 except Exception as e:
                     self.log_message(f"Failed to embed SVG metadata: {e}", "error")
@@ -2821,6 +3173,14 @@ class VNAApp(App):
                     timeout=2,
                 )
                 return
+
+            saved_path = await VNAApp._run_save_back_job(self, save_back_payload)
+            self.log_message(f"Saved notes back to: {saved_path}", "success")
+            self.notify(
+                f"Saved notes to {Path(saved_path).name}",
+                severity="information",
+                timeout=3,
+            )
 
             # Update setup restore history if we saved into an image
             try:
@@ -2842,35 +3202,44 @@ class VNAApp(App):
 
         Delegates to action_save_back so the same save-back logic is used.
         """
-        # This handler is bound to the Save button pressed event
         try:
-            # Disable button while saving to prevent double-press
-            try:
-                btn = self.query_one("#btn_save_notes", Button)
-                btn.disabled = True
-            except Exception:
-                btn = None
-
-            # Call the action to perform save-back
             self.action_save_back()
         except Exception as e:
             self.log_message(f"Save notes handler failed: {e}", "error")
-        finally:
-            # Re-enable button after save attempt
-            try:
-                if btn is None:
-                    btn = self.query_one("#btn_save_notes", Button)
-                btn.disabled = False
-            except Exception:
-                pass
 
     async def _refresh_tools_plot(self) -> None:
         """Render the Tools tab plot for the currently selected trace."""
-        await refresh_tools_plot(self)
+        if self.last_measurement is None:
+            return
+
+        if self.settings.plot_backend == "terminal":
+            await refresh_tools_plot(self)
+            return
+
+        try:
+            self.set_progress("Tools plot: queued", 0)
+            result = await self._run_tools_render_job()
+            await apply_tools_render_result(self, result)
+        except Exception as exc:
+            await apply_tools_render_result(self, error=str(exc))
 
     def _run_tools_computation(self) -> None:
         """Run the currently selected tools module and populate the results display."""
-        run_tools_computation(self)
+        asyncio.create_task(self._run_tools_computation_async())
+
+    async def _run_tools_computation_async(self) -> None:
+        """Compute tools output through the unified worker job path."""
+        if self.last_measurement is None:
+            run_tools_computation(self)
+            return
+        try:
+            self.set_progress("Tools compute: queued", 0)
+            result = await self._run_tools_compute_job()
+            render_tools_computation_result(self, result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.log_message(f"Tools compute failed: {exc}", "error")
 
     def _update_output_path_label(self) -> None:
         """
@@ -3552,22 +3921,20 @@ class VNAApp(App):
                 y_max_for_render = user_y_max if user_y_max is not None else auto_y_max
 
                 try:
-                    await asyncio.get_running_loop().run_in_executor(
-                        None,
-                        _render_plot_image_snapshot,
-                        freqs_snapshot,
-                        sparams_snapshot,
-                        tuple(plot_params),
-                        str(plot_type),
-                        plot_file,
-                        dpi,
-                        px_w,
-                        px_h,
-                        render_scale,
-                        plot_colors_snapshot,
-                        y_min_for_render,
-                        y_max_for_render,
-                        plot_data_snapshot,
+                    await self._run_results_plot_render_job(
+                        freqs=freqs_snapshot,
+                        sparams=sparams_snapshot,
+                        plot_params=plot_params,
+                        plot_type=str(plot_type),
+                        output_path=plot_file,
+                        dpi=dpi,
+                        pixel_width=px_w,
+                        pixel_height=px_h,
+                        render_scale=render_scale,
+                        colors=plot_colors_snapshot,
+                        y_min=y_min_for_render,
+                        y_max=y_max_for_render,
+                        plot_data=plot_data_snapshot,
                     )
                 except Exception as e:
                     if plot_generation != self._plot_render_generation:
@@ -3758,18 +4125,8 @@ class VNAApp(App):
         self.last_output_path = output_path
         self._update_output_path_label()
 
-        # Enable export buttons
-        self.query_one("#btn_open_output", Button).disabled = False
+        self._sync_measurement_action_buttons()
         self.query_one("#check_minimal_export", Button).disabled = False
-        self.query_one("#btn_export_touchstone", Button).disabled = False
-        self.query_one("#btn_export_csv", Button).disabled = False
-        self.query_one("#btn_export_png", Button).disabled = False
-        self.query_one("#btn_export_svg", Button).disabled = False
-        # Enable Save button when measurement is present
-        try:
-            self.query_one("#btn_save_notes", Button).disabled = False
-        except Exception:
-            pass
         self._refresh_export_button_labels()
 
 
