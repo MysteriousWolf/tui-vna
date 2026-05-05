@@ -97,6 +97,7 @@ from .gui.tabs import (
     setup_logic,
     tools_logic,
 )
+from .gui.theme import TINA_THEME
 from .utils import TouchstoneExporter
 from .utils.update_checker import (
     fetch_test_update_data,
@@ -222,6 +223,8 @@ class VNAApp(App):
                 inform the user that legacy settings were migrated.
         """
         super().__init__()
+        self.register_theme(TINA_THEME)
+        self.theme = "tina"
 
         self._test_updates = test_updates
         self._dev_mode = dev_mode
