@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol, cast
 
 from textual.widgets import Input
 from textual_autocomplete import AutoComplete, DropdownItem
@@ -18,6 +19,16 @@ class AutocompleteChoice:
     kind: str
     label: str
     prefix: str | None = None
+
+
+class _TemplateRefreshApp(Protocol):
+    """Protocol for apps that can refresh export template validation."""
+
+    def _refresh_export_template_validation(self) -> None: ...
+
+    def call_after_refresh(
+        self, callback: Callable[..., object], *args: object
+    ) -> bool: ...
 
 
 class HistoryReplaceAutoComplete(AutoComplete):
@@ -126,4 +137,5 @@ class TemplateAutoComplete(AutoComplete):
         super().post_completion()
         app = self.app
         if hasattr(app, "_refresh_export_template_validation"):
-            app.call_after_refresh(app._refresh_export_template_validation)
+            typed_app = cast(_TemplateRefreshApp, app)
+            typed_app.call_after_refresh(typed_app._refresh_export_template_validation)

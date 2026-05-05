@@ -35,6 +35,12 @@ class _VNAAppProtocol(Protocol):
     def action_import_setup_from_measurement_output(self) -> None:
         """Import only setup state from a measurement output."""
 
+    def action_restore_setup_from_path(self, path: str) -> None:
+        """Restore setup state from a specific file path."""
+
+    def action_open_recent_measurement(self, path: str) -> None:
+        """Open a recent measurement from a specific file path."""
+
 
 _POLL_OPTIONS = [
     ("Status poll: Off", 0),
@@ -220,11 +226,13 @@ class SetupRestoreHistoryProvider(Provider):
     """Provide MRU entries for restoring setups from previous imports."""
 
     async def discover(self) -> Hits:
+        """Yield one hit per entry in setup_restore_history."""
         app = cast(_VNAAppProtocol, self.app)
         for path in getattr(app.settings, "setup_restore_history", []) or []:
             yield Hit(1.0, path, partial(app.action_restore_setup_from_path, path))
 
     async def search(self, query: str) -> Hits:
+        """Yield setup-restore history entries matching *query*."""
         matcher = self.matcher(query)
         app = cast(_VNAAppProtocol, self.app)
         for path in getattr(app.settings, "setup_restore_history", []) or []:
@@ -241,11 +249,13 @@ class RecentExportedProvider(Provider):
     """Provide MRU entries for recently exported measurements."""
 
     async def discover(self) -> Hits:
+        """Yield one hit per entry in recent_exported_measurements."""
         app = cast(_VNAAppProtocol, self.app)
         for path in getattr(app.settings, "recent_exported_measurements", []) or []:
             yield Hit(1.0, path, partial(app.action_open_recent_measurement, path))
 
     async def search(self, query: str) -> Hits:
+        """Yield recently-exported paths matching *query*."""
         matcher = self.matcher(query)
         app = cast(_VNAAppProtocol, self.app)
         for path in getattr(app.settings, "recent_exported_measurements", []) or []:
@@ -262,11 +272,13 @@ class RecentImportedProvider(Provider):
     """Provide MRU entries for recently imported measurements."""
 
     async def discover(self) -> Hits:
+        """Yield one hit per entry in recent_imported_measurements."""
         app = cast(_VNAAppProtocol, self.app)
         for path in getattr(app.settings, "recent_imported_measurements", []) or []:
             yield Hit(1.0, path, partial(app.action_open_recent_measurement, path))
 
     async def search(self, query: str) -> Hits:
+        """Yield recently-imported paths matching *query*."""
         matcher = self.matcher(query)
         app = cast(_VNAAppProtocol, self.app)
         for path in getattr(app.settings, "recent_imported_measurements", []) or []:

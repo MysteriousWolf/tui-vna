@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 from textual.containers import Horizontal
@@ -217,7 +218,6 @@ async def rebuild_tools_params(app) -> None:
         "debug",
     )
 
-    # Compute unit multipliers and a small helper for formatting Hz -> display string
     unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
 
     def _fmt(hz_val):
@@ -229,23 +229,19 @@ async def rebuild_tools_params(app) -> None:
         except Exception:
             return ""
 
-    # Update the static FrequencyEntry inputs/toggles (they are always composed).
     try:
-        # Cursor 1 input
         try:
             inp1 = app.query_one("#input_tools_cursor1", Input)
             inp1.value = _fmt(getattr(app, "_tools_cursor1_hz", None))
         except Exception:
             pass
 
-        # Cursor 2 input
         try:
             inp2 = app.query_one("#input_tools_cursor2", Input)
             inp2.value = _fmt(getattr(app, "_tools_cursor2_hz", None))
         except Exception:
             pass
 
-        # Cursor 1 toggles (minima / smoothing)
         try:
             btn_min1 = app.query_one("#btn_freq1_toggle_min", Button)
             btn_min1.label = (
@@ -261,7 +257,6 @@ async def rebuild_tools_params(app) -> None:
         except Exception:
             pass
 
-        # Cursor 2 toggles
         try:
             btn_min2 = app.query_one("#btn_freq2_toggle_min", Button)
             btn_min2.label = (
@@ -283,7 +278,6 @@ async def rebuild_tools_params(app) -> None:
             f"Failed updating static FrequencyEntry widgets: {exc_update}", "warning"
         )
 
-    # Populate dynamic controls for active tools
     if active == "distortion":
         comp_row = Horizontal(classes="distortion-row")
         await container.mount(comp_row)
@@ -297,7 +291,6 @@ async def rebuild_tools_params(app) -> None:
                 )
             )
     else:
-        # If no active tool or other tools, show the placeholder
         await container.mount(
             Static(
                 "[dim]Activate a tool below to see options.[/dim]",
@@ -316,13 +309,12 @@ def _detect_candidates_with_smoothing(
     prominence criteria. If smoothing is False, simply returns extrema on raw
     data using derivative sign changes.
     """
-    # Coerce inputs to numpy float arrays and validate sizes
     data = np.asarray(data, dtype=float)
     freqs = np.asarray(freqs, dtype=float)
+    search_data: np.ndarray[Any, Any] = data
     if data.size < 3 or freqs.size != data.size:
         return np.array([], dtype=int)
 
-    # Adaptive window sizing
     win = max(3, int(round(len(data) / float(desired_peaks))))
     if win % 2 == 0:
         win += 1
@@ -331,7 +323,6 @@ def _detect_candidates_with_smoothing(
     if win < 3:
         win = 3
 
-    # Try to use scipy.signal when available for fast, robust processing
     try:
         import scipy.signal as spsig
 
@@ -340,7 +331,6 @@ def _detect_candidates_with_smoothing(
         spsig = None
         _has_spsig = False
 
-    # If smoothing is disabled, do a fast derivative sign-change detection on raw data
     if not smoothing:
         d = np.diff(data)
         if d.size < 2:
@@ -352,14 +342,9 @@ def _detect_candidates_with_smoothing(
         peaks = np.where(cond)[0] + 1
         if peaks.size == 0:
             return np.array([], dtype=int)
-        # Deduplicate / merge very-close peaks (distance < 1 sample -> unique)
         peaks = np.unique(np.asarray(peaks, dtype=int))
         return np.sort(peaks)
 
-    # Smoothing branch
-    # Prepare smoothed data using SciPy filters when available, otherwise moving average
-    search_data = data
-    # detect many outliers via MAD
     med = float(np.median(data))
     mad = float(np.median(np.abs(data - med)))
     outlier_count = int(
@@ -367,7 +352,6 @@ def _detect_candidates_with_smoothing(
     )
     outlier_thresh = max(3, int(len(data) * 0.01))
 
-    # compute window/sgolay params
     try:
         if win >= 5:
             wl = min(win, max_win)
@@ -384,15 +368,24 @@ def _detect_candidates_with_smoothing(
 
     if _has_spsig:
         try:
-            if wl >= 5 and hasattr(spsig, "savgol_filter"):
-                search_data = spsig.savgol_filter(
-                    data, window_length=wl, polyorder=poly
+            if wl >= 5 and spsig is not None and hasattr(spsig, "savgol_filter"):
+                search_data = np.asarray(
+                    cast(Any, spsig).savgol_filter(
+                        data, window_length=wl, polyorder=poly
+                    ),
+                    dtype=float,
                 )
-            elif outlier_count > outlier_thresh and hasattr(spsig, "medfilt"):
+            elif (
+                outlier_count > outlier_thresh
+                and spsig is not None
+                and hasattr(spsig, "medfilt")
+            ):
                 k = win
                 if k % 2 == 0:
                     k += 1
-                search_data = spsig.medfilt(data, kernel_size=k)
+                search_data = np.asarray(
+                    cast(Any, spsig).medfilt(data, kernel_size=k), dtype=float
+                )
             else:
                 k = max(3, win)
                 kernel = np.ones(k) / float(k)
@@ -402,23 +395,20 @@ def _detect_candidates_with_smoothing(
             kernel = np.ones(k) / float(k)
             search_data = np.convolve(data, kernel, mode="same")
     else:
-        # SciPy not available -> simple moving average smoothing
         k = max(3, win)
         kernel = np.ones(k) / float(k)
         search_data = np.convolve(data, kernel, mode="same")
 
-    # Compute baseline/range/MAD and min_prominence
     baseline = float(np.median(search_data))
     rng = float(np.max(search_data) - np.min(search_data))
     madsm = float(np.median(np.abs(search_data - baseline)))
     min_prominence = max(prominence_factor * rng, 3 * madsm)
 
-    # Use SciPy peak finding when available
-    if _has_spsig and hasattr(spsig, "find_peaks"):
+    if _has_spsig and spsig is not None and hasattr(spsig, "find_peaks"):
         target = -search_data if minima else search_data
         distance = max(1, win // 2)
         try:
-            peaks, props = spsig.find_peaks(
+            peaks, _props = cast(Any, spsig).find_peaks(
                 target, distance=distance, prominence=min_prominence
             )
             peaks = np.asarray(peaks, dtype=int)
@@ -428,12 +418,13 @@ def _detect_candidates_with_smoothing(
         # If none found, retry with relaxed prominence=0 once
         if peaks.size == 0:
             try:
-                peaks, props = spsig.find_peaks(target, distance=distance, prominence=0)
+                peaks, _props = cast(Any, spsig).find_peaks(
+                    target, distance=distance, prominence=0
+                )
                 peaks = np.asarray(peaks, dtype=int)
             except Exception:
                 peaks = np.array([], dtype=int)
 
-        # If still none, fallback to derivative sign-change on smoothed data
         if peaks.size == 0:
             d = np.diff(search_data)
             if d.size < 2:
@@ -446,15 +437,20 @@ def _detect_candidates_with_smoothing(
             peaks = np.unique(np.asarray(peaks, dtype=int))
             return np.sort(peaks)
 
-        # If peaks found, limit to desired_peaks by prominences (when available)
         if peaks.size > desired_peaks:
-            if hasattr(spsig, "peak_prominences"):
+            if spsig is not None and hasattr(spsig, "peak_prominences"):
                 try:
-                    prominences = spsig.peak_prominences(target, peaks)[0]
+                    prominences = np.asarray(
+                        cast(Any, spsig).peak_prominences(target, peaks)[0], dtype=float
+                    )
                 except Exception:
-                    prominences = np.abs(search_data[peaks] - baseline)
+                    prominences = np.asarray(
+                        np.abs(search_data[peaks] - baseline), dtype=float
+                    )
             else:
-                prominences = np.abs(search_data[peaks] - baseline)
+                prominences = np.asarray(
+                    np.abs(search_data[peaks] - baseline), dtype=float
+                )
             order = np.argsort(-prominences)
             chosen = order[:desired_peaks]
             peaks = peaks[chosen]
@@ -462,7 +458,6 @@ def _detect_candidates_with_smoothing(
         peaks = np.unique(np.asarray(peaks, dtype=int))
         return np.sort(peaks)
 
-    # No SciPy peak finding available: fallback to derivative sign-change on smoothed data
     d = np.diff(search_data)
     if d.size < 2:
         return np.array([], dtype=int)
@@ -563,7 +558,6 @@ def handle_frequency_extrema_navigate(
     if trace not in sparams:
         return
 
-    # Select data according to plot type
     if plot_type == "magnitude":
         data = np.asarray(sparams[trace][0])
     elif plot_type == "phase":
@@ -574,14 +568,10 @@ def handle_frequency_extrema_navigate(
     if data.size < 3 or freqs.size != data.size:
         return
 
-    # Invalidate cache when a new measurement data buffer is observed
     if id(data) != getattr(app, "_tools_extrema_cache_last_data_id", None):
-        # reset the extrema cache for new measurement data
         app._tools_extrema_cache = {}
         app._tools_extrema_cache_last_data_id = id(data)
 
-    # Build a cache key from data id and the search parameters. Use app-level
-    # tuning knobs when present to ensure cache keys are sensitive to those.
     desired_peaks = int(getattr(app, "_tools_desired_peaks", 10))
     prominence_factor = float(getattr(app, "_tools_prominence_factor", 0.005))
     key = (
@@ -597,7 +587,6 @@ def handle_frequency_extrema_navigate(
         cache = {}
         app._tools_extrema_cache = cache
 
-    # Detect candidate extrema (optionally with adaptive smoothing + prominence)
     if key in cache:
         candidate_indices = cache[key]
     else:
@@ -609,7 +598,6 @@ def handle_frequency_extrema_navigate(
             desired_peaks=desired_peaks,
             prominence_factor=prominence_factor,
         )
-        # store in cache for subsequent navigations
         try:
             cache[key] = candidate_indices
         except Exception:
@@ -619,14 +607,10 @@ def handle_frequency_extrema_navigate(
         return
     cand_idx = candidate_indices
 
-    # Determine current cursor position
     current_hz = getattr(app, f"_tools_cursor{cursor_index}_hz", None)
-    # Choose next/previous candidate relative to current position
     if current_hz is None:
-        # If no current position, pick first (direction=+1) or last (direction=-1)
         chosen = cand_idx[0] if direction > 0 else cand_idx[-1]
     else:
-        # Find candidates on the requested side
         if direction > 0:
             side = cand_idx[freqs[cand_idx] > current_hz]
             chosen = side[0] if side.size > 0 else None
@@ -635,14 +619,11 @@ def handle_frequency_extrema_navigate(
             chosen = side[-1] if side.size > 0 else None
 
         if chosen is None:
-            # Nothing found on that side -> no-op
             return
 
     sel_hz = float(freqs[int(chosen)])
-    # Update internal cursor value and input widget display
     setattr(app, f"_tools_cursor{cursor_index}_hz", sel_hz)
 
-    # Update the corresponding Input widget (display in measurement unit)
     freq_unit = app.last_measurement.get("freq_unit", "MHz")
     unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
     mult = unit_multipliers.get(freq_unit, 1e6)
@@ -653,7 +634,6 @@ def handle_frequency_extrema_navigate(
     except Exception:
         pass
 
-    # Debounced refresh (reuse existing input debounce behavior)
     if app._tools_input_timer is not None:
         app._tools_input_timer.stop()
     app._tools_input_timer = app.set_timer(0.2, app._delayed_tools_refresh)

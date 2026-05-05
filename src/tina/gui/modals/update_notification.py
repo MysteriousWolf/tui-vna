@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import webbrowser
+from typing import Literal, cast
 
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Markdown, Static
+
+ButtonVariantName = Literal["default", "primary", "success", "warning", "error"]
 
 
 class UpdateNotificationScreen(ModalScreen):
@@ -25,7 +28,7 @@ class UpdateNotificationScreen(ModalScreen):
         title: str,
         body: str,
         button_label: str,
-        button_variant: str = "primary",
+        button_variant: ButtonVariantName = "primary",
         badge: str | None = None,
         badge_class: str | None = None,
         welcome: bool = False,
@@ -57,7 +60,7 @@ class UpdateNotificationScreen(ModalScreen):
             with Horizontal(id="notif-footer"):
                 yield Button(
                     self._button_label,
-                    variant=self._button_variant,
+                    variant=cast(ButtonVariantName, self._button_variant),
                     id="btn-notif-dismiss",
                     classes="notif-btn",
                     flat=True,

@@ -237,10 +237,10 @@ class FrequencyEntry(Static):
             # We intentionally do not change the Button.variant here.
             if btn_id == self.minima_toggle_id:
                 btn.label = "▼" if active else "▲"
-                btn.set_class("--active", bool(active))
+                btn.set_class(bool(active), "--active")
             elif btn_id == self.smooth_toggle_id:
                 btn.label = "∿" if active else "⎍"
-                btn.set_class("--active", bool(active))
+                btn.set_class(bool(active), "--active")
         except Exception:
             pass
 
