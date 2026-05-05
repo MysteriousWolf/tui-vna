@@ -1,1 +1,1 @@
-See agents.md for agent guidance.
+See AGENTS.md for agent guidance.
