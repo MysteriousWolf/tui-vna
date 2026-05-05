@@ -110,7 +110,9 @@ class TestExtremaCache:
             np.testing.assert_array_equal(detect_freqs, freqs)
             return candidate_indices
 
-        monkeypatch.setattr(tools_logic, "_detect_candidates_with_smoothing", fake_detect)
+        monkeypatch.setattr(
+            tools_logic, "_detect_candidates_with_smoothing", fake_detect
+        )
 
         tools_logic.handle_frequency_extrema_navigate(
             app, cursor_index=1, direction=1, minima=False, smoothing=False
@@ -147,7 +149,9 @@ class TestExtremaCache:
             detector_calls.append(id(detect_data))
             return np.array([1, 3], dtype=int)
 
-        monkeypatch.setattr(tools_logic, "_detect_candidates_with_smoothing", fake_detect)
+        monkeypatch.setattr(
+            tools_logic, "_detect_candidates_with_smoothing", fake_detect
+        )
 
         tools_logic.handle_frequency_extrema_navigate(
             app, cursor_index=1, direction=1, minima=False, smoothing=False
@@ -190,7 +194,9 @@ class TestExtremaCache:
             detector_calls.append((smoothing, minima))
             return np.array([1, 3], dtype=int)
 
-        monkeypatch.setattr(tools_logic, "_detect_candidates_with_smoothing", fake_detect)
+        monkeypatch.setattr(
+            tools_logic, "_detect_candidates_with_smoothing", fake_detect
+        )
 
         tools_logic.handle_frequency_extrema_navigate(
             app, cursor_index=1, direction=1, minima=False, smoothing=False

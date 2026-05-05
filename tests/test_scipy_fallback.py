@@ -19,11 +19,15 @@ def _sample_waveform() -> tuple[np.ndarray, np.ndarray]:
 
 class TestScipyFallback:
     @pytest.mark.unit
-    def test_detect_candidates_with_smoothing_falls_back_to_numpy_when_scipy_missing(self):
+    def test_detect_candidates_with_smoothing_falls_back_to_numpy_when_scipy_missing(
+        self,
+    ):
         freqs, data = _sample_waveform()
 
         with patch.dict("sys.modules", {"scipy.signal": None}):
-            with patch("src.tina.gui.tabs.tools_logic.np.convolve", wraps=np.convolve) as convolve_mock:
+            with patch(
+                "src.tina.gui.tabs.tools_logic.np.convolve", wraps=np.convolve
+            ) as convolve_mock:
                 peaks = _detect_candidates_with_smoothing(
                     data,
                     freqs,
@@ -39,7 +43,9 @@ class TestScipyFallback:
         assert np.max(data[peaks]) > 0.9
 
     @pytest.mark.unit
-    def test_detect_candidates_with_smoothing_returns_meaningful_minima_without_scipy(self):
+    def test_detect_candidates_with_smoothing_returns_meaningful_minima_without_scipy(
+        self,
+    ):
         freqs, data = _sample_waveform()
 
         with patch.dict("sys.modules", {"scipy.signal": None}):

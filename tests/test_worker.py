@@ -758,8 +758,6 @@ class TestWorkerCancellation:
         worker.stop()
 
 
-
-
 class TestWorkerFailureHandling:
     """Test worker error handling and recovery."""
 

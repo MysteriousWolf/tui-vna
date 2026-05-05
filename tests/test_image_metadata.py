@@ -158,7 +158,6 @@ class TestEmbedPngMetadata:
             assert image.info["tina_notes_markdown"] == "notes"
             assert "tina_metadata_yaml" in image.info
 
-
     def test_embed_png_metadata_replaces_prior_tina_chunks_without_duplication(
         self, tmp_path: Path, sample_machine_settings: dict[str, object]
     ) -> None:
@@ -279,13 +278,14 @@ class TestEmbedSvgMetadata:
                 machine_settings=sample_machine_settings,
             )
 
-
     def test_embed_svg_metadata_replaces_existing_tina_blocks_instead_of_duplicating(
         self, tmp_path: Path, sample_machine_settings: dict[str, object]
     ) -> None:
         """Repeated SVG embedding should replace prior TINA blocks and stay idempotent."""
         image_path = tmp_path / "plot.svg"
-        image_path.write_text('<svg><rect width="10" height="10"/></svg>', encoding="utf-8")
+        image_path.write_text(
+            '<svg><rect width="10" height="10"/></svg>', encoding="utf-8"
+        )
 
         embed_svg_metadata(
             image_path,

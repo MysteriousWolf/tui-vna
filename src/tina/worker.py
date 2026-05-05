@@ -354,14 +354,18 @@ def _render_tools_plot_snapshot(
             y1 = float(np.interp(cursor1_hz, freqs, data))
             ax.axvline(x1, color=cursor1_color, linewidth=1.2, zorder=3)
             if active_tool in ("cursor", "distortion"):
-                ax.scatter([x1], [y1], color=cursor1_color, marker=marker, s=80, zorder=5)
+                ax.scatter(
+                    [x1], [y1], color=cursor1_color, marker=marker, s=80, zorder=5
+                )
 
         if cursor2_hz is not None:
             x2 = cursor2_hz / multiplier
             y2 = float(np.interp(cursor2_hz, freqs, data))
             ax.axvline(x2, color=cursor2_color, linewidth=1.2, zorder=3)
             if active_tool in ("cursor", "distortion"):
-                ax.scatter([x2], [y2], color=cursor2_color, marker=marker, s=80, zorder=5)
+                ax.scatter(
+                    [x2], [y2], color=cursor2_color, marker=marker, s=80, zorder=5
+                )
 
         if (
             active_tool == "distortion"
@@ -985,7 +989,9 @@ class MeasurementWorker:
                 report(f"{kind}: preparing data...", 10)
                 export_kind = str(data.get("export_kind", ""))
                 if export_kind == "touchstone":
-                    exporter = TouchstoneExporter(freq_unit=str(data.get("freq_unit", "MHz")))
+                    exporter = TouchstoneExporter(
+                        freq_unit=str(data.get("freq_unit", "MHz"))
+                    )
                     report(f"{kind}: writing Touchstone...", 45)
                     result = exporter.export(
                         np.array(data["freqs"], dtype=float),
@@ -1092,12 +1098,16 @@ class MeasurementWorker:
                         dict(data["colors"]),
                         float(data["y_min"]) if data.get("y_min") is not None else None,
                         float(data["y_max"]) if data.get("y_max") is not None else None,
-                        {
-                            str(name): np.array(values, dtype=float)
-                            for name, values in dict(data.get("plot_data", {})).items()
-                        }
-                        if data.get("plot_data") is not None
-                        else None,
+                        (
+                            {
+                                str(name): np.array(values, dtype=float)
+                                for name, values in dict(
+                                    data.get("plot_data", {})
+                                ).items()
+                            }
+                            if data.get("plot_data") is not None
+                            else None
+                        ),
                     )
                     result = {
                         "path": str(data["output_path"]),
@@ -1118,7 +1128,9 @@ class MeasurementWorker:
                         dict(data.get("metadata", {})),
                     )
                 elif target_kind in {"png", "svg"}:
-                    report(f"Save-back: embedding {target_kind.upper()} metadata...", 60)
+                    report(
+                        f"Save-back: embedding {target_kind.upper()} metadata...", 60
+                    )
                     result = _write_image_save_back(
                         str(data["target_path"]),
                         str(data.get("measurement_notes", "")),
@@ -1135,7 +1147,9 @@ class MeasurementWorker:
                 result = self._handle_tools_compute(data, report)
 
             else:
-                raise ValueError(f"Unsupported background job message: {msg_type.value}")
+                raise ValueError(
+                    f"Unsupported background job message: {msg_type.value}"
+                )
 
             self._check_job_cancelled(job_id, token)
             self._send_response(

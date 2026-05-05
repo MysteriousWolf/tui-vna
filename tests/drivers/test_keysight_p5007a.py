@@ -9,9 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-import pyvisa
 
-from src.tina.drivers.base import VNAConfig
 from src.tina.drivers.keysight_p5007a import KeysightP5007A
 
 
@@ -21,7 +19,9 @@ class TestKeysightP5007AIdentification:
     @pytest.mark.unit
     def test_idn_matcher_p5007a(self):
         """Test IDN matcher recognizes P5007A instruments."""
-        assert KeysightP5007A.idn_matcher("Keysight Technologies,P5007A,MY12345678,A.01.00")
+        assert KeysightP5007A.idn_matcher(
+            "Keysight Technologies,P5007A,MY12345678,A.01.00"
+        )
         assert KeysightP5007A.idn_matcher("keysight,p5007a,my12345678,a.01.00")
 
     @pytest.mark.unit
@@ -32,7 +32,9 @@ class TestKeysightP5007AIdentification:
     @pytest.mark.unit
     def test_idn_matcher_rejects_other(self):
         """Test IDN matcher rejects non-P5007A instruments."""
-        assert not KeysightP5007A.idn_matcher("HEWLETT-PACKARD,E5071B,MY12345678,A.01.02")
+        assert not KeysightP5007A.idn_matcher(
+            "HEWLETT-PACKARD,E5071B,MY12345678,A.01.02"
+        )
         assert not KeysightP5007A.idn_matcher("Keysight Technologies,N9913A,MY123,1.0")
         assert not KeysightP5007A.idn_matcher("UNKNOWN,MODEL,12345,1.0")
         assert not KeysightP5007A.idn_matcher("")
@@ -463,13 +465,13 @@ class TestKeysightP5007AStatus:
         """Test status query returns expected keys."""
         vna, mock_inst = connected_vna
         mock_inst.query.side_effect = [
-            "1\n",           # cal_enabled
-            "SOLT\n",        # cal_type
-            "1\n",           # smoothing_enabled
-            "3.0\n",         # smoothing_aperture
-            "1000\n",        # if_bandwidth
-            "-10\n",         # port_power
-            "IMM\n",         # trigger_source
+            "1\n",  # cal_enabled
+            "SOLT\n",  # cal_type
+            "1\n",  # smoothing_enabled
+            "3.0\n",  # smoothing_aperture
+            "1000\n",  # if_bandwidth
+            "-10\n",  # port_power
+            "IMM\n",  # trigger_source
         ]
 
         status = vna.get_status()
@@ -497,11 +499,11 @@ class TestKeysightP5007AStatus:
         """Test reading current instrument parameters."""
         vna, mock_inst = connected_vna
         mock_inst.query.side_effect = [
-            "10000000.0\n",   # start_freq
-            "1500000000.0\n", # stop_freq
-            "201\n",           # sweep_points
-            "1\n",             # averaging enabled
-            "4\n",             # averaging count
+            "10000000.0\n",  # start_freq
+            "1500000000.0\n",  # stop_freq
+            "201\n",  # sweep_points
+            "1\n",  # averaging enabled
+            "4\n",  # averaging count
         ]
 
         params = vna.get_current_parameters()
