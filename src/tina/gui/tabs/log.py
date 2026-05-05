@@ -33,5 +33,5 @@ def compose_log_tab() -> ComposeResult:
             )
 
     log_area = RichLog(id="log_content", markup=True, highlight=False, wrap=False)
-    log_area.border_title = "Log  [@click='app.copy_log'][on $primary] ⎘ [/][/]"
+    log_area.border_title = "Log  [@click='app.copy_log'][#121212 on $primary] ⎘ [/][/]"
     yield log_area

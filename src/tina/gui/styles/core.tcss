@@ -23,7 +23,7 @@ TabbedContent {
 .panel,
 #log_content {
     border: round $panel;
-    border-title-color: $accent;
+    border-title-color: $foreground;
     border-title-style: bold;
     padding: 0 1;
     margin-bottom: 1;

@@ -124,7 +124,7 @@ def compose_setup_tab(app) -> ComposeResult:
         # Output Settings
         with Container(classes="panel") as panel:
             panel.border_title = (
-                "Output [@click='app.show_output_help'][on $primary] ? [/]"
+                "Output [@click='app.show_output_help'][#121212 on $primary] ? [/]"
             )
 
             with Horizontal(classes="param-row"):
