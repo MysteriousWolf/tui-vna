@@ -40,6 +40,11 @@ Thumbs.db
 # Measurement data
 measurement/
 
+# Local orchestration artifacts
+/.sisyphus/
+/scripts/extrema_outputs/
+/scripts/extrema_tune_outputs/
+
 # Temporary plot files
 /tmp/
 
