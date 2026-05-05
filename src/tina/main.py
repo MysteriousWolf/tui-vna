@@ -3332,7 +3332,7 @@ class VNAApp(App):
                     )
                     return
 
-            else:
+            elif save_back_payload is None:
                 self.notify(
                     "No original file available to save",
                     severity="error",
@@ -3793,7 +3793,9 @@ class VNAApp(App):
         measurement = self.last_measurement or {}
         # Use id of the actual measurement dict to detect when a new measurement
         # is loaded; freqs/sparams are derived from it so they change together.
-        measurement_id = id(measurement) if measurement is self.last_measurement else None
+        measurement_id = (
+            id(measurement) if measurement is self.last_measurement else None
+        )
         if measurement_id != self._measurement_plot_cache_measurement_id:
             self._measurement_plot_cache = {}
             self._measurement_plot_cache_measurement_id = measurement_id
