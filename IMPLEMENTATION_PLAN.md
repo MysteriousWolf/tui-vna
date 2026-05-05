@@ -578,7 +578,7 @@ This should mirror the lightweight copy affordance already used on the Log tab.
 
 ---
 
-## Functional Unit 12 — Persistent command-palette history
+## Functional Unit 12 — Persistent command-palette history ✅ Done
 
 ### Goal
 
@@ -622,7 +622,7 @@ Do not collapse these into one generic command.
 
 ---
 
-## Functional Unit 13 — Save-back workflow
+## Functional Unit 13 — Save-back workflow ✅ Done
 
 ### Goal
 

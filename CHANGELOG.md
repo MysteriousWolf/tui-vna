@@ -12,6 +12,15 @@ All notable changes to this project will be documented in this file.
 - UX: importing a measurement no longer auto-switches the active tab.
 - Removed demo/sandbox script and related .zed task entry.
 - Lint/style sweep (black + ruff fixes) and test updates.
+- Fix: save-back always reported "no file available" when a touchstone
+  path was set; bare else: in the PNG/SVG fallback chain fired even when
+  the s2p payload was already built.
+- Tool selector buttons now span full width with equal dynamic allocation
+  and a 1-char separator between buttons.
+- GUI mixin scaffolding (GUIAppTypingMixin protocol + per-concern shims).
+- Typing improvements across autocomplete, update notification, and
+  command palette components; set_class() argument order fixed.
+- Tests for config migration module.
 
 ### Completed Units
 - Units done: 1 (templating), 2 (setup output UI), 3 (CSV export)
@@ -27,7 +36,7 @@ All notable changes to this project will be documented in this file.
 ### Release Prep Checklist
 - [x] Update README requirements (note SciPy dependency)
 - [x] Document the no-tab-switch import UX in README
-- [ ] Bump version and tag release
+- [x] Bump version and tag release
 - [x] Ensure CI runs the same lint/test commands
 - [x] Add unit tests for extrema cache and SciPy/NumPy fallback
 - [ ] Verify PyInstaller binary builds (optional)
