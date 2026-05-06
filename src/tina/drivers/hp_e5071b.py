@@ -6,7 +6,7 @@ Implements VNABase interface for HP/Agilent E5071B series VNAs.
 
 import socket
 import time
-from typing import Any
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pyvisa
@@ -45,6 +45,28 @@ from .scpi_commands import (
     cmd_set_sweep_points,
     cmd_set_trigger_source,
 )
+
+
+class _VisaResourceProtocol(Protocol):
+    """Subset of VISA resource methods used by the HP driver."""
+
+    timeout: int
+
+    def close(self) -> None:
+        """Close the instrument resource."""
+        ...
+
+    def write(self, command: str) -> None:
+        """Send a SCPI command."""
+        ...
+
+    def query(self, command: str) -> str:
+        """Send a SCPI query and return the response."""
+        ...
+
+    def query_ascii_values(self, command: str) -> list[float]:
+        """Query a list of ASCII float values."""
+        ...
 
 
 class HPE5071B(VNABase):
@@ -153,7 +175,7 @@ class HPE5071B(VNABase):
             self.inst.timeout = COMMAND_TIMEOUT_MS
 
             report("Verifying connection...", 80)
-            self._idn = self.inst.query(CMD_IDN).strip()
+            self._idn = cast(_VisaResourceProtocol, self.inst).query(CMD_IDN).strip()
 
             report("Connected", 100)
             self._connected = True
@@ -192,17 +214,17 @@ class HPE5071B(VNABase):
     def _send_command(self, command: str) -> None:
         """Send SCPI command."""
         self._ensure_connected()
-        self.inst.write(command)
+        cast(_VisaResourceProtocol, self.inst).write(command)
 
     def _query(self, command: str) -> str:
         """Send SCPI query and return response."""
         self._ensure_connected()
-        return self.inst.query(command)
+        return cast(_VisaResourceProtocol, self.inst).query(command)
 
     def _query_ascii_values(self, command: str) -> list[float]:
         """Query ASCII values."""
         self._ensure_connected()
-        return self.inst.query_ascii_values(command)
+        return cast(_VisaResourceProtocol, self.inst).query_ascii_values(command)
 
     def get_current_parameters(self) -> dict[str, Any]:
         """
@@ -464,6 +486,8 @@ class HPE5071B(VNABase):
 
         # Trigger new measurement
         self._send_command(CMD_INIT)
+        time.sleep(0.1)
+        self._send_command("*TRG")
         time.sleep(0.1)
 
         # Wait for sweep completion

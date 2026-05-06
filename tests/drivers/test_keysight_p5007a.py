@@ -417,15 +417,13 @@ class TestKeysightP5007ADataAcquisition:
 
     @pytest.mark.unit
     def test_get_sparam_data_odd_length(self, connected_vna):
-        """Test S-parameter data trims odd-length response."""
+        """Odd-length SDAT responses should raise a clear parse error."""
         vna, mock_inst = connected_vna
-        # Odd number of values - should trim last one
         mock_inst.query_ascii_values.return_value = [0.5, -0.5, 0.7]
         mock_inst.query.return_value = "1\n"
 
-        mag, phase = vna.get_sparam_data(1)
-        assert len(mag) == 1
-        assert len(phase) == 1
+        with pytest.raises(ValueError, match="odd number of values"):
+            vna.get_sparam_data(1)
 
     @pytest.mark.unit
     def test_get_all_sparameters(self, connected_vna):

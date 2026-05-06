@@ -7,7 +7,9 @@ Uses helper to consume progress messages properly.
 
 import queue
 import time
+from inspect import getsource
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -26,6 +28,7 @@ from src.tina.worker import (
     ParamsResult,
     _render_tools_plot_snapshot,
 )
+from tests.conftest import consume_worker_messages_until
 
 
 class TestWorkerBasics:
@@ -116,7 +119,7 @@ class TestWorkerCommunication:
         worker.send_command(MessageType.DISCONNECT)
 
         # Wait for response
-        msg = pytest.consume_worker_messages_until(
+        msg = consume_worker_messages_until(
             worker, MessageType.DISCONNECTED, timeout=1.0
         )
         assert msg is not None
@@ -157,9 +160,7 @@ class TestWorkerConnection:
         worker.send_command(MessageType.CONNECT, vna_config)
 
         # Consume messages until CONNECTED
-        msg = pytest.consume_worker_messages_until(
-            worker, MessageType.CONNECTED, timeout=2.0
-        )
+        msg = consume_worker_messages_until(worker, MessageType.CONNECTED, timeout=2.0)
 
         try:
             assert msg is not None, "Worker did not respond to connect"
@@ -178,9 +179,7 @@ class TestWorkerConnection:
         worker.send_command(MessageType.CONNECT, config)
 
         # Should get error response (consume progress first)
-        msg = pytest.consume_worker_messages_until(
-            worker, MessageType.ERROR, timeout=2.0
-        )
+        msg = consume_worker_messages_until(worker, MessageType.ERROR, timeout=2.0)
         assert msg is not None
         assert msg.type == MessageType.ERROR
         assert msg.error is not None
@@ -211,13 +210,13 @@ class TestWorkerConnection:
 
         # Connect first
         worker.send_command(MessageType.CONNECT, vna_config)
-        msg = pytest.consume_worker_messages_until(worker, MessageType.CONNECTED)
+        msg = consume_worker_messages_until(worker, MessageType.CONNECTED)
         assert msg is not None
 
         # Now disconnect
         worker.send_command(MessageType.DISCONNECT)
 
-        msg = pytest.consume_worker_messages_until(worker, MessageType.DISCONNECTED)
+        msg = consume_worker_messages_until(worker, MessageType.DISCONNECTED)
         assert msg is not None
         assert msg.type == MessageType.DISCONNECTED
 
@@ -248,13 +247,13 @@ class TestWorkerMeasurement:
 
         # Connect
         worker.send_command(MessageType.CONNECT, vna_config)
-        msg = pytest.consume_worker_messages_until(worker, MessageType.CONNECTED)
+        msg = consume_worker_messages_until(worker, MessageType.CONNECTED)
         assert msg is not None
 
         # Read params
         worker.send_command(MessageType.READ_PARAMS)
 
-        msg = pytest.consume_worker_messages_until(worker, MessageType.PARAMS_READ)
+        msg = consume_worker_messages_until(worker, MessageType.PARAMS_READ)
         assert msg is not None
         assert msg.type == MessageType.PARAMS_READ
         assert isinstance(msg.data, ParamsResult)
@@ -270,12 +269,44 @@ class TestWorkerMeasurement:
         # Try to measure without connecting
         worker.send_command(MessageType.MEASURE, vna_config)
 
-        msg = pytest.consume_worker_messages_until(worker, MessageType.ERROR)
+        msg = consume_worker_messages_until(worker, MessageType.ERROR)
         assert msg is not None
         assert msg.type == MessageType.ERROR
+        assert msg.error is not None
         assert "Not connected" in msg.error
 
         worker.stop()
+
+    @pytest.mark.unit
+    def test_measure_restores_trigger_state_when_readout_fails(self, vna_config):
+        """Trigger state should be restored even when readback raises an error."""
+        worker = MeasurementWorker()
+        worker._vna = MagicMock()
+        worker._vna.is_connected.return_value = True
+        worker._vna.save_trigger_state.return_value = ("INT", True)
+        worker._vna.get_frequency_axis.side_effect = RuntimeError("readout failed")
+
+        worker._handle_measure(vna_config)
+
+        worker._vna.restore_trigger_state.assert_called_once_with(("INT", True))
+        error_message = consume_worker_messages_until(
+            worker, MessageType.ERROR, timeout=0.01
+        )
+        assert error_message is not None
+        assert error_message.type == MessageType.ERROR
+        assert "Measurement failed: readout failed" == error_message.error
+        assert worker._measuring is False
+
+    @pytest.mark.unit
+    def test_worker_sets_agg_backend_before_pyplot_import(self):
+        """worker.py should select the Agg backend before importing pyplot."""
+        source = getsource(
+            __import__("src.tina.worker", fromlist=["MeasurementWorker"])
+        )
+
+        assert source.index('matplotlib.use("Agg")') < source.index(
+            "from matplotlib import pyplot as plt"
+        )
 
 
 class TestWorkerProgressUpdates:
@@ -380,7 +411,7 @@ class TestWorkerProgressUpdates:
             assert result.notes == "worker notes"
             assert result.paths["touchstone_path"] == str(Path(export_path).resolve())
             assert result.measurement["restore_measurement"] is True
-            restored_freqs = result.measurement["frequencies"]
+            restored_freqs = cast(np.ndarray, result.measurement["frequencies"])
             assert restored_freqs is not None
             assert len(restored_freqs) == 3
             restored_sparams = result.measurement["sparams"]
@@ -421,7 +452,7 @@ class TestWorkerProgressUpdates:
             ImportRequest(file_path=str(export_path), restore_measurement=True),
         )
 
-        completed = pytest.consume_worker_messages_until(
+        completed = consume_worker_messages_until(
             worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
         )
         try:
@@ -431,7 +462,7 @@ class TestWorkerProgressUpdates:
             assert isinstance(result, ImportResult)
             assert result.notes == "png notes"
             assert result.paths["png_path"] == str(export_path.resolve())
-            restored_freqs = result.measurement["frequencies"]
+            restored_freqs = cast(np.ndarray, result.measurement["frequencies"])
             assert restored_freqs is not None
             assert len(restored_freqs) == 2
             restored_sparams = result.measurement["sparams"]
@@ -463,7 +494,7 @@ class TestWorkerProgressUpdates:
             ImportRequest(file_path=str(export_path), restore_measurement=False),
         )
 
-        completed = pytest.consume_worker_messages_until(
+        completed = consume_worker_messages_until(
             worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
         )
         try:
@@ -494,9 +525,7 @@ class TestWorkerErrorHandling:
         worker.send_command(MessageType.CONNECT, None)  # Invalid config
 
         # Should get an error response
-        msg = pytest.consume_worker_messages_until(
-            worker, MessageType.ERROR, timeout=2.0
-        )
+        msg = consume_worker_messages_until(worker, MessageType.ERROR, timeout=2.0)
         assert msg is not None
         assert msg.type == MessageType.ERROR
 

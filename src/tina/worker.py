@@ -12,13 +12,22 @@ import traceback
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import matplotlib
 import numpy as np
+
+matplotlib.use("Agg")
+
 from matplotlib import pyplot as plt
 
-from .drivers import VNABase, VNAConfig, detect_vna_driver
+from .drivers import (
+    StatusCapableDriver,
+    TriggerStateDriver,
+    VNABase,
+    VNAConfig,
+    detect_vna_driver,
+)
 from .export import (
     CsvExporter,
     build_image_export_metadata,
@@ -37,8 +46,6 @@ from .gui.plotting import (
 from .tools import DistortionTool, MeasureTool
 from .utils import LoggingVNAWrapper
 from .utils.touchstone import TouchstoneExporter
-
-matplotlib.use("Agg")
 
 
 class MessageType(Enum):
@@ -206,7 +213,6 @@ def _render_plot_image_snapshot(
             colors=colors,
             y_min=y_min,
             y_max=y_max,
-            plot_data=plot_data,
         )
 
 
@@ -694,14 +700,15 @@ class MeasurementWorker:
             # through the wrapper automatically via __getattr__.
             # _vna_wrapper is a typed alias to the same object for accessing
             # wrapper-specific attributes (debug, log_tag) without a cast.
-            self._vna = LoggingVNAWrapper(
+            wrapped_vna = LoggingVNAWrapper(
                 self._vna, self._log, on_scpi_error=self._on_scpi_error
             )
-            self._vna_wrapper = self._vna
+            self._vna = cast(VNABase, wrapped_vna)
+            self._vna_wrapper = wrapped_vna
             self._vna_wrapper.debug = self._debug_scpi
 
             # Clear the instrument's error queue (logged via wrapper)
-            self._vna._send_command("*CLS")
+            self._vna_wrapper._send_command("*CLS")
 
             # Log the IDN (already queried during connection)
             self._log("*IDN?", "tx")
@@ -884,7 +891,7 @@ class MeasurementWorker:
             self._send_progress("Reading VNA parameters...", 50)
 
             # Get all parameters from driver
-            params = self._vna.get_current_parameters()
+            params = cast(StatusCapableDriver, self._vna).get_current_parameters()
 
             result = ParamsResult(
                 start_freq=params.get("start_freq_hz", 0.0),
@@ -917,7 +924,7 @@ class MeasurementWorker:
         try:
             if self._vna_wrapper is not None:
                 self._vna_wrapper.log_tag = "poll"
-            raw = self._vna.get_status()
+            raw = cast(StatusCapableDriver, self._vna).get_status()
         except Exception as e:
             self._log(f"Status poll failed: {e}", "debug")
         finally:
@@ -1322,6 +1329,8 @@ class MeasurementWorker:
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""
         self._measuring = True
+        trigger_state: tuple[str, bool] | None = None
+        measurement_error: Exception | None = None
         try:
             if not self._vna or not self._vna.is_connected():
                 raise RuntimeError("Not connected to VNA")
@@ -1344,7 +1353,8 @@ class MeasurementWorker:
 
             # Save trigger state before sweep
             self._send_progress("Triggering sweep...", 30)
-            trigger_state = self._vna.save_trigger_state()
+            trigger_driver = cast(TriggerStateDriver, self._vna)
+            trigger_state = trigger_driver.save_trigger_state()
 
             # Trigger sweep (doesn't restore state)
             self._vna.trigger_sweep()
@@ -1361,9 +1371,6 @@ class MeasurementWorker:
                 self._send_progress(f"Reading {name}...", progress)
                 sparams[name] = self._vna.get_sparam_data(idx)
 
-            # Restore trigger state AFTER reading all data
-            self._vna.restore_trigger_state(trigger_state)
-
             result = MeasurementResult(frequencies=freqs, sparams=sparams)
 
             self._send_progress("Measurement complete", 100)
@@ -1374,10 +1381,31 @@ class MeasurementWorker:
             self._send_response(MessageType.MEASUREMENT_COMPLETE, data=result)
 
         except Exception as e:
+            measurement_error = e
             self._send_response(
                 MessageType.ERROR, error=f"Measurement failed: {str(e)}"
             )
         finally:
+            if trigger_state is not None:
+                try:
+                    cast(TriggerStateDriver, self._vna).restore_trigger_state(
+                        trigger_state
+                    )
+                except Exception as restore_error:
+                    if measurement_error is None:
+                        self._send_response(
+                            MessageType.ERROR,
+                            error=(
+                                "Measurement failed: "
+                                f"failed to restore trigger state: {restore_error}"
+                            ),
+                        )
+                    else:
+                        self._log(
+                            "Failed to restore trigger state after measurement error: "
+                            f"{restore_error}",
+                            "debug",
+                        )
             self._measuring = False
 
     def _handle_shutdown(self) -> None:

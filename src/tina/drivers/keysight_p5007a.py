@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import socket
 import time
-from typing import Any
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pyvisa
@@ -22,6 +22,28 @@ from ..config.constants import (
     VXI11_PORTMAPPER_PORT,
 )
 from .base import VNABase, VNAConfig
+
+
+class _VisaResourceProtocol(Protocol):
+    """Subset of VISA resource methods used by the Keysight driver."""
+
+    timeout: int
+
+    def close(self) -> None:
+        """Close the instrument resource."""
+        ...
+
+    def write(self, command: str) -> None:
+        """Send a SCPI command."""
+        ...
+
+    def query(self, command: str) -> str:
+        """Send a SCPI query and return the response."""
+        ...
+
+    def query_ascii_values(self, command: str) -> list[float]:
+        """Query a list of ASCII float values."""
+        ...
 
 
 class KeysightP5007A(VNABase):
@@ -124,17 +146,17 @@ class KeysightP5007A(VNABase):
     def _send_command(self, command: str) -> None:
         """Send a SCPI command to the instrument."""
         self._ensure_connected()
-        self.inst.write(command)
+        cast(_VisaResourceProtocol, self.inst).write(command)
 
     def _query(self, command: str) -> str:
         """Send a SCPI query and return the raw response."""
         self._ensure_connected()
-        return self.inst.query(command)
+        return cast(_VisaResourceProtocol, self.inst).query(command)
 
     def _query_ascii_values(self, command: str) -> list[float]:
         """Query a comma-separated numeric response as floats."""
         self._ensure_connected()
-        return self.inst.query_ascii_values(command)
+        return cast(_VisaResourceProtocol, self.inst).query_ascii_values(command)
 
     def _query_first_successful(self, *commands: str) -> str:
         """Try several SCPI queries and return the first successful response."""
@@ -371,7 +393,10 @@ class KeysightP5007A(VNABase):
 
         data = self._query_ascii_values("CALC1:DATA:SDAT?")
         if len(data) % 2 != 0:
-            data = data[:-1]
+            raise ValueError(
+                "CALC1:DATA:SDAT? returned an odd number of values; expected "
+                "real/imaginary pairs"
+            )
 
         real = np.array(data[0::2], dtype=float)
         imag = np.array(data[1::2], dtype=float)

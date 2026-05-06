@@ -30,6 +30,7 @@ def create_vna_config(settings: AppSettings) -> VNAConfig:
 
 def run_cli_measurement(args: argparse.Namespace) -> int:
     """Run measurement in CLI mode."""
+    vna = None
     try:
         migration_msg = migrate_legacy_config()
         if migration_msg:
@@ -60,13 +61,14 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         vna.connect(progress_callback)
         print(f"Connected: {vna.idn}")
 
-        # Perform measurement
-        print("Starting measurement...")
-        frequencies, s_parameters = vna.perform_measurement()
-        print(f"Measurement complete: {len(frequencies)} points")
-
-        # Disconnect
-        vna.disconnect()
+        try:
+            # Perform measurement
+            print("Starting measurement...")
+            frequencies, s_parameters = vna.perform_measurement()
+            print(f"Measurement complete: {len(frequencies)} points")
+        finally:
+            vna.disconnect()
+            vna = None
 
         # Prepare export parameters
         export_params = {}
@@ -113,3 +115,9 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error: {e}")
         return 1
+    finally:
+        if vna is not None:
+            try:
+                vna.disconnect()
+            except Exception:
+                pass
