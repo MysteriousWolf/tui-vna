@@ -62,6 +62,7 @@ addopts = [
     "--tb=short",
     "--cov=src/tina",
     "--cov-report=term-missing",
+    "--cov-report=xml:coverage.xml",
     "--cov-report=html",
 ]
 markers = [

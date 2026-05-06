@@ -13,9 +13,9 @@ echo -e "${GREEN}=== Running tina test suite ===${NC}\n"
 
 # Parse command line arguments
 COVERAGE=true
-VERBOSE=""
-MARKERS=""
-SPECIFIC_TEST=""
+VERBOSE_ARGS=()
+MARKER_ARGS=()
+SPECIFIC_TEST_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -24,60 +24,60 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -v|--verbose)
-            VERBOSE="-v"
+            VERBOSE_ARGS=(-v)
             shift
             ;;
         -vv)
-            VERBOSE="-vv -s"
+            VERBOSE_ARGS=(-vv -s)
             shift
             ;;
         --unit)
-            MARKERS="-m unit"
+            MARKER_ARGS=(-m unit)
             shift
             ;;
         --integration)
-            MARKERS="-m integration"
+            MARKER_ARGS=(-m integration)
             shift
             ;;
         --slow)
-            MARKERS="-m slow"
+            MARKER_ARGS=(-m slow)
             shift
             ;;
         --fast)
-            MARKERS="-m 'not slow'"
+            MARKER_ARGS=(-m 'not slow')
             shift
             ;;
         *)
-            SPECIFIC_TEST="$1"
+            SPECIFIC_TEST_ARGS+=("$1")
             shift
             ;;
     esac
 done
 
 # Build pytest command
-CMD="uv run pytest"
+CMD=(uv run pytest)
 
 if [ "$COVERAGE" = true ]; then
-    CMD="$CMD --cov=src/tina --cov-report=term-missing --cov-report=html --cov-fail-under=10"
+    CMD+=(--cov=src/tina --cov-report=term-missing --cov-report=html --cov-fail-under=10)
 else
-    CMD="$CMD --no-cov"
+    CMD+=(--no-cov)
 fi
 
-if [ -n "$VERBOSE" ]; then
-    CMD="$CMD $VERBOSE"
+if [ ${#VERBOSE_ARGS[@]} -gt 0 ]; then
+    CMD+=("${VERBOSE_ARGS[@]}")
 fi
 
-if [ -n "$MARKERS" ]; then
-    CMD="$CMD $MARKERS"
+if [ ${#MARKER_ARGS[@]} -gt 0 ]; then
+    CMD+=("${MARKER_ARGS[@]}")
 fi
 
-if [ -n "$SPECIFIC_TEST" ]; then
-    CMD="$CMD $SPECIFIC_TEST"
+if [ ${#SPECIFIC_TEST_ARGS[@]} -gt 0 ]; then
+    CMD+=("${SPECIFIC_TEST_ARGS[@]}")
 fi
 
 # Run tests
-echo -e "${YELLOW}Command: $CMD${NC}\n"
-$CMD
+echo -e "${YELLOW}Command: $(printf '%q ' "${CMD[@]}")${NC}\n"
+"${CMD[@]}"
 
 # Show coverage report location
 if [ "$COVERAGE" = true ]; then
