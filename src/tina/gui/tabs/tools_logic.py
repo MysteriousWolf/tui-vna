@@ -529,6 +529,137 @@ def _get_cached_distortion_result(
     return result
 
 
+def _format_copyable_cell(raw_value: str, width: int) -> str:
+    """Return a clickable Rich cell that copies the raw value."""
+    return f"[@click='app.copy_cell_value(\"{raw_value}\")']{raw_value:>{width}}[/]"
+
+
+def _format_measure_result_table(
+    result: ToolResult,
+    *,
+    freq_unit: str,
+    multiplier: float,
+    cursor1_color: str,
+    cursor2_color: str,
+) -> str:
+    """Return the cursor tool results table without mutating UI state."""
+    labelw, valw = 8, 9
+    hdr = (
+        f"[dim]{'':>{labelw}}  "
+        f"{'Freq (' + freq_unit + ')':>{valw}}  "
+        f"{result.unit_label:>{valw}}[/dim]"
+    )
+    sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
+    lines = [hdr, sep]
+
+    if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
+        f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
+        v1_raw = f"{result.cursor1_value:.4f}"
+        lines.append(
+            f"[bold {cursor1_color}]{'Cursor 1':>{labelw}}[/]  "
+            f"{_format_copyable_cell(f1_raw, valw)}  "
+            f"{_format_copyable_cell(v1_raw, valw)}"
+        )
+
+    if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
+        f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
+        v2_raw = f"{result.cursor2_value:.4f}"
+        lines.append(
+            f"[bold {cursor2_color}]{'Cursor 2':>{labelw}}[/]  "
+            f"{_format_copyable_cell(f2_raw, valw)}  "
+            f"{_format_copyable_cell(v2_raw, valw)}"
+        )
+
+    if result.delta_value is not None:
+        if result.cursor1_freq_hz is not None and result.cursor2_freq_hz is not None:
+            fd_val = abs(float(result.cursor2_freq_hz) - float(result.cursor1_freq_hz))
+            fd_raw = f"{fd_val / multiplier:.4f}"
+        else:
+            fd_raw = ""
+        dv_raw = f"{result.delta_value:.4f}"
+        lines.append(
+            f"[dim]{'Δ':>{labelw}}[/dim]  "
+            f"{_format_copyable_cell(fd_raw, valw)}  "
+            f"{_format_copyable_cell(dv_raw, valw)}"
+        )
+
+    return "\n".join(lines)
+
+
+def _format_distortion_result_table(
+    result: ToolResult,
+    *,
+    overlay_hex: list[str],
+    comp_enabled: list[bool],
+) -> str:
+    """Return the distortion tool results table without mutating UI state."""
+    if not result.extra:
+        return ""
+
+    coeffs = result.extra["coeffs"]
+    delta_y = result.extra["delta_y"]
+    unit = result.unit_label
+    nw, namew, valw = 1, 10, 9
+    hdr = (
+        f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
+        f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
+    )
+    sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
+    lines = [hdr, sep]
+
+    for n, name in enumerate(DISTORTION_COMPONENT_NAMES):
+        c_raw = f"{coeffs[n]:.4f}"
+        color = overlay_hex[n] if comp_enabled[n] else None
+        name_cell = (
+            f"[bold {color}]{name:<{namew}}[/]"
+            if color
+            else f"[dim]{name:<{namew}}[/dim]"
+        )
+        c_cell = _format_copyable_cell(c_raw, valw)
+        if n == 0:
+            dy_cell = f"{'—':>{valw}}"
+        else:
+            dy_raw = f"{delta_y[n]:.4f}"
+            dy_cell = _format_copyable_cell(dy_raw, valw)
+        lines.append(f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}")
+
+    return "\n".join(lines)
+
+
+def _render_tool_result_markup(
+    result: ToolResult,
+    *,
+    freq_unit: str,
+    multiplier: float,
+    cursor1_color: str,
+    cursor2_color: str,
+    overlay_hex: list[str],
+    comp_enabled: list[bool],
+) -> str:
+    """Return the rendered Tools results markup for a precomputed tool result."""
+    if result.tool_name == "measure":
+        if result.cursor1_value is None and result.cursor2_value is None:
+            return "[dim]Enter cursor frequencies above.[/dim]"
+        return _format_measure_result_table(
+            result,
+            freq_unit=freq_unit,
+            multiplier=multiplier,
+            cursor1_color=cursor1_color,
+            cursor2_color=cursor2_color,
+        )
+
+    if result.tool_name == "distortion":
+        if not result.extra:
+            return "[dim]Enter both cursor frequencies above.[/dim]"
+        return _format_distortion_result_table(
+            result,
+            overlay_hex=overlay_hex,
+            comp_enabled=comp_enabled,
+        )
+
+    return "[dim]No tool active.[/dim]"
+
+
 def handle_frequency_extrema_navigate(
     app,
     cursor_index: int,
@@ -932,57 +1063,17 @@ def run_tools_computation(app) -> None:
             return
 
         plot_colors = get_plot_colors(app.get_css_variables())
-        c1col = plot_colors["cursor1"]
-        c2col = plot_colors["cursor2"]
-        labelw, valw = 8, 9
-        hdr = (
-            f"[dim]{'':>{labelw}}  "
-            f"{'Freq (' + freq_unit + ')':>{valw}}  "
-            f"{result.unit_label:>{valw}}[/dim]"
+        display.update(
+            _render_tool_result_markup(
+                result,
+                freq_unit=freq_unit,
+                multiplier=multiplier,
+                cursor1_color=plot_colors["cursor1"],
+                cursor2_color=plot_colors["cursor2"],
+                overlay_hex=plot_colors["distortion_overlays"],
+                comp_enabled=get_distortion_comp_enabled(app),
+            )
         )
-        sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
-        lines = [hdr, sep]
-
-        if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
-            f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
-            v1_raw = f"{result.cursor1_value:.4f}"
-            lines.append(
-                f"[bold {c1col}]{'Cursor 1':>{labelw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{f1_raw}\")']{f1_raw:>{valw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{v1_raw}\")']{v1_raw:>{valw}}[/]"
-            )
-
-        if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
-            f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
-            v2_raw = f"{result.cursor2_value:.4f}"
-            lines.append(
-                f"[bold {c2col}]{'Cursor 2':>{labelw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{f2_raw}\")']{f2_raw:>{valw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{v2_raw}\")']{v2_raw:>{valw}}[/]"
-            )
-
-        if result.delta_value is not None:
-            # Guard against Optional[float] arithmetic (static type checkers complain
-            # about subtracting possibly-None values). Only compute the delta string
-            # when both cursor freqs are present; otherwise emit an empty display.
-            if (
-                result.cursor1_freq_hz is not None
-                and result.cursor2_freq_hz is not None
-            ):
-                fd_val = abs(
-                    float(result.cursor2_freq_hz) - float(result.cursor1_freq_hz)
-                )
-                fd_raw = f"{fd_val / multiplier:.4f}"
-            else:
-                fd_raw = ""
-            dv_raw = f"{result.delta_value:.4f}"
-            lines.append(
-                f"[dim]{'Δ':>{labelw}}[/dim]  "
-                f"[@click='app.copy_cell_value(\"{fd_raw}\")']{fd_raw:>{valw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{dv_raw}\")']{dv_raw:>{valw}}[/]"
-            )
-
-        display.update("\n".join(lines))
         return
 
     if active == "distortion":
@@ -995,43 +1086,18 @@ def run_tools_computation(app) -> None:
             app._tools_cursor1_hz,
             app._tools_cursor2_hz,
         )
-        if not result.extra:
-            display.update("[dim]Enter both cursor frequencies above.[/dim]")
-            return
-
-        ex = result.extra
-        coeffs = ex["coeffs"]
-        delta_y = ex["delta_y"]
-        unit = result.unit_label
-        overlay_hex = get_plot_colors(app.get_css_variables())["distortion_overlays"]
-        comp_enabled = get_distortion_comp_enabled(app)
-        nw, namew, valw = 1, 10, 9
-        hdr = (
-            f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
-            f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
-        )
-        sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
-        lines = [hdr, sep]
-
-        for n, name in enumerate(DISTORTION_COMPONENT_NAMES):
-            c_raw = f"{coeffs[n]:.4f}"
-            color = overlay_hex[n] if comp_enabled[n] else None
-            name_cell = (
-                f"[bold {color}]{name:<{namew}}[/]"
-                if color
-                else f"[dim]{name:<{namew}}[/dim]"
+        plot_colors = get_plot_colors(app.get_css_variables())
+        display.update(
+            _render_tool_result_markup(
+                result,
+                freq_unit=freq_unit,
+                multiplier=multiplier,
+                cursor1_color=plot_colors["cursor1"],
+                cursor2_color=plot_colors["cursor2"],
+                overlay_hex=plot_colors["distortion_overlays"],
+                comp_enabled=get_distortion_comp_enabled(app),
             )
-            c_cell = f"[@click='app.copy_cell_value(\"{c_raw}\")']{c_raw:>{valw}}[/]"
-            if n == 0:
-                dy_cell = f"{'—':>{valw}}"
-            else:
-                dy_raw = f"{delta_y[n]:.4f}"
-                dy_cell = (
-                    f"[@click='app.copy_cell_value(\"{dy_raw}\")']{dy_raw:>{valw}}[/]"
-                )
-            lines.append(f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}")
-
-        display.update("\n".join(lines))
+        )
         return
 
     display.update("[dim]No tool active.[/dim]")
@@ -1051,109 +1117,23 @@ def render_tools_computation_result(app, result: ToolResult | dict | None) -> No
     if isinstance(result, dict):
         result = ToolResult(**result)
 
-    if result.tool_name == "measure":
-        if result.cursor1_value is None and result.cursor2_value is None:
-            display.update("[dim]Enter cursor frequencies above.[/dim]")
-            return
-
-        freq_unit = (
-            app.last_measurement.get("freq_unit", "MHz")
-            if app.last_measurement
-            else "MHz"
+    freq_unit = (
+        app.last_measurement.get("freq_unit", "MHz") if app.last_measurement else "MHz"
+    )
+    unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+    multiplier = unit_multipliers.get(freq_unit, 1e6)
+    plot_colors = get_plot_colors(app.get_css_variables())
+    display.update(
+        _render_tool_result_markup(
+            result,
+            freq_unit=freq_unit,
+            multiplier=multiplier,
+            cursor1_color=plot_colors["cursor1"],
+            cursor2_color=plot_colors["cursor2"],
+            overlay_hex=plot_colors["distortion_overlays"],
+            comp_enabled=get_distortion_comp_enabled(app),
         )
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-        plot_colors = get_plot_colors(app.get_css_variables())
-        c1col = plot_colors["cursor1"]
-        c2col = plot_colors["cursor2"]
-        labelw, valw = 8, 9
-        hdr = (
-            f"[dim]{'':>{labelw}}  "
-            f"{'Freq (' + freq_unit + ')':>{valw}}  "
-            f"{result.unit_label:>{valw}}[/dim]"
-        )
-        sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
-        lines = [hdr, sep]
-
-        if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
-            f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
-            v1_raw = f"{result.cursor1_value:.4f}"
-            lines.append(
-                f"[bold {c1col}]{'Cursor 1':>{labelw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{f1_raw}\")']{f1_raw:>{valw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{v1_raw}\")']{v1_raw:>{valw}}[/]"
-            )
-
-        if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
-            f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
-            v2_raw = f"{result.cursor2_value:.4f}"
-            lines.append(
-                f"[bold {c2col}]{'Cursor 2':>{labelw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{f2_raw}\")']{f2_raw:>{valw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{v2_raw}\")']{v2_raw:>{valw}}[/]"
-            )
-
-        if result.delta_value is not None:
-            if (
-                result.cursor1_freq_hz is not None
-                and result.cursor2_freq_hz is not None
-            ):
-                fd_val = abs(
-                    float(result.cursor2_freq_hz) - float(result.cursor1_freq_hz)
-                )
-                fd_raw = f"{fd_val / multiplier:.4f}"
-            else:
-                fd_raw = ""
-            dv_raw = f"{result.delta_value:.4f}"
-            lines.append(
-                f"[dim]{'Δ':>{labelw}}[/dim]  "
-                f"[@click='app.copy_cell_value(\"{fd_raw}\")']{fd_raw:>{valw}}[/]  "
-                f"[@click='app.copy_cell_value(\"{dv_raw}\")']{dv_raw:>{valw}}[/]"
-            )
-
-        display.update("\n".join(lines))
-        return
-
-    if result.tool_name == "distortion":
-        if not result.extra:
-            display.update("[dim]Enter both cursor frequencies above.[/dim]")
-            return
-
-        coeffs = result.extra["coeffs"]
-        delta_y = result.extra["delta_y"]
-        unit = result.unit_label
-        overlay_hex = get_plot_colors(app.get_css_variables())["distortion_overlays"]
-        comp_enabled = get_distortion_comp_enabled(app)
-        nw, namew, valw = 1, 10, 9
-        hdr = (
-            f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
-            f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
-        )
-        sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
-        lines = [hdr, sep]
-
-        for n, name in enumerate(DISTORTION_COMPONENT_NAMES):
-            c_raw = f"{coeffs[n]:.4f}"
-            color = overlay_hex[n] if comp_enabled[n] else None
-            name_cell = (
-                f"[bold {color}]{name:<{namew}}[/]"
-                if color
-                else f"[dim]{name:<{namew}}[/dim]"
-            )
-            c_cell = f"[@click='app.copy_cell_value(\"{c_raw}\")']{c_raw:>{valw}}[/]"
-            if n == 0:
-                dy_cell = f"{'—':>{valw}}"
-            else:
-                dy_raw = f"{delta_y[n]:.4f}"
-                dy_cell = (
-                    f"[@click='app.copy_cell_value(\"{dy_raw}\")']{dy_raw:>{valw}}[/]"
-                )
-            lines.append(f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}")
-
-        display.update("\n".join(lines))
-        return
-
-    display.update("[dim]No tool active.[/dim]")
+    )
 
 
 def handle_tool_measure_pressed(app) -> None:
