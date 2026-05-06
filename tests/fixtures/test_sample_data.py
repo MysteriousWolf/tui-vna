@@ -98,6 +98,22 @@ class TestSampleData:
         assert steep_mag[-1] < mild_mag[-1]
 
     @pytest.mark.unit
+    def test_logarithmic_sweep_generates_geometrically_spaced_frequencies(self):
+        freqs = sample_data.generate_sample_frequencies(
+            points=11,
+            start_hz=100e6,
+            stop_hz=1000e6,
+            sweep_type="logarithmic",
+        )
+
+        # Verify frequency points are monotonically increasing
+        assert np.all(np.diff(freqs) > 0)
+
+        # Verify geometric progression (log spacing)
+        ratios = freqs[1:] / freqs[:-1]
+        np.testing.assert_allclose(ratios, ratios[0], rtol=1e-10)
+
+    @pytest.mark.unit
     def test_termination_helpers_accept_shared_frequency_axis(self):
         """Termination fixtures should size outputs from a provided frequency axis."""
         freqs = sample_data.generate_sample_frequencies(points=17)

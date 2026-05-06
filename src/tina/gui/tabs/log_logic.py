@@ -75,7 +75,10 @@ def should_show_log(app, level: str) -> bool:
 
 def refresh_log_display(app) -> None:
     """Rebuild log display from stored entries using current theme colors and filters."""
-    log_content = app.query_one("#log_content", RichLog)
+    try:
+        log_content = app.query_one("#log_content", RichLog)
+    except Exception:
+        return
     log_content.clear()
     for entry in app.log_messages:
         if should_show_log(app, entry["level"]):
@@ -93,7 +96,10 @@ def log_message(app, message: str, level: str = "info") -> None:
     app.log_messages.append(log_entry)
 
     if should_show_log(app, level):
-        log_content = app.query_one("#log_content", RichLog)
+        try:
+            log_content = app.query_one("#log_content", RichLog)
+        except Exception:
+            return
         log_content.write(format_log_entry(app, log_entry))
         log_content.scroll_end(animate=False)
 

@@ -275,7 +275,10 @@ def embed_svg_metadata(
         machine_settings=metadata.machine_settings,
     )
 
-    insert_at = svg_text.find(">")
+    svg_start = svg_text.find("<svg")
+    if svg_start == -1:
+        raise ValueError("SVG file does not contain an <svg> root element")
+    insert_at = svg_text.find(">", svg_start)
     if insert_at == -1:
         raise ValueError("SVG file does not contain a valid opening <svg> tag")
 

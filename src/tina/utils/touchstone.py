@@ -164,8 +164,11 @@ class TouchstoneExporter:
 
         from io import StringIO
 
+        yaml = YAML()
+        yaml.default_flow_style = False
+        yaml.width = 4096
         buffer = StringIO()
-        _yaml.dump(payload, buffer)
+        yaml.dump(payload, buffer)
         yaml_text = buffer.getvalue().rstrip("\n")
 
         lines = [
@@ -259,7 +262,8 @@ class TouchstoneExporter:
             return None
 
         try:
-            parsed = _yaml.load(yaml_text)
+            yaml = YAML()
+            parsed = yaml.load(yaml_text)
         except Exception:
             return None
 

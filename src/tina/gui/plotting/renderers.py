@@ -201,11 +201,14 @@ def create_matplotlib_plot(
     colors: dict | None = None,
     y_min: float | None = None,
     y_max: float | None = None,
-    font_family: str = "monospace",
+    font_family: str | None = None,
     font_size: float | None = None,
 ) -> None:
     """Create a plot using matplotlib with dark theme matching terminal UI."""
-    font_family, font_size = get_terminal_font()
+    if font_family is None or font_size is None:
+        detected_family, detected_size = get_terminal_font()
+        font_family = font_family or detected_family
+        font_size = font_size or detected_size
     plt.rcParams["font.family"] = font_family
     base_size = (font_size if font_size else 10.0) / render_scale
 
@@ -313,9 +316,14 @@ def create_smith_chart(
     transparent: bool = False,
     render_scale: int = 1,
     colors: dict | None = None,
+    font_family: str | None = None,
+    font_size: float | None = None,
 ) -> None:
     """Create a Smith chart using scikit-rf with dark theme matching terminal UI."""
-    font_family, font_size = get_terminal_font()
+    if font_family is None or font_size is None:
+        detected_family, detected_size = get_terminal_font()
+        font_family = font_family or detected_family
+        font_size = font_size or detected_size
     plt.rcParams["font.family"] = font_family
     base_size = (font_size if font_size else 10.0) / render_scale
 
