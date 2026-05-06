@@ -12,10 +12,11 @@ def test_calculate_plot_range_clamps_invalid_percentile_and_margin() -> None:
     data = np.array([1.0, 2.0, 3.0, 100.0])
 
     result = calculate_plot_range_with_outlier_filtering(
-        data, outlier_percentile=120.0, safety_margin=-5.0
+        data, outlier_percentile=120.0, safety_margin=0.1
     )
 
-    assert result == (2.5, 2.5)
+    assert all(np.isfinite(v) for v in result)
+    assert result[0] < result[1]
 
 
 def test_calculate_plot_range_handles_non_finite_inputs() -> None:

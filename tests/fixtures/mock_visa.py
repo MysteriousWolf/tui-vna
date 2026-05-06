@@ -151,7 +151,8 @@ class MockVisaResource:
             elif "REAL" in cmd:
                 self._data_format = "REAL"
         elif "SENS1:AVER:STAT" in cmd or "SENS:AVER:STAT" in cmd:
-            self._averaging_enabled = any(token in cmd for token in ["ON", " 1"])
+            value = self._extract_last_value(command)
+            self._averaging_enabled = value is not None and value.upper() in {"ON", "1"}
         elif "SENS1:AVER:COUN" in cmd or "SENS:AVER:COUN" in cmd:
             value = self._extract_last_value(command)
             if value is not None:
