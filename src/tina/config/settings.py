@@ -196,6 +196,9 @@ class SettingsManager:
                     "port_history",
                     "filename_template_history",
                     "folder_template_history",
+                    "setup_restore_history",
+                    "recent_exported_measurements",
+                    "recent_imported_measurements",
                 ):
                     if isinstance(v, list):
                         filtered[k] = [str(x) for x in v if x is not None]

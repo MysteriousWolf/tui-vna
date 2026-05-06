@@ -160,7 +160,8 @@ class MockVisaResource:
                 except ValueError:
                     pass
         elif "INIT1:CONT" in cmd or "INIT:CONT" in cmd:
-            self._continuous_mode = any(token in cmd for token in ["ON", " 1"])
+            value = self._extract_last_value(command)
+            self._continuous_mode = value is not None and value.upper() in {"ON", "1"}
         elif "TRIG:SOUR" in cmd:
             value = self._extract_last_value(command)
             if value is not None:

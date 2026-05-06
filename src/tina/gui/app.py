@@ -6,10 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..main import VNAApp, main, run_gui
-else:
-    VNAApp = None
-    run_gui = None
-    main = None
 
 __all__ = ["VNAApp", "run_gui", "main"]
 
