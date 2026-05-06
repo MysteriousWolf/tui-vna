@@ -37,6 +37,8 @@ Example: template `measurement_{unknown}_{date}` → result `measurement_{unknow
 
 **Error:** invalid path characters are not allowed.
 
+These are the app's enforced validation set applied cross-platform. OS-specific rules may differ on Windows, macOS, and Linux.
+
 Examples: `< > : " | ? *`
 
 ## Examples

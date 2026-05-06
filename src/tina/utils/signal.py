@@ -57,8 +57,11 @@ def calculate_plot_range_with_outlier_filtering(
     lower_percentile = outlier_percentile
     upper_percentile = 100.0 - outlier_percentile
 
-    min_val = np.percentile(data, lower_percentile)
-    max_val = np.percentile(data, upper_percentile)
+    min_val = np.nanpercentile(data, lower_percentile)
+    max_val = np.nanpercentile(data, upper_percentile)
+
+    if not (np.isfinite(min_val) and np.isfinite(max_val)):
+        return (0.0, 1.0)
 
     data_range = max_val - min_val
     if data_range == 0:

@@ -90,8 +90,10 @@ tina --now          # CLI quick measurement
 src/tina/            # Main application package
 ├── config/          # Settings and constants
 ├── drivers/         # VNA drivers (auto-discovered!)
+├── tools/           # Tool computations (cursor, measure, distortion)
 ├── utils/           # Helper modules (colors, terminal, paths, touchstone)
 ├── gui/             # TUI resources
+├── _loader.py       # CLI loader / preload entry point
 ├── main.py          # Application entry point
 └── worker.py        # Threaded measurement worker
 scripts/             # Build configurations (PyInstaller)

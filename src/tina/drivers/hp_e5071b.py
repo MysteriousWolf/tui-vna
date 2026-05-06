@@ -519,9 +519,12 @@ class HPE5071B(VNABase):
         # Query complex data (real/imag pairs)
         data = self._query_ascii_values(CMD_GET_SDATA)
 
-        # Ensure even length
+        # Validate even length - raise on odd/truncated response
         if len(data) % 2 != 0:
-            data = data[:-1]
+            raise ValueError(
+                f"{CMD_GET_SDATA} returned an odd number of values "
+                f"({len(data)}); expected interleaved real/imaginary pairs"
+            )
 
         # Parse real and imaginary parts
         real = np.array(data[0::2])

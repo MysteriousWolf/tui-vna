@@ -28,3 +28,13 @@ def test_calculate_plot_range_handles_non_finite_inputs() -> None:
 
     assert all(np.isfinite(value) for value in result)
     assert result[0] < result[1]
+
+
+def test_calculate_plot_range_handles_nan_data() -> None:
+    """NaN values in data should be ignored and return a valid range."""
+    data = np.array([10.0, np.nan, 30.0])
+
+    result = calculate_plot_range_with_outlier_filtering(data)
+
+    assert all(np.isfinite(value) for value in result)
+    assert result[0] < result[1]

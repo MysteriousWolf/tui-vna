@@ -133,10 +133,12 @@ def build_update_screen(release_info) -> UpdateNotificationScreen:
 
 def build_welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
     """Build an update notification screen for the post-update welcome."""
+    release_url = _build_release_url(version)
     return UpdateNotificationScreen(
         title=f"Thanks for updating to v{version}!",
         body=changelog,
         button_label="Got it!",
         button_variant="success",
+        github_url=release_url,
         welcome=True,
     )
