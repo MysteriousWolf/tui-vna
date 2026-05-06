@@ -17,7 +17,7 @@ Invalid path characters show an error and block export.
 
 You can also put a direct time format inside braces:
 
-`{%Y%m%d_%H%M%S}` ` {%Y-%m-%d}` ` {%H%M}`
+`{%Y%m%d_%H%M%S}` `{%Y-%m-%d}` `{%H%M}`
 
 These use the current local time at export.
 

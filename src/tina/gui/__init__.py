@@ -6,11 +6,10 @@ from ``tina.main`` does not create a circular import back into ``tina.main``.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-VNAApp = None
-run_gui = None
-main = None
+if TYPE_CHECKING:
+    from ..main import VNAApp, main, run_gui
 
 __all__ = ["VNAApp", "run_gui", "main"]
 

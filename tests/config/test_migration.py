@@ -125,6 +125,32 @@ class TestMigrateLegacyConfig:
         # Both files corrupt, parse_failed True, _try_remove skipped
         assert result is None
 
+    def test_partial_migration_reports_preserved_legacy_directory(self, tmp_path):
+        """Corrupt update state should yield a partial migration message and keep the old dir."""
+        old_dir = tmp_path / _OLD_APP_NAME
+        old_dir.mkdir()
+        (old_dir / "settings.json").write_text('{"last_host": "192.168.1.50"}')
+        (old_dir / "update_state.json").write_text("not valid json{{{")
+
+        new_dir = tmp_path / _NEW_APP_NAME
+        new_dir.mkdir()
+
+        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+
+            def side_effect(name):
+                if name == _OLD_APP_NAME:
+                    return old_dir
+                return new_dir
+
+            mock_cfg.side_effect = side_effect
+
+            with patch("src.tina.config.settings.SettingsManager.save"):
+                result = migrate_legacy_config()
+
+        assert result is not None
+        assert result.startswith("Partially migrated settings")
+        assert old_dir.exists()
+
     def test_migration_exception_is_swallowed(self, tmp_path, monkeypatch):
         """Errors during migration must not propagate — returns None silently."""
         old_dir = tmp_path / _OLD_APP_NAME

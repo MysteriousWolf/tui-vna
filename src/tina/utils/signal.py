@@ -46,6 +46,14 @@ def calculate_plot_range_with_outlier_filtering(
     if len(data) == 0:
         return (0.0, 1.0)
 
+    if not np.isfinite(outlier_percentile):
+        outlier_percentile = 1.0
+    if not np.isfinite(safety_margin):
+        safety_margin = 0.05
+
+    outlier_percentile = float(np.clip(outlier_percentile, 0.0, 50.0))
+    safety_margin = float(np.clip(safety_margin, 0.0, 1.0))
+
     lower_percentile = outlier_percentile
     upper_percentile = 100.0 - outlier_percentile
 

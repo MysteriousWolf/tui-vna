@@ -86,7 +86,7 @@ tina --now          # CLI quick measurement
 
 ## Project Structure
 
-```
+```text
 src/tina/            # Main application package
 ├── config/          # Settings and constants
 ├── drivers/         # VNA drivers (auto-discovered!)

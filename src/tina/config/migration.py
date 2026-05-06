@@ -93,7 +93,12 @@ def migrate_legacy_config() -> str | None:
 
     if not parse_failed:
         _try_remove(old_dir)
-    return f"Migrated settings from {old_dir} to {new_dir}"
+        return f"Migrated settings from {old_dir} to {new_dir}"
+
+    return (
+        f"Partially migrated settings from {old_dir} to {new_dir}; "
+        "legacy directory was preserved"
+    )
 
 
 def _try_remove(path: Path) -> None:
