@@ -4,11 +4,13 @@ Mock VISA resources for testing without hardware.
 Provides realistic SCPI instrument simulation for comprehensive testing.
 """
 
+import re
 import time
 from typing import Any
 
 import numpy as np
 import pyvisa
+from pyvisa import constants as visa_constants
 
 
 class MockVisaResource:
@@ -70,6 +72,34 @@ class MockVisaResource:
         if self.simulate_delay:
             time.sleep(base_ms / 1000.0)
 
+    def _normalize_scpi(self, command: str) -> str:
+        """Normalize command prefixes so optional leading colons compare equally."""
+        normalized = command.strip().upper()
+        if normalized.startswith(":"):
+            return normalized[1:]
+        return normalized
+
+    def _extract_last_value(self, command: str) -> str | None:
+        """Return the final whitespace-delimited value from a SCPI command."""
+        parts = command.split()
+        if len(parts) < 2:
+            return None
+        return parts[-1].strip().strip("\"'")
+
+    def _parse_selected_parameter(self, command: str) -> int | None:
+        """Parse active parameter selection from SCPI commands."""
+        normalized = self._normalize_scpi(command)
+
+        indexed_match = re.search(r"CALC1:PAR(\d+):SEL", normalized)
+        if indexed_match:
+            return int(indexed_match.group(1))
+
+        named_match = re.search("CALC1:PAR:SEL\\s+['\"]?(S[12][12])['\"]?", normalized)
+        if named_match:
+            return {"S11": 1, "S21": 2, "S12": 3, "S22": 4}[named_match.group(1)]
+
+        return None
+
     def write(self, command: str) -> None:
         """
         Simulate writing a SCPI command.
@@ -81,77 +111,76 @@ class MockVisaResource:
             pyvisa.VisaIOError: If resource is closed
         """
         if self._closed:
-            raise pyvisa.VisaIOError(pyvisa.constants.VI_ERROR_INV_OBJECT)
+            raise pyvisa.VisaIOError(visa_constants.VI_ERROR_INV_OBJECT)
 
         self.command_history.append(command)
         self._track_call(command)
         self._simulate_delay(5)
 
-        # Parse and update instrument state
-        cmd = command.strip().upper()
+        cmd = self._normalize_scpi(command)
 
-        # Frequency commands
-        if ":SENS1:FREQ:STAR" in cmd or ":SENS:FREQ:STAR" in cmd:
-            try:
-                self._freq_start = float(command.split()[-1])
-            except (ValueError, IndexError):
-                pass
-        elif ":SENS1:FREQ:STOP" in cmd or ":SENS:FREQ:STOP" in cmd:
-            try:
-                self._freq_stop = float(command.split()[-1])
-            except (ValueError, IndexError):
-                pass
-
-        # Sweep points
-        elif ":SENS1:SWE:POIN" in cmd or ":SENS:SWE:POIN" in cmd:
-            try:
-                self._sweep_points = int(command.split()[-1])
-            except (ValueError, IndexError):
-                pass
-
-        # Sweep type
-        elif ":SENS1:SWE:TYPE" in cmd or ":SENS:SWE:TYPE" in cmd:
+        if "SENS1:FREQ:STAR" in cmd or "SENS:FREQ:STAR" in cmd:
+            value = self._extract_last_value(command)
+            if value is not None:
+                try:
+                    self._freq_start = float(value)
+                except ValueError:
+                    pass
+        elif "SENS1:FREQ:STOP" in cmd or "SENS:FREQ:STOP" in cmd:
+            value = self._extract_last_value(command)
+            if value is not None:
+                try:
+                    self._freq_stop = float(value)
+                except ValueError:
+                    pass
+        elif "SENS1:SWE:POIN" in cmd or "SENS:SWE:POIN" in cmd:
+            value = self._extract_last_value(command)
+            if value is not None:
+                try:
+                    self._sweep_points = int(value)
+                except ValueError:
+                    pass
+        elif "SENS1:SWE:TYPE" in cmd or "SENS:SWE:TYPE" in cmd:
             if "LIN" in cmd:
                 self._sweep_type = "LIN"
             elif "LOG" in cmd:
                 self._sweep_type = "LOG"
-
-        # Data format
-        elif ":FORM" in cmd:
+        elif cmd.startswith("FORM"):
             if "ASC" in cmd:
                 self._data_format = "ASC"
             elif "REAL" in cmd:
                 self._data_format = "REAL"
+        elif "SENS1:AVER:STAT" in cmd or "SENS:AVER:STAT" in cmd:
+            self._averaging_enabled = any(token in cmd for token in ["ON", " 1"])
+        elif "SENS1:AVER:COUN" in cmd or "SENS:AVER:COUN" in cmd:
+            value = self._extract_last_value(command)
+            if value is not None:
+                try:
+                    self._averaging_count = int(value)
+                except ValueError:
+                    pass
+        elif "INIT1:CONT" in cmd or "INIT:CONT" in cmd:
+            self._continuous_mode = any(token in cmd for token in ["ON", " 1"])
+        elif "TRIG:SOUR" in cmd:
+            value = self._extract_last_value(command)
+            if value is not None:
+                self._trigger_source = value.upper()
+        elif "CALC1:PAR:COUN" in cmd or "CALC:PAR:COUN" in cmd:
+            value = self._extract_last_value(command)
+            if value is not None:
+                try:
+                    self._param_count = int(value)
+                except ValueError:
+                    pass
+        else:
+            selected_param = self._parse_selected_parameter(command)
+            if selected_param is not None:
+                self._active_param = selected_param
 
-        # Averaging
-        elif ":SENS1:AVER:STAT" in cmd or ":SENS:AVER:STAT" in cmd:
-            self._averaging_enabled = any(x in cmd for x in ["ON", " 1"])
-        elif ":SENS1:AVER:COUN" in cmd or ":SENS:AVER:COUN" in cmd:
-            try:
-                self._averaging_count = int(command.split()[-1])
-            except (ValueError, IndexError):
-                pass
-
-        # Trigger/continuous mode
-        elif ":INIT1:CONT" in cmd or ":INIT:CONT" in cmd:
-            self._continuous_mode = any(x in cmd for x in ["ON", " 1"])
-        elif ":TRIG:SOUR" in cmd:
-            parts = command.split()
-            if len(parts) >= 2:
-                self._trigger_source = parts[-1].strip()
-
-        # Parameter setup
-        elif ":CALC1:PAR:COUN" in cmd or ":CALC:PAR:COUN" in cmd:
-            try:
-                self._param_count = int(command.split()[-1])
-            except (ValueError, IndexError):
-                pass
-
-        # Measurement commands
-        elif ":ABOR" in cmd:
+        if "ABOR" in cmd:
             self._simulate_delay(20)
-        elif cmd == ":INIT" or cmd == ":INIT1":
-            self._simulate_delay(100)  # Simulate sweep time
+        elif cmd in {"INIT", "INIT1"}:
+            self._simulate_delay(100)
 
     def query(self, command: str) -> str:
         """
@@ -167,59 +196,39 @@ class MockVisaResource:
             pyvisa.VisaIOError: If resource is closed
         """
         if self._closed:
-            raise pyvisa.VisaIOError(pyvisa.constants.VI_ERROR_INV_OBJECT)
+            raise pyvisa.VisaIOError(visa_constants.VI_ERROR_INV_OBJECT)
 
         self.query_history.append(command)
         self._track_call(command)
         self._simulate_delay(10)
 
-        cmd = command.strip().upper()
+        cmd = self._normalize_scpi(command)
 
-        # Identification
         if cmd == "*IDN?":
             return self.idn_string
-
-        # Operation complete
-        elif cmd == "*OPC?":
+        if cmd == "*OPC?":
             return "1"
-
-        # Frequency queries
-        elif ":SENS1:FREQ:STAR?" in cmd or ":SENS:FREQ:STAR?" in cmd:
+        if "SENS1:FREQ:STAR?" in cmd or "SENS:FREQ:STAR?" in cmd:
             return str(self._freq_start)
-        elif ":SENS1:FREQ:STOP?" in cmd or ":SENS:FREQ:STOP?" in cmd:
+        if "SENS1:FREQ:STOP?" in cmd or "SENS:FREQ:STOP?" in cmd:
             return str(self._freq_stop)
-
-        # Sweep points
-        elif ":SENS1:SWE:POIN?" in cmd or ":SENS:SWE:POIN?" in cmd:
+        if "SENS1:SWE:POIN?" in cmd or "SENS:SWE:POIN?" in cmd:
             return str(self._sweep_points)
-
-        # Sweep type
-        elif ":SENS1:SWE:TYPE?" in cmd or ":SENS:SWE:TYPE?" in cmd:
+        if "SENS1:SWE:TYPE?" in cmd or "SENS:SWE:TYPE?" in cmd:
             return self._sweep_type
-
-        # Data format
-        elif ":FORM?" in cmd:
+        if cmd == "FORM?":
             return self._data_format
-
-        # Averaging
-        elif ":SENS1:AVER:STAT?" in cmd or ":SENS:AVER:STAT?" in cmd:
+        if "SENS1:AVER:STAT?" in cmd or "SENS:AVER:STAT?" in cmd:
             return "1" if self._averaging_enabled else "0"
-        elif ":SENS1:AVER:COUN?" in cmd or ":SENS:AVER:COUN?" in cmd:
+        if "SENS1:AVER:COUN?" in cmd or "SENS:AVER:COUN?" in cmd:
             return str(self._averaging_count)
-
-        # Trigger/continuous mode
-        elif ":INIT1:CONT?" in cmd or ":INIT:CONT?" in cmd:
+        if "INIT1:CONT?" in cmd or "INIT:CONT?" in cmd:
             return "1" if self._continuous_mode else "0"
-        elif ":TRIG:SOUR?" in cmd:
+        if "TRIG:SOUR?" in cmd:
             return self._trigger_source
-
-        # Parameter count
-        elif ":CALC1:PAR:COUN?" in cmd or ":CALC:PAR:COUN?" in cmd:
+        if "CALC1:PAR:COUN?" in cmd or "CALC:PAR:COUN?" in cmd:
             return str(self._param_count)
-
-        # Unknown command - return default
-        else:
-            return "0"
+        return "0"
 
     def query_ascii_values(self, command: str) -> list[float]:
         """
@@ -235,57 +244,50 @@ class MockVisaResource:
             pyvisa.VisaIOError: If resource is closed
         """
         if self._closed:
-            raise pyvisa.VisaIOError(pyvisa.constants.VI_ERROR_INV_OBJECT)
+            raise pyvisa.VisaIOError(visa_constants.VI_ERROR_INV_OBJECT)
 
         self.query_history.append(command)
         self._track_call(command)
         self._simulate_delay(50)
 
-        cmd = command.strip().upper()
+        cmd = self._normalize_scpi(command)
 
-        # Frequency data
-        if ":FREQ:DATA?" in cmd:
+        if "FREQ:DATA?" in cmd:
             if self._sweep_type == "LIN":
                 return list(
                     np.linspace(self._freq_start, self._freq_stop, self._sweep_points)
                 )
-            else:  # LOG
-                return list(
-                    np.logspace(
-                        np.log10(self._freq_start),
-                        np.log10(self._freq_stop),
-                        self._sweep_points,
-                    )
+            return list(
+                np.logspace(
+                    np.log10(self._freq_start),
+                    np.log10(self._freq_stop),
+                    self._sweep_points,
                 )
+            )
 
-        # S-parameter data (SDATA returns real/imag pairs)
-        elif ":DATA:SDAT?" in cmd or ":CALC1:DATA:SDAT?" in cmd:
-            # Generate realistic S-parameter data
+        if "DATA:SDAT?" in cmd or "CALC1:DATA:SDAT?" in cmd:
             t = np.linspace(0, 1, self._sweep_points)
 
-            # Create complex S-parameter with realistic characteristics
-            # Simulate different responses based on active parameter
-            if self._active_param == 1:  # S11 - reflection
+            if self._active_param == 1:
                 mag = 0.3 * np.exp(-5 * t) + 0.1 * np.sin(10 * np.pi * t)
                 phase = -180 * t + 20 * np.sin(8 * np.pi * t)
-            elif self._active_param == 2:  # S21 - forward transmission
+            elif self._active_param == 2:
                 mag = np.exp(-2 * t) * 0.9
                 phase = -90 * t
-            elif self._active_param == 3:  # S12 - reverse transmission
+            elif self._active_param == 3:
                 mag = np.exp(-2.2 * t) * 0.85
                 phase = -95 * t
-            else:  # S22 - output reflection
+            else:
                 mag = 0.25 * np.exp(-4.5 * t) + 0.08 * np.sin(9 * np.pi * t)
                 phase = -170 * t + 18 * np.sin(7 * np.pi * t)
 
             real = mag * np.cos(np.deg2rad(phase))
             imag = mag * np.sin(np.deg2rad(phase))
 
-            # Interleave real and imaginary parts
-            data = []
-            for r, i in zip(real, imag):
-                data.append(r)
-                data.append(i)
+            data: list[float] = []
+            for real_value, imag_value in zip(real, imag):
+                data.append(real_value)
+                data.append(imag_value)
 
             return data
 
@@ -330,7 +332,6 @@ class MockResourceManager:
         Returns:
             MockVisaResource instance
         """
-        # Create or reuse resource (but create new if closed)
         if (
             resource_name not in self._resources
             or self._resources[resource_name]._closed
