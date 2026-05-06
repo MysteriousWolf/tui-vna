@@ -9,9 +9,11 @@ from .base import (
     IDNInfo,
     VNABase,
     VNAConfig,
+    StatusCapableDriver,
     detect_vna_driver,
     discover_drivers,
     list_available_drivers,
+    TriggerStateDriver,
 )
 
 # Import specific drivers for direct access if needed
@@ -22,9 +24,11 @@ __all__ = [
     "IDNInfo",
     "VNABase",
     "VNAConfig",
+    "StatusCapableDriver",
     "HPE5071B",
     "KeysightP5007A",
     "detect_vna_driver",
     "discover_drivers",
     "list_available_drivers",
+    "TriggerStateDriver",
 ]
