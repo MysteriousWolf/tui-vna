@@ -7,13 +7,13 @@ in this directory that defines a VNABase subclass with an idn_matcher.
 
 from .base import (
     IDNInfo,
+    StatusCapableDriver,
+    TriggerStateDriver,
     VNABase,
     VNAConfig,
-    StatusCapableDriver,
     detect_vna_driver,
     discover_drivers,
     list_available_drivers,
-    TriggerStateDriver,
 )
 
 # Import specific drivers for direct access if needed
