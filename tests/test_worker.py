@@ -16,10 +16,11 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from src.tina.drivers.base import VNAConfig
-from src.tina.export import embed_png_metadata, embed_svg_metadata
-from src.tina.utils.touchstone import TouchstoneExporter
-from src.tina.worker import (
+from tests.conftest import consume_worker_messages_until
+from tina.drivers.base import VNAConfig
+from tina.export import embed_png_metadata, embed_svg_metadata
+from tina.utils.touchstone import TouchstoneExporter
+from tina.worker import (
     ImportRequest,
     ImportResult,
     LogMessage,
@@ -27,8 +28,8 @@ from src.tina.worker import (
     MessageType,
     ParamsResult,
     _render_tools_plot_snapshot,
+    _write_touchstone_save_back,
 )
-from tests.conftest import consume_worker_messages_until
 
 
 class TestWorkerBasics:
@@ -133,8 +134,8 @@ class TestWorkerConnection:
 
     @pytest.mark.integration
     @pytest.mark.skip(reason="Complex mocking of real driver - use manual testing")
-    @patch("src.tina.worker.detect_vna_driver")
-    @patch("src.tina.drivers.hp_e5071b.HPE5071B")
+    @patch("tina.worker.detect_vna_driver")
+    @patch("tina.drivers.hp_e5071b.HPE5071B")
     @patch("socket.socket")
     def test_connect_success(
         self, mock_socket, mock_vna_class, mock_detect, vna_config
@@ -187,40 +188,16 @@ class TestWorkerConnection:
         worker.stop()
 
     @pytest.mark.integration
-    @patch("src.tina.worker.detect_vna_driver")
-    @patch("src.tina.drivers.hp_e5071b.HPE5071B")
-    @patch("socket.socket")
-    def test_disconnect(self, mock_socket, mock_vna_class, mock_detect, vna_config):
+    def test_disconnect(self, connected_mock_e5071b):
         """Test disconnection."""
-        # Mock socket
-        mock_sock_inst = MagicMock()
-        mock_sock_inst.connect_ex.return_value = 0
-        mock_socket.return_value.__enter__.return_value = mock_sock_inst
-
-        # Setup mocks
-        mock_vna = MagicMock()
-        mock_vna.idn = "HEWLETT-PACKARD,E5071B,MY12345678,A.01.02"
-        mock_vna.driver_name = "HP E5071B"
-        mock_vna.is_connected.return_value = True
-        mock_vna_class.return_value = mock_vna
-        mock_detect.return_value = mock_vna_class
-
         worker = MeasurementWorker()
-        worker.start()
+        worker._vna = connected_mock_e5071b
 
-        # Connect first
-        worker.send_command(MessageType.CONNECT, vna_config)
-        msg = consume_worker_messages_until(worker, MessageType.CONNECTED)
-        assert msg is not None
-
-        # Now disconnect
-        worker.send_command(MessageType.DISCONNECT)
+        worker._handle_disconnect()
 
         msg = consume_worker_messages_until(worker, MessageType.DISCONNECTED)
         assert msg is not None
         assert msg.type == MessageType.DISCONNECTED
-
-        worker.stop()
 
 
 class TestWorkerMeasurement:
@@ -228,7 +205,7 @@ class TestWorkerMeasurement:
 
     @pytest.mark.integration
     @pytest.mark.skip(reason="Complex mocking of real driver - use manual testing")
-    @patch("src.tina.worker.detect_vna_driver")
+    @patch("tina.worker.detect_vna_driver")
     @patch("socket.socket")
     def test_read_params(
         self, mock_socket, mock_detect, vna_config, connected_mock_e5071b
@@ -300,9 +277,7 @@ class TestWorkerMeasurement:
     @pytest.mark.unit
     def test_worker_sets_agg_backend_before_pyplot_import(self):
         """worker.py should select the Agg backend before importing pyplot."""
-        source = getsource(
-            __import__("src.tina.worker", fromlist=["MeasurementWorker"])
-        )
+        source = getsource(__import__("tina.worker", fromlist=["MeasurementWorker"]))
 
         assert source.index('matplotlib.use("Agg")') < source.index(
             "from matplotlib import pyplot as plt"
@@ -313,8 +288,8 @@ class TestWorkerProgressUpdates:
     """Test worker progress reporting."""
 
     @pytest.mark.integration
-    @patch("src.tina.worker.detect_vna_driver")
-    @patch("src.tina.drivers.hp_e5071b.HPE5071B")
+    @patch("tina.worker.detect_vna_driver")
+    @patch("tina.drivers.hp_e5071b.HPE5071B")
     @patch("socket.socket")
     def test_progress_updates_during_connect(
         self, mock_socket, mock_vna_class, mock_detect, vna_config
@@ -615,7 +590,7 @@ class TestWorkerToolsRendering:
             },
         }
 
-        with patch("src.tina.worker.DistortionTool.compute") as mock_compute:
+        with patch("tina.worker.DistortionTool.compute") as mock_compute:
             result = _render_tools_plot_snapshot(
                 freqs,
                 sparams,
@@ -643,7 +618,7 @@ class TestWorkerToolsRendering:
         assert result["path"].endswith("tools_plot.png")
 
     @pytest.mark.unit
-    def test_handle_tools_render_includes_tool_result(self) -> None:
+    def test_handle_tools_render_includes_tool_result(self, tmp_path: Path) -> None:
         """Combined tools render should return the computed tool payload."""
         worker = MeasurementWorker()
         payload = {
@@ -671,7 +646,7 @@ class TestWorkerToolsRendering:
             },
             "distortion_components": [False, True, True, False, False, False],
             "render_cache_key": ("tools", "state"),
-            "output_path": str(Path("/tmp") / "worker_tools_render.png"),
+            "output_path": str(tmp_path / "worker_tools_render.png"),
         }
 
         result = worker._handle_tools_render(payload, lambda *_args: None)
@@ -682,13 +657,178 @@ class TestWorkerToolsRendering:
         assert "coeffs" in result["tool_result"]["extra"]
         assert result["render_cache_key"] == ("tools", "state")
 
+    @pytest.mark.unit
+    def test_save_back_rewrites_existing_tina_blocks_without_duplication(
+        self, tmp_path: Path
+    ) -> None:
+        """Repeated save-back should replace old TINA payload instead of duplicating it."""
+        exporter = TouchstoneExporter()
+        freqs = np.array([1.0e6, 2.0e6], dtype=float)
+        sparams = {
+            "S11": (
+                np.array([-10.0, -11.0], dtype=float),
+                np.array([5.0, 6.0], dtype=float),
+            )
+        }
+        output_path = exporter.export(
+            freqs,
+            sparams,
+            str(tmp_path),
+            filename="saveback.s2p",
+            notes_markdown="old note line\nold note second line",
+            metadata={"setup": {"host": "old-host"}},
+        )
+
+        rewritten = _write_touchstone_save_back(
+            output_path,
+            "new note line\nnew note second line",
+            {"setup": {"host": "new-host"}},
+        )
+        _write_touchstone_save_back(
+            rewritten,
+            "new note line\nnew note second line",
+            {"setup": {"host": "new-host"}},
+        )
+
+        content = Path(rewritten).read_text(encoding="utf-8")
+        assert content.count("! TINA NOTES BEGIN") == 1
+        assert content.count("! TINA METADATA BEGIN") == 1
+        assert content.count("new note line") == 1
+        assert content.count("new note second line") == 1
+        assert "old note line" not in content
+        assert "old note second line" not in content
+        assert "old-host" not in content
+        assert "new-host" in content
+
+        parsed = TouchstoneExporter.import_with_metadata(rewritten)
+        np.testing.assert_allclose(parsed.frequencies_hz, freqs)
+        assert parsed.metadata.notes_markdown == "new note line\nnew note second line"
+        assert parsed.metadata.machine_settings == {
+            "metadata_version": 1,
+            "setup": {"host": "new-host"},
+        }
+        assert "S11" in parsed.s_parameters
+        np.testing.assert_allclose(parsed.s_parameters["S11"][0], sparams["S11"][0])
+        np.testing.assert_allclose(parsed.s_parameters["S11"][1], sparams["S11"][1])
+
+    @pytest.mark.unit
+    def test_save_back_uses_enqueued_token_and_rejects_stale_job(
+        self, tmp_path: Path
+    ) -> None:
+        """A queued save-back job must keep the token captured at enqueue time."""
+        worker = MeasurementWorker()
+        export_path = TouchstoneExporter().export(
+            np.array([1.0e6, 2.0e6], dtype=float),
+            {
+                "S11": (
+                    np.array([-10.0, -11.0], dtype=float),
+                    np.array([5.0, 6.0], dtype=float),
+                )
+            },
+            str(tmp_path),
+            filename="stale-token.s2p",
+            notes_markdown="seed note",
+            metadata={"setup": {"host": "seed-host"}},
+        )
+
+        worker.send_command(
+            MessageType.SAVE_BACK,
+            {
+                "job_id": 7,
+                "operation": "Save back",
+                "target_kind": "touchstone",
+                "target_path": export_path,
+                "measurement_notes": "fresh note",
+                "metadata": {"setup": {"host": "fresh-host"}},
+            },
+        )
+
+        queued = worker._command_queue.get_nowait()
+        assert queued.data["token"] == 1
+
+        worker.cancel_job(7)
+
+        with patch("tina.worker._write_touchstone_save_back") as mock_write:
+            worker._handle_background_job(queued.type, queued.data)
+
+        mock_write.assert_not_called()
+        assert worker._response_queue.empty()
+
+    @pytest.mark.unit
+    def test_send_command_captures_enqueue_time_job_token(self) -> None:
+        """Queued background jobs should store the active token in their payload."""
+        worker = MeasurementWorker()
+
+        first_payload = {
+            "job_id": 11,
+            "operation": "Save back",
+            "target_kind": "touchstone",
+            "target_path": "queued.s2p",
+        }
+        worker.send_command(MessageType.SAVE_BACK, first_payload)
+        queued_first = worker._command_queue.get_nowait()
+
+        assert queued_first.data["token"] == 1
+        assert "token" not in first_payload
+
+        worker.cancel_job(11)
+
+        second_payload = {
+            "job_id": 11,
+            "operation": "Save back",
+            "target_kind": "touchstone",
+            "target_path": "queued.s2p",
+        }
+        worker.send_command(MessageType.SAVE_BACK, second_payload)
+        queued_second = worker._command_queue.get_nowait()
+
+        assert queued_second.data["token"] == 2
+        assert "token" not in second_payload
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {
+                "job_id": 8,
+                "operation": "Save back",
+                "target_kind": "touchstone",
+                "target_path": "unused.s2p",
+                "measurement_notes": "fresh note",
+                "metadata": {},
+            },
+            {
+                "job_id": 9,
+                "operation": "Save back",
+                "token": "bad-token",
+                "target_kind": "touchstone",
+                "target_path": "unused.s2p",
+                "measurement_notes": "fresh note",
+                "metadata": {},
+            },
+        ],
+    )
+    def test_save_back_rejects_missing_or_invalid_token_payload(
+        self, payload: dict[str, object]
+    ) -> None:
+        """Malformed save-back payloads should fail before any file write occurs."""
+        worker = MeasurementWorker()
+
+        with patch("tina.worker._write_touchstone_save_back") as mock_write:
+            worker._handle_background_job(MessageType.SAVE_BACK, payload)
+
+        mock_write.assert_not_called()
+        response = worker.get_response(timeout=0.1)
+        assert response.type == MessageType.ERROR
+        assert response.error == "Background job failed: missing or invalid job token"
+
 
 class TestWorkerLogging:
     """Test worker logging functionality."""
 
     @pytest.mark.integration
-    @patch("src.tina.worker.detect_vna_driver")
-    @patch("src.tina.drivers.hp_e5071b.HPE5071B")
+    @patch("tina.worker.detect_vna_driver")
+    @patch("tina.drivers.hp_e5071b.HPE5071B")
     @patch("socket.socket")
     def test_log_messages_sent(
         self, mock_socket, mock_vna_class, mock_detect, vna_config
@@ -751,7 +891,7 @@ class TestWorkerCancellation:
     @pytest.mark.unit
     def test_background_job_cancelled_error(self):
         """Test BackgroundJobCancelledError is raised correctly."""
-        from src.tina.worker import BackgroundJobCancelledError
+        from tina.worker import BackgroundJobCancelledError
 
         error = BackgroundJobCancelledError("Test job cancelled")
         assert "Test job cancelled" in str(error)
@@ -793,7 +933,7 @@ class TestWorkerFailureHandling:
     @pytest.mark.unit
     def test_background_job_cancelled_in_execution(self):
         """Test that _check_job_cancelled raises when token mismatches."""
-        from src.tina.worker import BackgroundJobCancelledError
+        from tina.worker import BackgroundJobCancelledError
 
         worker = MeasurementWorker()
         worker.start()

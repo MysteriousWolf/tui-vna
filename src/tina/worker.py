@@ -232,27 +232,43 @@ def _write_touchstone_save_back(
     lines = original_text.splitlines()
     header_lines: list[str] = []
     option_and_data_lines: list[str] = []
-    in_data = False
+    option_line_seen = False
+    header_separator_seen = False
 
     for raw in lines:
         line = raw.rstrip("\n")
         stripped = line.strip()
-        if not in_data and stripped and not stripped.startswith("!"):
-            in_data = True
-        if in_data:
+
+        if not option_line_seen and stripped.startswith("#"):
+            option_line_seen = True
             option_and_data_lines.append(line)
             continue
 
-        if stripped.startswith("!"):
-            content = TouchstoneExporter._strip_comment_prefix(stripped)
-            if content in (
-                "TINA NOTES BEGIN",
-                "TINA NOTES END",
-                "TINA METADATA BEGIN",
-                "TINA METADATA END",
-            ):
+        if not option_line_seen:
+            if stripped.startswith("!"):
+                if not header_separator_seen:
+                    header_lines.append(line)
+                    if stripped == "!":
+                        header_separator_seen = True
                 continue
-        header_lines.append(line)
+
+            if not stripped:
+                if not header_separator_seen:
+                    header_lines.append(line)
+                    header_separator_seen = True
+                continue
+
+            option_line_seen = True
+            option_and_data_lines.append(line)
+            continue
+
+        if stripped.startswith("!") or not stripped:
+            continue
+
+        option_and_data_lines.append(line)
+
+    if not option_and_data_lines:
+        raise ValueError("Touchstone file is missing option or data lines")
 
     notes_lines = TouchstoneExporter._build_notes_comment_lines(measurement_notes)
     metadata_lines = TouchstoneExporter._serialize_metadata_comment_lines(metadata)
@@ -537,6 +553,17 @@ class MeasurementWorker:
             msg_type: Type of message
             data: Optional data payload
         """
+        if msg_type in {
+            MessageType.EXPORT,
+            MessageType.SAVE_BACK,
+            MessageType.TOOLS_RENDER,
+            MessageType.TOOLS_COMPUTE,
+        } and isinstance(data, dict):
+            job_id = data.get("job_id")
+            if type(job_id) is int:
+                payload = dict(data)
+                payload["token"] = self._get_job_token(job_id)
+                data = payload
         self._command_queue.put(Message(type=msg_type, data=data))
 
     def clear_commands(self) -> None:
@@ -979,9 +1006,17 @@ class MeasurementWorker:
             )
             return
 
+        token_raw = data.get("token")
+        if type(token_raw) is not int or token_raw < 1:
+            self._send_response(
+                MessageType.ERROR,
+                error="Background job failed: missing or invalid job token",
+            )
+            return
+
         job_id = job_id_raw
         operation = operation_raw
-        token = self._get_job_token(job_id)
+        token = token_raw
 
         def report(message: str, progress: float) -> None:
             self._check_job_cancelled(job_id, token)
