@@ -26,6 +26,13 @@ def truncate_path_intelligently(path_str: str, max_width: int) -> str:
         Truncated path string.
     """
     # Account for the 📁 emoji (2 chars) + space
+    if max_width <= 0:
+        return ""
+    if max_width == 1:
+        return ""
+    if max_width == 2:
+        return ""
+
     effective_width = max_width - 2
 
     if len(path_str) <= effective_width:
@@ -87,11 +94,28 @@ def calculate_plot_range_with_outlier_filtering(
     if len(data) == 0:
         return (0.0, 1.0)
 
+    if not np.isfinite(outlier_percentile):
+        outlier_percentile = 1.0
+    if not np.isfinite(safety_margin):
+        safety_margin = 0.05
+
+    outlier_percentile = float(outlier_percentile)
+    if outlier_percentile < 0.0 or outlier_percentile >= 50.0:
+        raise ValueError("outlier_percentile must be in [0, 50)")
+    safety_margin = float(np.clip(safety_margin, 0.0, 1.0))
+
+    finite_data = np.asarray(data, dtype=float)[np.isfinite(data)]
+    if finite_data.size == 0:
+        return (0.0, 1.0)
+
     lower_percentile = outlier_percentile
     upper_percentile = 100.0 - outlier_percentile
 
-    min_val = np.percentile(data, lower_percentile)
-    max_val = np.percentile(data, upper_percentile)
+    min_val = np.percentile(finite_data, lower_percentile)
+    max_val = np.percentile(finite_data, upper_percentile)
+
+    if not (np.isfinite(min_val) and np.isfinite(max_val)):
+        return (0.0, 1.0)
 
     data_range = max_val - min_val
     if data_range == 0:

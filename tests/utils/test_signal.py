@@ -3,20 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from src.tina.utils.signal import calculate_plot_range_with_outlier_filtering
-
-
-def test_calculate_plot_range_clamps_invalid_percentile_and_margin() -> None:
-    """Invalid inputs should be clamped before percentile calculations run."""
-    data = np.array([1.0, 2.0, 3.0, 100.0])
-
-    result = calculate_plot_range_with_outlier_filtering(
-        data, outlier_percentile=120.0, safety_margin=0.1
-    )
-
-    assert all(np.isfinite(v) for v in result)
-    assert result[0] < result[1]
+from tina.utils.signal import calculate_plot_range_with_outlier_filtering
 
 
 def test_calculate_plot_range_handles_non_finite_inputs() -> None:
@@ -39,3 +28,34 @@ def test_calculate_plot_range_handles_nan_data() -> None:
 
     assert all(np.isfinite(value) for value in result)
     assert result[0] < result[1]
+
+
+@pytest.mark.parametrize("percentile", [-1.0, 50.0, 75.0])
+def test_calculate_plot_range_rejects_out_of_range_percentiles(
+    percentile: float,
+) -> None:
+    """Outlier percentiles outside [0, 50) should raise ValueError."""
+    data = np.array([1.0, 2.0, 3.0, 100.0])
+
+    with pytest.raises(ValueError, match="outlier_percentile"):
+        calculate_plot_range_with_outlier_filtering(
+            data, outlier_percentile=percentile, safety_margin=0.1
+        )
+
+
+def test_calculate_plot_range_ignores_mixed_non_finite_samples() -> None:
+    """Finite samples should drive the range even when NaN and infinities are present."""
+    data = np.array([10.0, np.nan, np.inf, -np.inf, 30.0])
+
+    result = calculate_plot_range_with_outlier_filtering(data, outlier_percentile=0.0)
+
+    assert result == (9.0, 31.0)
+
+
+def test_calculate_plot_range_all_non_finite_uses_fallback() -> None:
+    """All-non-finite data should use the default fallback range."""
+    data = np.array([np.nan, np.inf, -np.inf])
+
+    result = calculate_plot_range_with_outlier_filtering(data)
+
+    assert result == (0.0, 1.0)

@@ -4,7 +4,7 @@ Tests for path utilities.
 Tests path truncation and display logic.
 """
 
-from src.tina.utils.paths import truncate_path_intelligently
+from tina.utils.paths import truncate_path_intelligently
 
 
 class TestTruncatePathIntelligently:
@@ -87,8 +87,19 @@ class TestTruncatePathIntelligently:
         """Test with width exactly for emoji."""
         path = "/home/user/file.txt"
         result = truncate_path_intelligently(path, max_width=2)
-        # Should return empty or minimal
-        assert len(result) <= 1
+        assert result == ""
+
+    def test_width_zero_returns_empty_string(self):
+        """Width zero should deterministically return an empty string."""
+        path = "/home/user/file.txt"
+        result = truncate_path_intelligently(path, max_width=0)
+        assert result == ""
+
+    def test_width_one_returns_empty_string(self):
+        """Width one should deterministically return an empty string."""
+        path = "/home/user/file.txt"
+        result = truncate_path_intelligently(path, max_width=1)
+        assert result == ""
 
     def test_absolute_vs_relative_paths(self):
         """Test both absolute and relative paths."""

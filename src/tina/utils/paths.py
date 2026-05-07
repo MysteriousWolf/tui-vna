@@ -26,6 +26,13 @@ def truncate_path_intelligently(path_str: str, max_width: int) -> str:
         Truncated path string
     """
     # Account for the 📁 emoji (2 chars) + space in the UI
+    if max_width <= 0:
+        return ""
+    if max_width == 1:
+        return ""
+    if max_width == 2:
+        return ""
+
     effective_width = max_width - 2
 
     if len(path_str) <= effective_width:
