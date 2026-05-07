@@ -106,8 +106,68 @@ class _FakeContainer:
         self.content_size = SimpleNamespace(width=width, height=height)
 
 
+class _FakeMountContainer:
+    """Minimal async container stub for rebuild_tools_params tests."""
+
+    def __init__(self) -> None:
+        self.children: list[Any] = []
+
+    async def remove_children(self) -> None:
+        """Clear previously mounted children."""
+        self.children.clear()
+
+    async def mount(self, widget: Any) -> Any:
+        """Record a mounted widget and return it for nested mounts."""
+        self.children.append(widget)
+        return widget
+
+
+class _FakeMountedRow:
+    """Minimal row stub that records mounted children."""
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        self.children: list[Any] = []
+
+    async def mount(self, widget: Any) -> Any:
+        """Record a mounted child widget."""
+        self.children.append(widget)
+        return widget
+
+
+class _FakeMountedCheckbox:
+    """Minimal checkbox stub used for rebuild_tools_params tests."""
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        value: bool,
+        id: str,
+        classes: str,
+    ) -> None:
+        self.label = label
+        self.value = value
+        self.id = id
+        self.classes = classes
+
+
 class _FakeApp:
     """Minimal app stub for exercising direct export handlers."""
+
+    _tools_distortion_comp_enabled: list[bool]
+    _tools_cursor1_hz: float | None
+    _tools_cursor2_hz: float | None
+    _tools_plot_generation: int
+    _tools_plot_cache_key: tuple[object, ...] | None
+    _tools_plot_display_key: tuple[int, int] | None
+    _latest_tools_render_result: dict[str, Any] | None
+    _latest_tools_render_cache_key: tuple[object, ...] | None
+    _results_plot_generation: int
+    _results_plot_cache_key: tuple[object, ...] | None
+    _results_plot_display_key: tuple[int, int] | None
+    _results_plot_pixel_size: tuple[int, int] | None
+    last_plot_path: str | None
+    plot_temp_dir: Path
 
     def __init__(
         self,
@@ -182,6 +242,24 @@ class _FakeApp:
         self._update_results = MagicMock(return_value=None)
         self._latest_tools_render_result = None
         self._latest_tools_render_cache_key = None
+        self._delayed_tools_refresh = MagicMock()
+        self._tools_distortion_comp_enabled = [False, True, True, False, False, False]
+        self._tools_cursor1_hz = None
+        self._tools_cursor2_hz = None
+        self._tools_plot_generation = 0
+        self._tools_plot_cache_key = None
+        self._tools_plot_display_key = None
+        self._run_tools_render_job = AsyncMock()
+        self._get_distortion_comp_enabled = cast(
+            Any, lambda: list(self._tools_distortion_comp_enabled)
+        )
+        self._get_tools_trace = cast(Any, lambda: "S21")
+        self.plot_temp_dir = Path("/tmp")
+        self.last_plot_path = None
+        self._results_plot_generation = 0
+        self._results_plot_cache_key = None
+        self._results_plot_display_key = None
+        self._results_plot_pixel_size = None
         self._write_image_export = MagicMock()
         self._run_measurement_image_export = cast(
             Any,
@@ -1846,11 +1924,14 @@ async def test_plot_control_changes_are_debounced(
     """Rapid plot control changes should collapse into one redraw."""
 
     class _FakeTimer:
+        """Minimal timer stub for plot-refresh debounce tests."""
+
         def __init__(self, callback) -> None:
             self.callback = callback
             self.stopped = False
 
         def stop(self) -> None:
+            """Record that the timer would have been stopped."""
             self.stopped = True
 
     app = object.__new__(VNAApp)
@@ -1860,13 +1941,16 @@ async def test_plot_control_changes_are_debounced(
 
     timers: list[_FakeTimer] = []
 
-    def set_timer(delay: float, callback):
+    def set_timer(delay: float, callback=None, *, name=None, pause: bool = False):
         assert delay == pytest.approx(0.15)
+        assert name is None
+        assert pause is False
+        assert callback is not None
         timer = _FakeTimer(callback)
         timers.append(timer)
         return timer
 
-    app.set_timer = set_timer
+    cast(Any, app).set_timer = set_timer
     app._redraw_plot = cast(Any, lambda: VNAApp._redraw_plot(cast(Any, app)))
     app._schedule_plot_refresh = cast(
         Any,
@@ -2618,6 +2702,185 @@ class TestPlotRedrawCaching:
 @pytest.mark.unit
 class TestToolsRenderResultCaching:
     """Tests for worker-render result reuse in the Tools tab."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_tools_plot_rerenders_when_cached_worker_result_is_stale(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """A stale worker cache key must force a fresh image render job."""
+        app = _FakeApp(sample_measurement)
+        app.settings.plot_backend = "image"
+        app.settings.tools_active_tool = "distortion"
+        app.plot_temp_dir = tmp_path
+        (tmp_path / "tools_plot.png").write_bytes(b"png")
+        container = _FakeContainer(width=120, height=32)
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#select_tools_plot_type": _FakeSelect("magnitude"),
+                "#tools_radio_s11": _FakeCheckbox(False),
+                "#tools_radio_s21": _FakeCheckbox(True),
+                "#tools_radio_s12": _FakeCheckbox(False),
+                "#tools_radio_s22": _FakeCheckbox(False),
+                "#tools_plot_container": container,
+            }[selector],
+        )
+        app._get_distortion_comp_enabled = cast(
+            Any, lambda: [False, True, True, False, False, False]
+        )
+        cache_key = tools_logic.get_tools_plot_cache_key(cast(Any, app))
+        app._tools_plot_cache_key = cache_key
+        app._tools_plot_display_key = (96, 24)
+        app._latest_tools_render_cache_key = ("stale",)
+        fresh_result = {"render_cache_key": cache_key, "tool_result": None}
+        call_order: list[str] = []
+
+        async def run_tools_render_job() -> dict[str, object]:
+            call_order.append("render")
+            return fresh_result
+
+        async def apply_tools_render_result(
+            _app: Any, _result: dict[str, object]
+        ) -> None:
+            call_order.append("apply")
+
+        app._run_tools_render_job = AsyncMock(side_effect=run_tools_render_job)
+
+        with patch(
+            "src.tina.main.apply_tools_render_result", new=apply_tools_render_result
+        ):
+            await VNAApp._refresh_tools_plot(cast(Any, app))
+
+        app._run_tools_render_job.assert_awaited_once()
+        assert call_order == ["render", "apply"]
+        assert app._tools_plot_cache_key == cache_key
+        assert app._tools_plot_display_key == tools_logic.get_tools_plot_display_key(
+            cast(Any, app)
+        )
+        assert app._latest_tools_render_cache_key == cache_key
+
+    @pytest.mark.asyncio
+    async def test_refresh_tools_plot_rerenders_when_display_size_changes(
+        self, sample_measurement: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """A changed tools plot size must force a fresh image render job."""
+        app = _FakeApp(sample_measurement)
+        app.settings.plot_backend = "image"
+        app.settings.tools_active_tool = "distortion"
+        app.plot_temp_dir = tmp_path
+        (tmp_path / "tools_plot.png").write_bytes(b"png")
+        app.query_one = cast(
+            Any,
+            lambda selector, _widget_type=None: {
+                "#select_tools_plot_type": _FakeSelect("magnitude"),
+                "#tools_radio_s11": _FakeCheckbox(False),
+                "#tools_radio_s21": _FakeCheckbox(True),
+                "#tools_radio_s12": _FakeCheckbox(False),
+                "#tools_radio_s22": _FakeCheckbox(False),
+                "#tools_plot_container": _FakeContainer(width=120, height=32),
+            }[selector],
+        )
+        app._get_distortion_comp_enabled = cast(
+            Any, lambda: [False, True, True, False, False, False]
+        )
+        cache_key = tools_logic.get_tools_plot_cache_key(cast(Any, app))
+        app._tools_plot_cache_key = cache_key
+        app._tools_plot_display_key = (96, 24)
+        app._latest_tools_render_cache_key = cache_key
+        fresh_result = {"render_cache_key": cache_key, "tool_result": None}
+        call_order: list[str] = []
+
+        async def run_tools_render_job() -> dict[str, object]:
+            call_order.append("render")
+            return fresh_result
+
+        async def apply_tools_render_result(
+            _app: Any, _result: dict[str, object]
+        ) -> None:
+            call_order.append("apply")
+
+        app._run_tools_render_job = AsyncMock(side_effect=run_tools_render_job)
+
+        with patch(
+            "src.tina.main.apply_tools_render_result", new=apply_tools_render_result
+        ):
+            await VNAApp._refresh_tools_plot(cast(Any, app))
+
+        app._run_tools_render_job.assert_awaited_once()
+        assert call_order == ["render", "apply"]
+        assert app._tools_plot_display_key == tools_logic.get_tools_plot_display_key(
+            cast(Any, app)
+        )
+
+    @pytest.mark.asyncio
+    async def test_rebuild_tools_params_restores_distortion_checkbox_state(
+        self, sample_measurement: dict[str, Any]
+    ) -> None:
+        """Distortion overlay selections should survive params-panel rebuilds."""
+        app = _FakeApp(sample_measurement)
+        app.settings.tools_active_tool = "distortion"
+        dynamic_container = _FakeMountContainer()
+        saved_values = [True, False, True, True, False, True]
+        checkbox_widgets = {
+            f"#input_distortion_comp_{index}": _FakeCheckbox(value)
+            for index, value in enumerate(saved_values)
+        }
+        cursor_inputs = {
+            "#input_tools_cursor1": SimpleNamespace(value=""),
+            "#input_tools_cursor2": SimpleNamespace(value=""),
+        }
+        toggle_buttons = {
+            "#btn_freq1_toggle_min": _FakeButton("▲"),
+            "#btn_freq2_toggle_min": _FakeButton("▲"),
+            "#btn_freq1_toggle_smooth": _FakeButton("⎍"),
+            "#btn_freq2_toggle_smooth": _FakeButton("⎍"),
+        }
+
+        def query_one(selector: str, _widget_type=None) -> Any:
+            if selector == "#tools_params_dynamic":
+                return dynamic_container
+            if selector in checkbox_widgets:
+                return checkbox_widgets[selector]
+            if selector in toggle_buttons:
+                return toggle_buttons[selector]
+            if selector in cursor_inputs:
+                return cursor_inputs[selector]
+            raise AssertionError(f"Unexpected selector: {selector}")
+
+        app.query_one = cast(
+            Any,
+            query_one,
+        )
+
+        with (
+            patch(
+                "tests.test_measurement_exports.tools_logic.Horizontal", _FakeMountedRow
+            ),
+            patch(
+                "tests.test_measurement_exports.tools_logic.Checkbox",
+                _FakeMountedCheckbox,
+            ),
+        ):
+            await tools_logic.rebuild_tools_params(cast(Any, app))
+
+        assert app._tools_distortion_comp_enabled == saved_values
+        assert len(dynamic_container.children) == 1
+        comp_row = dynamic_container.children[0]
+        mounted_values = [child.value for child in comp_row.children]
+        assert mounted_values == saved_values
+
+    @pytest.mark.asyncio
+    async def test_handle_distortion_comp_change_defers_refresh(
+        self, sample_measurement: dict[str, Any]
+    ) -> None:
+        """Distortion checkbox changes should schedule deferred tools refresh."""
+        app = _FakeApp(sample_measurement)
+        app.last_measurement = sample_measurement
+        app.call_after_refresh = MagicMock()
+
+        tools_logic.handle_distortion_comp_change(cast(Any, app))
+
+        app.call_after_refresh.assert_called_once_with(app._delayed_tools_refresh)
 
     @pytest.mark.asyncio
     async def test_run_tools_computation_skips_stale_cached_result(

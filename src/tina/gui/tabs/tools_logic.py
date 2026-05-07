@@ -171,19 +171,19 @@ def set_active_tool(app, tool_name: str) -> None:
     apply_tool_ui(app)
     app.call_after_refresh(app._rebuild_tools_params)
     if app.last_measurement is not None:
-        app.call_after_refresh(app._refresh_tools_plot)
-        app.call_after_refresh(app._run_tools_computation)
+        app.call_after_refresh(app._delayed_tools_refresh)
 
 
 def get_distortion_comp_enabled(app) -> list[bool]:
     """Return enabled/disabled state for distortion component checkboxes."""
     defaults = [False, True, True, False, False, False]
-    result = list(defaults)
+    result = list(getattr(app, "_tools_distortion_comp_enabled", defaults))
     for n in range(6):
         try:
             result[n] = app.query_one(f"#input_distortion_comp_{n}", Checkbox).value
         except Exception:
             pass
+    app._tools_distortion_comp_enabled = list(result)
     return result
 
 
@@ -203,8 +203,6 @@ async def rebuild_tools_params(app) -> None:
     app.log_message(
         "rebuild_tools_params: found tools_params_dynamic, clearing children", "debug"
     )
-    await container.remove_children()
-
     active = app.settings.tools_active_tool
     freq_unit = (
         app.last_measurement.get("freq_unit", "MHz") if app.last_measurement else "MHz"
@@ -278,6 +276,10 @@ async def rebuild_tools_params(app) -> None:
             f"Failed updating static FrequencyEntry widgets: {exc_update}", "warning"
         )
 
+    distortion_comp_enabled = get_distortion_comp_enabled(app)
+
+    await container.remove_children()
+
     if active == "distortion":
         comp_row = Horizontal(classes="distortion-row")
         await container.mount(comp_row)
@@ -285,7 +287,7 @@ async def rebuild_tools_params(app) -> None:
             await comp_row.mount(
                 Checkbox(
                     DISTORTION_COMPONENT_NAMES[n],
-                    value=(n in (1, 2)),
+                    value=distortion_comp_enabled[n],
                     id=f"input_distortion_comp_{n}",
                     classes="distortion-comp-check",
                 )
@@ -1174,22 +1176,18 @@ def handle_distortion_comp_change(app) -> None:
     """Refresh tools plot when a distortion component overlay checkbox changes."""
     if app.last_measurement is None:
         return
-    if app._tools_input_timer is not None:
-        app._tools_input_timer.stop()
-    app._tools_input_timer = app.set_timer(0.2, app._delayed_tools_refresh)
+    app.call_after_refresh(app._delayed_tools_refresh)
 
 
 async def handle_tools_trace_changed(app) -> None:
     """Update tools plot and results when the trace selection changes."""
     if app.last_measurement is None:
         return
-    await app._refresh_tools_plot()
-    app._run_tools_computation()
+    app.call_after_refresh(app._delayed_tools_refresh)
 
 
 async def on_tools_plot_type_change(app) -> None:
     """Handle changes to the tools plot type."""
     if app.last_measurement is None:
         return
-    await app._refresh_tools_plot()
-    app._run_tools_computation()
+    app.call_after_refresh(app._delayed_tools_refresh)

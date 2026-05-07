@@ -92,6 +92,7 @@ class GUIAppTypingMixin:
     _tools_plot_display_key: tuple[int, int] | None
     _latest_tools_render_result: dict[str, object] | None
     _latest_tools_render_cache_key: tuple[object, ...] | None
+    _tools_distortion_comp_enabled: list[bool]
     _tools_distortion_cache: dict[tuple[object, ...], object]
     _tools_distortion_cache_last_data_key: tuple[int, int, int] | None
     _tools_extrema_cache: dict[tuple[object, ...], np.ndarray]

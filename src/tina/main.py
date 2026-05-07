@@ -3396,7 +3396,12 @@ class VNAApp(App):
             and display_key == self._tools_plot_display_key
         ):
             return
-        if cache_key == self._tools_plot_cache_key and plot_file.exists():
+        if (
+            cache_key == self._tools_plot_cache_key
+            and cache_key == self._latest_tools_render_cache_key
+            and plot_file.exists()
+            and display_key == self._tools_plot_display_key
+        ):
             await apply_tools_render_result(self)
             self._tools_plot_display_key = display_key
             return
