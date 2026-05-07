@@ -4,49 +4,60 @@ from __future__ import annotations
 
 import importlib
 import sys
+from contextlib import contextmanager
 from types import ModuleType
 from unittest.mock import Mock, patch
 
 import pytest
 
 
+@contextmanager
+def _evict_module(*names: str):
+    """Temporarily remove named modules from sys.modules and restore them afterward."""
+    saved = {n: sys.modules.pop(n, None) for n in names}
+    try:
+        yield
+    finally:
+        for name, module in saved.items():
+            sys.modules.pop(name, None)
+            if module is not None:
+                sys.modules[name] = module
+
+
 @pytest.mark.unit
 def test_gui_package_exports_names_without_eager_main_import():
     """The GUI package should advertise app entry points without importing them eagerly."""
-    sys.modules.pop("tina.gui", None)
-    sys.modules.pop("tina.main", None)
-    gui = importlib.import_module("tina.gui")
+    with _evict_module("tina.gui"):
+        gui = importlib.import_module("tina.gui")
 
-    assert "VNAApp" in gui.__all__
-    assert "run_gui" in gui.__all__
-    assert "main" in gui.__all__
-    assert "VNAApp" not in gui.__dict__
-    assert "__all__" in gui.__dir__()
+        assert "VNAApp" in gui.__all__
+        assert "run_gui" in gui.__all__
+        assert "main" in gui.__all__
+        assert "VNAApp" not in gui.__dict__
+        assert "__all__" in gui.__dir__()
 
 
 @pytest.mark.unit
 def test_gui_package_lazy_exports_resolve_through_getattr():
     """The GUI package should only resolve exports when accessed."""
-    sys.modules.pop("tina.gui", None)
-    sys.modules.pop("tina.main", None)
-    gui = importlib.import_module("tina.gui")
-    fake_main = ModuleType("tina.main")
-    setattr(fake_main, "VNAApp", object())
-    setattr(fake_main, "run_gui", object())
-    setattr(fake_main, "main", object())
+    with _evict_module("tina.gui"):
+        gui = importlib.import_module("tina.gui")
+        fake_main = ModuleType("tina.main")
+        setattr(fake_main, "VNAApp", object())
+        setattr(fake_main, "run_gui", object())
+        setattr(fake_main, "main", object())
 
-    with patch.dict(sys.modules, {"tina.main": fake_main}):
-        assert gui.VNAApp is fake_main.VNAApp
-        assert gui.run_gui is fake_main.run_gui
-        assert gui.main is fake_main.main
+        with patch.dict(sys.modules, {"tina.main": fake_main}):
+            assert gui.VNAApp is fake_main.VNAApp
+            assert gui.run_gui is fake_main.run_gui
+            assert gui.main is fake_main.main
 
 
 @pytest.mark.unit
 def test_gui_app_module_exports_names_without_eager_main_import():
     """The dedicated GUI app module should advertise app symbols lazily."""
-    sys.modules.pop("tina.gui.app", None)
-    sys.modules.pop("tina.main", None)
-    gui_app = importlib.import_module("tina.gui.app")
+    with _evict_module("tina.gui.app"):
+        gui_app = importlib.import_module("tina.gui.app")
 
     assert "VNAApp" in gui_app.__all__
     assert "run_gui" in gui_app.__all__
