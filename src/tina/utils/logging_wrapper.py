@@ -8,7 +8,6 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
-from ..drivers.base import VNABase
 
 
 class LoggingVNAWrapper:
@@ -34,7 +33,7 @@ class LoggingVNAWrapper:
 
     def __init__(
         self,
-        vna: VNABase | Any,
+        vna: Any,
         log_callback: Callable[[str, str], None],
         on_scpi_error: Callable[[str, str], None] | None = None,
     ):

@@ -73,6 +73,8 @@ class TestValidateTemplate:
         )
 
         assert validation.has_errors is True
+        assert "/" in PATH_INVALID_CHARS
+        assert "\\" in PATH_INVALID_CHARS
         assert ":" in validation.invalid_characters
         assert "*" in validation.invalid_characters
 

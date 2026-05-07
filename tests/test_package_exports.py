@@ -19,6 +19,7 @@ def test_gui_package_exports_names_without_eager_main_import():
     assert "run_gui" in gui.__all__
     assert "main" in gui.__all__
     assert "VNAApp" not in gui.__dict__
+    assert "__all__" in gui.__dir__()
 
 
 @pytest.mark.unit

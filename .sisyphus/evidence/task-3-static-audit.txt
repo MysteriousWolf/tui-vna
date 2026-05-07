@@ -1,0 +1,6 @@
+23:PATH_INVALID_CHARS = frozenset('<>:"|?*/\\')
+177:    async def _refresh_tools_plot(self) -> None: ...
+179:    async def _rebuild_tools_params(self) -> None: ...
+31:def __dir__() -> list[str]:
+25:            yield Static("No file loaded", id="output_file_label", markup=False)
+25:            yield Static("No file loaded", id="output_file_label", markup=False)

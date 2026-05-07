@@ -22,7 +22,7 @@ def compose_measurement_tab(app) -> ComposeResult:
     with Container(id="output_file_container", classes="panel") as panel:
         panel.border_title = "Output"
         with Horizontal(classes="plot-controls"):
-            yield Static("No file loaded", id="output_file_label", markup=True)
+            yield Static("No file loaded", id="output_file_label", markup=False)
             yield Static(classes="spacer")
             yield Button(
                 "📂\nShow",

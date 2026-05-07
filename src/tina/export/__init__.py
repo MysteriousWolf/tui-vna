@@ -20,7 +20,7 @@ from .templates import (
     validate_template,
 )
 
-PATH_INVALID_CHARS = frozenset('<>:"|?*')
+PATH_INVALID_CHARS = frozenset('<>:"|?*/\\')
 DEFAULT_TEMPLATE_TAGS = SUPPORTED_SHORT_TAGS
 TemplateRenderContext = dict[str, object]
 TemplateValidationResult = TemplateValidation
