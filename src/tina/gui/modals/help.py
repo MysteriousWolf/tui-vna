@@ -167,9 +167,9 @@ class HelpScreen(ModalScreen):
             tuple[Path, int, int] | None: `(path, width_px, height_px)` on success, or `None` on failure.
         """
         try:
-            import matplotlib.pyplot as plt
             from io import BytesIO
 
+            import matplotlib.pyplot as plt
             from PIL import Image as PILImage
             from PIL import ImageColor
 
@@ -231,6 +231,7 @@ class HelpScreen(ModalScreen):
         except Exception:
             try:
                 import matplotlib.pyplot as plt
+
                 plt.close("all")
             except Exception:
                 pass
