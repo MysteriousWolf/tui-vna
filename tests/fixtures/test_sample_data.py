@@ -9,6 +9,15 @@ from tests.fixtures import sample_data
 class TestSampleData:
     """Validate deterministic sample-data helpers."""
 
+    @staticmethod
+    def _measured_rolloff_db_per_decade(
+        frequencies: np.ndarray, magnitude_db: np.ndarray
+    ) -> float:
+        """Estimate asymptotic slope from the final sweep decade."""
+        log_freqs = np.log10(frequencies)
+        slope, _ = np.polyfit(log_freqs[-50:], magnitude_db[-50:], deg=1)
+        return float(slope)
+
     @pytest.mark.unit
     def test_realistic_generators_are_deterministic_with_same_seed(self):
         """Identical seeds should reproduce identical S-parameter traces."""
@@ -77,28 +86,24 @@ class TestSampleData:
 
     @pytest.mark.unit
     def test_rolloff_db_per_decade_changes_s21_shape(self):
-        """Steeper rolloff should reduce high-frequency transmission more strongly."""
+        """Configured rolloff should match the total asymptotic slope semantics."""
         freqs = sample_data.generate_sample_frequencies(
-            start_hz=1e6, stop_hz=1e9, points=201
+            start_hz=1e6, stop_hz=1e10, points=801, sweep_type="logarithmic"
         )
+        for requested_slope in (-10.0, -20.0, -40.0):
+            magnitude_db, _ = sample_data.generate_realistic_s21(
+                freqs,
+                seed=11,
+                cutoff_freq=1e7,
+                rolloff_db_per_decade=requested_slope,
+            )
 
-        mild_mag, _ = sample_data.generate_realistic_s21(
-            freqs,
-            seed=11,
-            cutoff_freq=1e7,
-            rolloff_db_per_decade=-10.0,
-        )
-        steep_mag, _ = sample_data.generate_realistic_s21(
-            freqs,
-            seed=11,
-            cutoff_freq=1e7,
-            rolloff_db_per_decade=-40.0,
-        )
-
-        assert steep_mag[-1] < mild_mag[-1]
+            measured_slope = self._measured_rolloff_db_per_decade(freqs, magnitude_db)
+            assert measured_slope == pytest.approx(requested_slope, abs=0.8)
 
     @pytest.mark.unit
     def test_logarithmic_sweep_generates_geometrically_spaced_frequencies(self):
+        """Logarithmic sweep should produce a geometric frequency progression."""
         freqs = sample_data.generate_sample_frequencies(
             points=11,
             start_hz=100e6,

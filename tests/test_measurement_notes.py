@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from src.tina.main import VNAApp
+from tina.main import VNAApp
 
 
 class _FakeInputChangedEvent:
@@ -63,30 +63,22 @@ class _FakeApp:
 class TestMeasurementNotesState:
     """Tests for measurement-notes state synchronization."""
 
-    def test_handle_measurement_notes_change_updates_app_state_without_measurement(
+    def test_sync_measurement_notes_from_editor_updates_app_state_without_measurement(
         self,
     ) -> None:
-        """Editor text should update app-level notes even before a measurement exists."""
+        """Sync should copy editor text into app state without requiring measurement data."""
         app = _FakeApp(notes_text="")
-        event = _FakeInputChangedEvent("# Notes\nInitial draft")
-        app._sync_measurement_notes_from_editor = cast(
-            Any,
-            lambda: setattr(app, "measurement_notes", event.value),
-        )
-        app._refresh_measurement_notes_preview = cast(
-            Any,
-            lambda: app._notes_preview.update(event.value),
-        )
+        app._notes_editor.text = "# Notes\nInitial draft"
 
-        VNAApp.handle_measurement_notes_change(cast(Any, app), cast(Any, event))
+        VNAApp._sync_measurement_notes_from_editor(cast(Any, app))
 
         assert app.measurement_notes == "# Notes\nInitial draft"
         assert app.last_measurement is None
 
-    def test_handle_measurement_notes_change_updates_cached_measurement_notes(
+    def test_sync_measurement_notes_from_editor_updates_cached_measurement_notes(
         self,
     ) -> None:
-        """Editor text should also be mirrored into cached measurement state."""
+        """Sync should mirror editor text into cached measurement notes when present."""
         app = _FakeApp(
             notes_text="old",
             last_measurement={
@@ -96,25 +88,77 @@ class TestMeasurementNotesState:
                 "notes": "old",
             },
         )
-        event = _FakeInputChangedEvent("updated **markdown**")
-        app._sync_measurement_notes_from_editor = cast(
-            Any,
-            lambda: (
-                setattr(app, "measurement_notes", event.value),
-                app.last_measurement is not None
-                and app.last_measurement.__setitem__("notes", event.value),
-            ),
-        )
-        app._refresh_measurement_notes_preview = cast(
-            Any,
-            lambda: app._notes_preview.update(event.value),
-        )
+        app._notes_editor.text = "updated **markdown**"
 
-        VNAApp.handle_measurement_notes_change(cast(Any, app), cast(Any, event))
+        VNAApp._sync_measurement_notes_from_editor(cast(Any, app))
 
         assert app.measurement_notes == "updated **markdown**"
         assert app.last_measurement is not None
         assert app.last_measurement["notes"] == "updated **markdown**"
+
+    def test_handle_measurement_notes_change_uses_sync_and_preview_helpers(
+        self,
+    ) -> None:
+        """Change handler should delegate to the sync and preview helpers in order."""
+        app = _FakeApp(notes_text="")
+        calls: list[str] = []
+        app._sync_measurement_notes_from_editor = cast(
+            Any, lambda: calls.append("sync")
+        )
+        app._refresh_measurement_notes_preview = cast(
+            Any, lambda: calls.append("preview")
+        )
+
+        VNAApp.handle_measurement_notes_change(
+            cast(Any, app), cast(Any, _FakeInputChangedEvent("ignored"))
+        )
+
+        assert calls == ["sync", "preview"]
+
+    def test_load_measurement_notes_into_editor_prefers_cached_measurement_notes(
+        self,
+    ) -> None:
+        """Loading should prefer cached measurement notes over stale app state."""
+        app = _FakeApp(
+            notes_text="stale app notes",
+            last_measurement={
+                "freqs": [],
+                "sparams": {},
+                "output_path": "measurement/example_run.s2p",
+                "notes": "cached measurement notes",
+            },
+        )
+        app._refresh_measurement_notes_preview = cast(
+            Any, lambda: VNAApp._refresh_measurement_notes_preview(cast(Any, app))
+        )
+
+        VNAApp._load_measurement_notes_into_editor(cast(Any, app))
+
+        assert app.measurement_notes == "cached measurement notes"
+        assert app._notes_editor.text == "cached measurement notes"
+        assert app._notes_preview.content == "cached measurement notes"
+
+    def test_load_measurement_notes_into_editor_preserves_app_notes_when_missing(
+        self,
+    ) -> None:
+        """Loading should keep current app notes when cached measurement notes are absent."""
+        app = _FakeApp(
+            notes_text="draft from app state",
+            last_measurement={
+                "freqs": [],
+                "sparams": {},
+                "output_path": "measurement/example_run.s2p",
+            },
+        )
+        app._refresh_measurement_notes_preview = cast(
+            Any, lambda: VNAApp._refresh_measurement_notes_preview(cast(Any, app))
+        )
+
+        VNAApp._load_measurement_notes_into_editor(cast(Any, app))
+
+        assert app.measurement_notes == "draft from app state"
+        assert app._notes_editor.text == "draft from app state"
+        assert app._notes_preview.content == "draft from app state"
 
 
 @pytest.mark.unit
@@ -124,66 +168,49 @@ class TestMeasurementNotesPreviewHelpers:
     def test_refresh_notes_preview_shows_placeholder_for_empty_notes(self) -> None:
         """Empty notes should render the simplified placeholder preview."""
         app = _FakeApp(notes_text="")
+        app._notes_editor.text = "   "
 
         VNAApp._refresh_measurement_notes_preview(cast(Any, app))
 
         assert app._notes_preview.content == "No notes yet"
+        assert app.measurement_notes == "   "
 
     def test_refresh_notes_preview_renders_markdown_source(self) -> None:
         """Non-empty notes should be forwarded to the markdown preview widget."""
         app = _FakeApp(notes_text="# Heading\n- item one\n- item two")
+        app._notes_editor.text = "# Heading\n- item one\n- item two"
 
         VNAApp._refresh_measurement_notes_preview(cast(Any, app))
 
-        assert "# Heading" in app._notes_preview.content
-        assert "- item one" in app._notes_preview.content
+        assert app._notes_preview.content == "# Heading\n- item one\n- item two"
+        assert app.measurement_notes == "# Heading\n- item one\n- item two"
 
     def test_refresh_notes_preview_uses_editor_text_as_source_of_truth(self) -> None:
         """Preview refresh should read the current editor contents."""
         app = _FakeApp(notes_text="stale")
         app._notes_editor.text = "live editor text"
-        app.measurement_notes = "live editor text"
+        app.measurement_notes = "stale"
 
         VNAApp._refresh_measurement_notes_preview(cast(Any, app))
 
-        assert "live editor text" in app._notes_preview.content
+        assert app.measurement_notes == "live editor text"
+        assert app._notes_preview.content == "live editor text"
 
+    def test_refresh_notes_preview_updates_cached_measurement_notes(self) -> None:
+        """Preview refresh should keep cached measurement notes aligned with editor text."""
+        app = _FakeApp(
+            notes_text="old",
+            last_measurement={
+                "freqs": [],
+                "sparams": {},
+                "output_path": "measurement/example_run.s2p",
+                "notes": "old",
+            },
+        )
+        app._notes_editor.text = "latest note"
 
-@pytest.mark.unit
-class TestMeasurementNotesLayoutHelpers:
-    """Tests for small layout/state helpers related to measurement notes."""
+        VNAApp._refresh_measurement_notes_preview(cast(Any, app))
 
-    def test_new_measurement_notes_payload_can_be_stored_in_cached_measurement(
-        self,
-    ) -> None:
-        """Cached measurement dictionaries should accept a notes field."""
-        notes = "## DUT notes\nMeasured after warm-up."
-        measurement = {
-            "freqs": [],
-            "sparams": {},
-            "output_path": "measurement/example_run.s2p",
-            "notes": notes,
-        }
-
-        assert measurement["notes"] == notes
-
-    def test_measurement_notes_default_to_empty_string_when_missing(self) -> None:
-        """Missing notes should be treated as an empty markdown document."""
-        measurement = {
-            "freqs": [],
-            "sparams": {},
-            "output_path": "measurement/example_run.s2p",
-        }
-
-        notes = measurement.get("notes", "")
-
-        assert notes == ""
-
-    def test_notes_panel_ratio_helper_values_match_design_intent(self) -> None:
-        """The intended options-to-notes split should remain 5:4."""
-        options_fraction = 5
-        notes_fraction = 4
-
-        assert options_fraction == 5
-        assert notes_fraction == 4
-        assert options_fraction > notes_fraction
+        assert app.last_measurement is not None
+        assert app.last_measurement["notes"] == "latest note"
+        assert app._notes_preview.content == "latest note"

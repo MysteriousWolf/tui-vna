@@ -173,7 +173,9 @@ def generate_realistic_s21(
     Args:
         frequencies: Frequency array in Hz
         insertion_loss_db: Insertion loss in passband
-        rolloff_db_per_decade: Rolloff rate (negative for low-pass)
+        rolloff_db_per_decade: Total asymptotic high-frequency slope in dB/decade
+            (negative for low-pass), including the intrinsic -20 dB/decade from
+            the first-order pole used by this generator
         cutoff_freq: 3dB cutoff frequency (default: 70% of stop freq)
         seed: Optional deterministic noise seed
 
@@ -184,7 +186,13 @@ def generate_realistic_s21(
 
     normalized_ratio = np.maximum(frequencies / resolved_cutoff_freq, 1e-12)
     decades_above_cutoff = np.maximum(np.log10(normalized_ratio), 0.0)
-    rolloff_shape = 10 ** (rolloff_db_per_decade * decades_above_cutoff / 20.0)
+    intrinsic_rolloff_db_per_decade = -20.0
+    additional_rolloff_db_per_decade = (
+        rolloff_db_per_decade - intrinsic_rolloff_db_per_decade
+    )
+    rolloff_shape = 10 ** (
+        additional_rolloff_db_per_decade * decades_above_cutoff / 20.0
+    )
 
     s = 1j * 2 * np.pi * frequencies
     s0 = 1j * 2 * np.pi * resolved_cutoff_freq
@@ -223,7 +231,9 @@ def generate_realistic_s12(
     Args:
         frequencies: Frequency array in Hz
         insertion_loss_db: Insertion loss in passband
-        rolloff_db_per_decade: Rolloff rate (negative for low-pass)
+        rolloff_db_per_decade: Total asymptotic high-frequency slope in dB/decade
+            (negative for low-pass), including the intrinsic -20 dB/decade from
+            the first-order pole inherited from S21
         cutoff_freq: 3dB cutoff frequency
         seed: Optional deterministic noise seed
 
