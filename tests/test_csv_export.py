@@ -8,12 +8,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.tina.export import (
+from tina.export import (
     DEFAULT_TEMPLATE_TAGS,
     build_export_template_context,
     render_template,
 )
-from src.tina.export.csv import CsvExporter
+from tina.export.csv import CsvExporter
 
 
 @pytest.fixture

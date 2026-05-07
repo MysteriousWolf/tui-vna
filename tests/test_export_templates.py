@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from src.tina.export import (
+from tina.export import (
     DEFAULT_TEMPLATE_TAGS,
     PATH_INVALID_CHARS,
     build_export_template_context,

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.tina.gui.tabs import tools_logic
+from tina.gui.tabs import tools_logic
 
 
 class _FakeWidget:
@@ -41,6 +41,8 @@ class _FakeApp:
         self._tools_input_timer = None
         self._tools_cursor1_hz = None
         self._tools_cursor2_hz = None
+        self._tools_extrema_cache: dict[tuple, np.ndarray] = {}
+        self._tools_extrema_cache_last_data_id: int | None = None
         self._delayed_tools_refresh = lambda: None
         self._cursor1_input = _FakeWidget("")
         self._cursor2_input = _FakeWidget("")

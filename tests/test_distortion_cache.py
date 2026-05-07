@@ -5,14 +5,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.tina.gui.tabs import tools_logic
-from src.tina.tools.base import ToolResult
+from tina.gui.tabs import tools_logic
+from tina.tools.base import ToolResult
 
 
 class _FakeApp:
     """Minimal app stub for exercising distortion cache behavior."""
 
-    pass
+    def __init__(self) -> None:
+        self._tools_distortion_cache: dict[tuple, ToolResult] = {}
+        self._tools_distortion_cache_last_data_key: tuple | None = None
 
 
 @pytest.fixture

@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from src.tina.config.migration import (
+from tina.config.migration import (
     _NEW_APP_NAME,
     _OLD_APP_NAME,
     _try_remove,
@@ -31,7 +31,7 @@ class TestMigrateLegacyConfig:
 
     def test_returns_none_when_old_dir_not_present(self):
         """When ~/.config/hp-e5071b/ doesn't exist, migration is skipped."""
-        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
             mock_cfg.return_value = Path("/nonexistent/path")
             result = migrate_legacy_config()
         assert result is None
@@ -46,7 +46,7 @@ class TestMigrateLegacyConfig:
         new_dir.mkdir()
         (new_dir / "settings.yaml").write_text("key: value")
 
-        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
 
             def side_effect(name):
                 if name == _OLD_APP_NAME:
@@ -68,7 +68,7 @@ class TestMigrateLegacyConfig:
         new_dir = tmp_path / _NEW_APP_NAME
         new_dir.mkdir()  # new dir exists but no settings.yaml
 
-        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
 
             def side_effect(name):
                 if name == _OLD_APP_NAME:
@@ -90,7 +90,7 @@ class TestMigrateLegacyConfig:
         new_dir = tmp_path / _NEW_APP_NAME
         new_dir.mkdir()
 
-        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
 
             def side_effect(name):
                 if name == _OLD_APP_NAME:
@@ -112,7 +112,7 @@ class TestMigrateLegacyConfig:
         new_dir = tmp_path / _NEW_APP_NAME
         new_dir.mkdir()
 
-        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
 
             def side_effect(name):
                 if name == _OLD_APP_NAME:
@@ -135,7 +135,7 @@ class TestMigrateLegacyConfig:
         new_dir = tmp_path / _NEW_APP_NAME
         new_dir.mkdir()
 
-        with patch("src.tina.config.migration.user_config_dir") as mock_cfg:
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
 
             def side_effect(name):
                 if name == _OLD_APP_NAME:
@@ -144,7 +144,7 @@ class TestMigrateLegacyConfig:
 
             mock_cfg.side_effect = side_effect
 
-            with patch("src.tina.config.settings.SettingsManager.save"):
+            with patch("tina.config.settings.SettingsManager.save"):
                 result = migrate_legacy_config()
 
         assert result is not None
@@ -166,10 +166,10 @@ class TestMigrateLegacyConfig:
             return new_dir
 
         monkeypatch.setattr(
-            "src.tina.config.migration.user_config_dir", fake_user_config_dir
+            "tina.config.migration.user_config_dir", fake_user_config_dir
         )
 
-        from src.tina.config import settings
+        from tina.config import settings
 
         original_sm_init = settings.SettingsManager.__init__
 
@@ -181,9 +181,7 @@ class TestMigrateLegacyConfig:
 
             self.save = failing_save
 
-        monkeypatch.setattr(
-            "src.tina.config.settings.SettingsManager.__init__", bad_init
-        )
+        monkeypatch.setattr("tina.config.settings.SettingsManager.__init__", bad_init)
 
         result = migrate_legacy_config()
         assert result is None

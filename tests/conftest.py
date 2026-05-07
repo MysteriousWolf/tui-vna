@@ -5,14 +5,10 @@ Provides mocks, fixtures, and helpers for testing without hardware.
 """
 
 import queue
-from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 import pyvisa
-
-from src.tina.drivers.base import VNAConfig
-from src.tina.worker import MessageType
 
 # Import fixtures from our fixtures module
 from tests.fixtures.mock_visa import MockResourceManager, MockVisaResource
@@ -21,6 +17,8 @@ from tests.fixtures.sample_data import (
     generate_sample_frequencies,
     generate_sample_sparameters,
 )
+from tina.drivers.base import VNAConfig
+from tina.worker import MessageType
 
 # ===== Configuration Fixtures =====
 
@@ -192,7 +190,3 @@ def consume_worker_messages_until(
         except queue.Empty:
             return None
     return None
-
-
-# Make helper available to tests via import from this module.
-cast(Any, pytest).consume_worker_messages_until = consume_worker_messages_until

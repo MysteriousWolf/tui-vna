@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from src.tina.gui.tabs.tools_logic import _detect_candidates_with_smoothing
+from tina.gui.tabs.tools_logic import _detect_candidates_with_smoothing
 
 
 def _sample_waveform() -> tuple[np.ndarray, np.ndarray]:
@@ -26,7 +26,7 @@ class TestScipyFallback:
 
         with patch.dict("sys.modules", {"scipy.signal": None}):
             with patch(
-                "src.tina.gui.tabs.tools_logic.np.convolve", wraps=np.convolve
+                "tina.gui.tabs.tools_logic.np.convolve", wraps=np.convolve
             ) as convolve_mock:
                 peaks = _detect_candidates_with_smoothing(
                     data,
