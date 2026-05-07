@@ -131,10 +131,10 @@ def _fetch_releases() -> list[dict]:
 
 
 def _validate_releases_payload(payload: object) -> list[dict]:
-    """Validate that the GitHub releases response payload is a JSON list."""
+    """Validate that the GitHub releases response payload is a JSON list of dicts."""
     if not isinstance(payload, list):
         raise ValueError("GitHub releases payload must be a list")
-    return payload
+    return [entry for entry in payload if isinstance(entry, dict)]
 
 
 def get_changelogs_since(since_version: str, up_to_version: str) -> str:

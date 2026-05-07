@@ -2,12 +2,14 @@
 
 from textual.theme import Theme
 
+_PRIMARY = "#4a9eda"
+
 TINA_THEME = Theme(
     name="tina",
     dark=True,
     # --- Primary palette ---
     # Instrument blue: buttons, tab highlights, S21 traces
-    primary="#4a9eda",
+    primary=_PRIMARY,
     # Deeper blue for secondary chrome
     secondary="#3278b5",
     # Teal: distinct from blue, used for S12 traces and accent highlights
@@ -32,13 +34,13 @@ TINA_THEME = Theme(
     # --- Fine-grained widget overrides ---
     variables={
         # Block cursor: use primary blue on dark background, no text decoration
-        "block-cursor-background": "#4a9eda",
+        "block-cursor-background": _PRIMARY,
         "block-cursor-foreground": "#121212",
         "block-cursor-text-style": "none",
         # Footer key hints match primary
-        "footer-key-foreground": "#4a9eda",
+        "footer-key-foreground": _PRIMARY,
         # Text selection: semi-transparent primary
-        "input-selection-background": "#4a9eda 35%",
+        "input-selection-background": f"{_PRIMARY} 35%",
         # Button labels on primary-colored buttons read dark
         "button-color-foreground": "#121212",
         # No extra text style on focused buttons (underline looks noisy)

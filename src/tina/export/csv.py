@@ -32,12 +32,19 @@ class CsvExporter:
 
     def __init__(self, freq_unit: str = "MHz") -> None:
         """Initialize the exporter with the desired frequency unit."""
-        self.freq_unit = freq_unit
+        normalized = {"hz": "Hz", "khz": "kHz", "mhz": "MHz", "ghz": "GHz"}.get(
+            freq_unit.lower()
+        )
+        if normalized is None:
+            allowed = ", ".join(_FREQ_UNIT_FACTORS)
+            raise ValueError(
+                f"Unsupported frequency unit: {freq_unit!r}. Allowed: {allowed}"
+            )
+        self.freq_unit = normalized
 
     def _convert_frequency(self, freq_hz: float) -> float:
         """Convert one frequency value from Hz to the configured unit."""
-        factor = _FREQ_UNIT_FACTORS.get(self.freq_unit, _FREQ_UNIT_FACTORS["MHz"])
-        return freq_hz / factor
+        return freq_hz / _FREQ_UNIT_FACTORS[self.freq_unit]
 
     def _normalize_trace_order(
         self,
@@ -98,7 +105,14 @@ class CsvExporter:
         if not resolved_name.lower().endswith(".csv"):
             resolved_name += ".csv"
 
-        return output_dir / resolved_name
+        # Restrict to a plain filename to prevent path traversal via template output.
+        safe_name = Path(resolved_name).name
+        candidate = (output_dir / safe_name).resolve()
+        if not candidate.is_relative_to(output_dir.resolve()):
+            raise ValueError(
+                f"Resolved filename escapes output directory: {resolved_name!r}"
+            )
+        return candidate
 
     def export(
         self,

@@ -353,8 +353,8 @@ class TestSetupTemplateBindings:
             ),
             _template_input_timer=None,
             query_one=lambda selector, _widget_type: {
-                "#input_filename_prefix": filename_input,
-                "#input_output_folder": folder_input,
+                "#input_filename_template": filename_input,
+                "#input_folder_template": folder_input,
             }[selector],
             set_timer=lambda _delay, callback: SimpleNamespace(
                 stop=lambda: None,
@@ -404,7 +404,7 @@ class TestSetupTemplateBindings:
         filename_input = SimpleNamespace(value="run_{start}_{stop}_{pts}_{avg}")
         preview = self._PreviewStub()
         widgets = {
-            "#input_filename_prefix": filename_input,
+            "#input_filename_template": filename_input,
             "#preview_filename_template": preview,
             "#input_start_freq": SimpleNamespace(value="abc"),
             "#input_stop_freq": SimpleNamespace(value="  "),
@@ -426,7 +426,7 @@ class TestSetupTemplateBindings:
 
         setup_logic.update_template_preview(
             app,
-            "#input_filename_prefix",
+            "#input_filename_template",
             "#preview_filename_template",
             allow_path_separators=False,
             default_template="measurement_{date}_{time}",

@@ -10,6 +10,7 @@ CMD_IDN = "*IDN?"
 CMD_OPC = "*OPC?"
 CMD_RESET = "*RST"
 CMD_CLEAR_STATUS = "*CLS"  # Clears error queue and status registers
+CMD_BUS_TRIGGER = "*TRG"
 CMD_GET_SYSTEM_ERROR = "SYST:ERR?"
 
 # Data format commands

@@ -555,11 +555,11 @@ class VNAApp(App):
 
             # Output settings
             self.settings.output_folder = self.query_one(
-                "#input_output_folder", Input
+                "#input_folder_template", Input
             ).value
             self.settings.folder_template = self.settings.output_folder
             self.settings.filename_prefix = self.query_one(
-                "#input_filename_prefix", Input
+                "#input_filename_template", Input
             ).value
             self.settings.filename_template = self.settings.filename_prefix
             self.settings.export_s11 = self.query_one(
@@ -1235,14 +1235,14 @@ class VNAApp(App):
         restored_folder_template = (
             folder_template if isinstance(folder_template, str) else output_folder
         )
-        _set_input("#input_output_folder", restored_folder_template)
+        _set_input("#input_folder_template", restored_folder_template)
 
         filename_template = setup.get("filename_template")
         filename_prefix = setup.get("filename_prefix")
         restored_filename_template = (
             filename_template if isinstance(filename_template, str) else filename_prefix
         )
-        _set_input("#input_filename_prefix", restored_filename_template)
+        _set_input("#input_filename_template", restored_filename_template)
 
         _set_checkbox("#check_export_s11", setup.get("export_s11"))
         _set_checkbox("#check_export_s21", setup.get("export_s21"))
@@ -1567,13 +1567,13 @@ class VNAApp(App):
         if self.connected:
             self._start_status_polling(event.value)
 
-    @on(Input.Changed, "#input_filename_prefix, #input_output_folder")
+    @on(Input.Changed, "#input_filename_template, #input_folder_template")
     def on_export_template_change(self, event: Input.Changed) -> None:
         """Refresh export-template validation when the template inputs change."""
         del event
         setup_logic.handle_export_template_change(self)
 
-    @on(Button.Pressed, "#check_minimal_export")
+    @on(Button.Pressed, "#btn_minimal_export")
     def on_minimal_export_toggle_pressed(self, event: Button.Pressed) -> None:
         """Toggle minimal export mode from the Measurement tab button."""
         del event
@@ -1832,7 +1832,7 @@ class VNAApp(App):
 
     def _refresh_export_button_labels(self) -> None:
         """Update Measurement-tab export controls to reflect minimal export mode."""
-        toggle_button = self.query_one("#check_minimal_export", Button)
+        toggle_button = self.query_one("#btn_minimal_export", Button)
         minimal_export = self._minimal_export_mode
         variant = "warning" if minimal_export else "success"
 
@@ -2253,7 +2253,7 @@ class VNAApp(App):
             freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
 
             filename_template = self.query_one(
-                "#input_filename_prefix", Input
+                "#input_filename_template", Input
             ).value.strip()
             if not filename_template:
                 filename_template = (
@@ -2261,7 +2261,7 @@ class VNAApp(App):
                 )
 
             folder_template = self.query_one(
-                "#input_output_folder", Input
+                "#input_folder_template", Input
             ).value.strip()
             if not folder_template:
                 folder_template = self.settings.folder_template or "measurement"
@@ -2279,13 +2279,13 @@ class VNAApp(App):
             self._folder_template_validation = folder_validation
             setup_logic.apply_template_input_state(
                 self,
-                "#input_filename_prefix",
+                "#input_filename_template",
                 filename_validation,
                 kind="filename template",
             )
             setup_logic.apply_template_input_state(
                 self,
-                "#input_output_folder",
+                "#input_folder_template",
                 folder_validation,
                 kind="folder template",
             )
@@ -4372,7 +4372,7 @@ class VNAApp(App):
         self._update_output_path_label()
 
         self._sync_measurement_action_buttons()
-        self.query_one("#check_minimal_export", Button).disabled = False
+        self.query_one("#btn_minimal_export", Button).disabled = False
         self._refresh_export_button_labels()
 
 

@@ -167,7 +167,10 @@ class KeysightP5007A(VNABase):
             except Exception as exc:
                 last_error = exc
         if last_error is not None:
-            raise last_error
+            attempted = ", ".join(repr(c) for c in commands)
+            raise RuntimeError(
+                f"All SCPI alternates failed ({attempted})"
+            ) from last_error
         raise RuntimeError("No SCPI commands were provided")
 
     def _parameter_name(self, param_num: int) -> str:
@@ -320,12 +323,23 @@ class KeysightP5007A(VNABase):
     def _wait_for_operation_complete(
         self, timeout_seconds: float = OPERATION_TIMEOUT_SEC
     ) -> None:
-        """Poll *OPC? until the current operation is complete."""
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            if self._query("*OPC?").strip() in {"1", "+1"}:
-                return
-            time.sleep(0.1)
+        """Poll *OPC? until the current operation is complete.
+
+        Temporarily raises the VISA timeout above timeout_seconds so the blocking
+        *OPC? query is not cut short by the per-command VISA timeout.
+        """
+        self._ensure_connected()
+        resource = cast(_VisaResourceProtocol, self.inst)
+        original_timeout = resource.timeout
+        resource.timeout = max(int(timeout_seconds * 1000) + 5000, original_timeout)
+        try:
+            deadline = time.time() + timeout_seconds
+            while time.time() < deadline:
+                if self._query("*OPC?").strip() in {"1", "+1"}:
+                    return
+                time.sleep(0.1)
+        finally:
+            resource.timeout = original_timeout
 
         raise TimeoutError(
             f"Operation did not complete within {timeout_seconds} seconds"
@@ -354,7 +368,11 @@ class KeysightP5007A(VNABase):
         time.sleep(0.1)
 
     def trigger_sweep(self) -> None:
-        """Trigger a single sweep on channel 1 and wait for completion."""
+        """Trigger a single sweep on channel 1 and wait for completion.
+
+        Mutates trigger state (sets INIT1:CONT OFF, TRIG:SOUR BUS). Callers must
+        bracket this with save_trigger_state() / restore_trigger_state().
+        """
         self._send_command("ABOR")
         time.sleep(0.1)
 

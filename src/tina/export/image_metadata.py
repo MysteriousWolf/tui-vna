@@ -149,6 +149,16 @@ def embed_png_metadata(
             _atomic_write_bytes(path, buffer.read())
 
 
+def _escape_svg_comment(text: str) -> str:
+    """Escape '-->' so it cannot prematurely close an XML comment."""
+    return text.replace("-->", "--&gt;")
+
+
+def _unescape_svg_comment(text: str) -> str:
+    """Reverse _escape_svg_comment."""
+    return text.replace("--&gt;", "-->")
+
+
 def _build_svg_comment_block(
     *,
     notes_markdown: str,
@@ -161,14 +171,14 @@ def _build_svg_comment_block(
     if notes:
         lines.append(f"<!-- {_SVG_NOTES_BEGIN}")
         lines.append("Raw markdown notes below. You may edit these manually.")
-        lines.extend(notes.splitlines())
+        lines.extend(_escape_svg_comment(notes).splitlines())
         lines.append(f"{_SVG_NOTES_END} -->")
 
     lines.append(f"<!-- {_SVG_METADATA_BEGIN}")
     lines.append("Machine-readable settings for TINA import/recovery.")
     lines.append("You may edit the markdown notes block manually, but avoid changing")
     lines.append("this machine settings block if reliable re-import is desired.")
-    lines.extend(_dump_yaml(machine_settings).splitlines())
+    lines.extend(_escape_svg_comment(_dump_yaml(machine_settings)).splitlines())
     lines.append(f"{_SVG_METADATA_END} -->")
 
     return "\n".join(lines) + "\n"
@@ -186,7 +196,7 @@ def _extract_svg_comment_block(
         re.DOTALL,
     )
     match = pattern.search(svg_text)
-    return match.group(1) if match else ""
+    return _unescape_svg_comment(match.group(1)) if match else ""
 
 
 def read_svg_metadata(image_path: str | Path) -> ImageExportMetadata:

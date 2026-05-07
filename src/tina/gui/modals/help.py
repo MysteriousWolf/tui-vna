@@ -7,7 +7,6 @@ import re
 import tempfile
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -168,6 +167,7 @@ class HelpScreen(ModalScreen):
             tuple[Path, int, int] | None: `(path, width_px, height_px)` on success, or `None` on failure.
         """
         try:
+            import matplotlib.pyplot as plt
             from io import BytesIO
 
             from PIL import Image as PILImage
@@ -229,7 +229,11 @@ class HelpScreen(ModalScreen):
             self._temp_files.append(tmp)
             return tmp, final.width, final.height
         except Exception:
-            plt.close("all")
+            try:
+                import matplotlib.pyplot as plt
+                plt.close("all")
+            except Exception:
+                pass
             return None
 
     def compose(self) -> ComposeResult:

@@ -23,21 +23,9 @@ from platformdirs import user_config_dir
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-_HISTORY_SELECTOR_WIDTH = 30
-_HISTORY_LABEL_MAX_LEN = _HISTORY_SELECTOR_WIDTH - 8
-
 _yaml = YAML()
 _yaml.default_flow_style = False
 _yaml.width = 4096  # prevent unwanted line wrapping
-
-
-def _truncate_history_label(value: str, max_len: int = _HISTORY_LABEL_MAX_LEN) -> str:
-    """Truncate a history label with ellipsis while preserving the full value separately."""
-    if len(value) <= max_len:
-        return value
-    if max_len <= 3:
-        return "." * max_len
-    return value[: max_len - 3] + "..."
 
 
 def _build_commented_map(data: dict) -> CommentedMap:

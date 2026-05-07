@@ -214,3 +214,19 @@ class TestMeasurementNotesPreviewHelpers:
         assert app.last_measurement is not None
         assert app.last_measurement["notes"] == "latest note"
         assert app._notes_preview.content == "latest note"
+
+    def test_sync_measurement_notes_from_editor_sets_notes_key_when_missing(
+        self,
+    ) -> None:
+        """Sync should create the 'notes' key if last_measurement lacks it."""
+        app = _FakeApp(
+            notes_text="draft",
+            last_measurement={"freqs": [], "sparams": {}, "output_path": "out/run.s2p"},
+        )
+        app._notes_editor.text = "new text"
+
+        VNAApp._sync_measurement_notes_from_editor(cast(Any, app))
+
+        assert app.measurement_notes == "new text"
+        assert app.last_measurement is not None
+        assert app.last_measurement["notes"] == "new text"

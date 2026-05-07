@@ -29,11 +29,6 @@
     height: 1fr;
 }
 
-#measurement_notes_editor_wrap {
-    width: 1fr;
-    height: 1fr;
-}
-
 #measurement_notes_separator {
     width: 1;
     height: 100%;
@@ -45,8 +40,6 @@
 }
 
 #measurement_notes_preview_wrap {
-    width: 1fr;
-    height: 1fr;
     padding: 0;
     margin: 0;
 }
@@ -91,7 +84,7 @@
     min-width: 9;
 }
 
-#check_minimal_export {
+#btn_minimal_export {
     width: auto;
     min-width: 7;
     height: 2;
@@ -105,14 +98,11 @@
 #btn_export_csv.-minimal-export,
 #btn_export_png.-minimal-export,
 #btn_export_svg.-minimal-export,
-#check_minimal_export.-minimal-export {
+#btn_minimal_export.-minimal-export {
     color: $warning;
     tint: $warning 15%;
     text-style: bold;
 }
-
-
-
 
 
 #output_file_container {

@@ -271,14 +271,14 @@ def mount_setup_autocompletes(app) -> None:
     )
     app.mount(
         TemplateAutoComplete(
-            "#input_filename_prefix",
+            "#input_filename_template",
             lambda: get_filename_template_autocomplete_choices(app),
             id="ac_filename_template",
         )
     )
     app.mount(
         TemplateAutoComplete(
-            "#input_output_folder",
+            "#input_folder_template",
             lambda: get_folder_template_autocomplete_choices(app),
             id="ac_folder_template",
         )
@@ -287,8 +287,8 @@ def mount_setup_autocompletes(app) -> None:
 
 def refresh_export_template_validation(app) -> None:
     """Validate current filename and folder templates and refresh input styling."""
-    filename_template = app.query_one("#input_filename_prefix", Input).value.strip()
-    folder_template = app.query_one("#input_output_folder", Input).value.strip()
+    filename_template = app.query_one("#input_filename_template", Input).value.strip()
+    folder_template = app.query_one("#input_folder_template", Input).value.strip()
 
     app._filename_template_validation = validate_export_template_for_app(
         filename_template or app.settings.filename_template,
@@ -301,26 +301,26 @@ def refresh_export_template_validation(app) -> None:
 
     apply_template_input_state(
         app,
-        "#input_filename_prefix",
+        "#input_filename_template",
         app._filename_template_validation,
         kind="filename template",
     )
     apply_template_input_state(
         app,
-        "#input_output_folder",
+        "#input_folder_template",
         app._folder_template_validation,
         kind="folder template",
     )
     update_template_preview(
         app,
-        "#input_filename_prefix",
+        "#input_filename_template",
         "#preview_filename_template",
         allow_path_separators=False,
         default_template=app.settings.filename_template or "measurement_{date}_{time}",
     )
     update_template_preview(
         app,
-        "#input_output_folder",
+        "#input_folder_template",
         "#preview_folder_template",
         allow_path_separators=True,
         default_template=app.settings.folder_template or "measurement",
@@ -336,9 +336,9 @@ def debounced_export_template_refresh(app) -> None:
 def handle_export_template_change(app) -> None:
     """Refresh export-template validation when the template inputs change."""
     app.settings.filename_template = app.query_one(
-        "#input_filename_prefix", Input
+        "#input_filename_template", Input
     ).value
-    app.settings.folder_template = app.query_one("#input_output_folder", Input).value
+    app.settings.folder_template = app.query_one("#input_folder_template", Input).value
     if app._template_input_timer is not None:
         app._template_input_timer.stop()
     app._template_input_timer = app.set_timer(

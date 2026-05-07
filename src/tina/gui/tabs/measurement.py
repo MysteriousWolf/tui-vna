@@ -34,7 +34,7 @@ def compose_measurement_tab(app) -> ComposeResult:
             )
             yield Button(
                 "▢\nMin",
-                id="check_minimal_export",
+                id="btn_minimal_export",
                 variant="default",
                 disabled=False,
                 flat=True,

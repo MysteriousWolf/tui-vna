@@ -19,6 +19,7 @@ def _import_matplotlib() -> None:
     """Preload Matplotlib and force the non-interactive backend."""
     import matplotlib as _mpl  # noqa: F401
 
+    # Agg is required: we render to PNG bytes with no display thread.
     _mpl.use("Agg")
     import matplotlib.pyplot as _plt  # noqa: F401
 

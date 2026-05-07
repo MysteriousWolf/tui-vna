@@ -132,7 +132,7 @@ def compose_setup_tab(app) -> ComposeResult:
                 yield Input(
                     value=app.settings.filename_template,
                     placeholder="measurement_{date}_{time}",
-                    id="input_filename_prefix",
+                    id="input_filename_template",
                     classes="col-input",
                 )
                 yield Static(
@@ -146,7 +146,7 @@ def compose_setup_tab(app) -> ComposeResult:
                 yield Input(
                     value=app.settings.folder_template,
                     placeholder="measurement",
-                    id="input_output_folder",
+                    id="input_folder_template",
                     classes="col-input",
                 )
                 yield Static(

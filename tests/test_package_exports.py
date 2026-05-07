@@ -13,6 +13,8 @@ import pytest
 @pytest.mark.unit
 def test_gui_package_exports_names_without_eager_main_import():
     """The GUI package should advertise app entry points without importing them eagerly."""
+    sys.modules.pop("tina.gui", None)
+    sys.modules.pop("tina.main", None)
     gui = importlib.import_module("tina.gui")
 
     assert "VNAApp" in gui.__all__
@@ -25,6 +27,8 @@ def test_gui_package_exports_names_without_eager_main_import():
 @pytest.mark.unit
 def test_gui_package_lazy_exports_resolve_through_getattr():
     """The GUI package should only resolve exports when accessed."""
+    sys.modules.pop("tina.gui", None)
+    sys.modules.pop("tina.main", None)
     gui = importlib.import_module("tina.gui")
     fake_main = ModuleType("tina.main")
     setattr(fake_main, "VNAApp", object())
@@ -40,6 +44,8 @@ def test_gui_package_lazy_exports_resolve_through_getattr():
 @pytest.mark.unit
 def test_gui_app_module_exports_names_without_eager_main_import():
     """The dedicated GUI app module should advertise app symbols lazily."""
+    sys.modules.pop("tina.gui.app", None)
+    sys.modules.pop("tina.main", None)
     gui_app = importlib.import_module("tina.gui.app")
 
     assert "VNAApp" in gui_app.__all__

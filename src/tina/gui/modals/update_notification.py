@@ -11,6 +11,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Markdown, Static
 
+from ...utils.update_checker import ReleaseInfo
+
 ButtonVariantName = Literal["default", "primary", "success", "warning", "error"]
 DEFAULT_GITHUB_RELEASES_URL = "https://github.com/MysteriousWolf/tui-vna/releases"
 DEFAULT_GITHUB_RELEASE_URL = "https://github.com/MysteriousWolf/tui-vna/releases/latest"
@@ -120,7 +122,7 @@ def _display_version(version: str) -> str:
     )
 
 
-def build_update_screen(release_info) -> UpdateNotificationScreen:
+def build_update_screen(release_info: ReleaseInfo) -> UpdateNotificationScreen:
     """Create an update notification screen configured for the given release information."""
     rel = release_info
     release_url = _build_release_url(rel.version, rel.html_url or None)

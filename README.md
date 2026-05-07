@@ -164,7 +164,7 @@ with HPE5071B(config) as vna:
 
 ## Development
 
-**Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, SciPy, Matplotlib
+**Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, SciPy, Matplotlib, scikit-rf
 
 **Note:** Importing measurements does not auto-switch tabs; the current tab stays active until you change it manually.
 

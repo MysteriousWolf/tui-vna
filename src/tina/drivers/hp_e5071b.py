@@ -23,6 +23,7 @@ from ..config.constants import (
 from .base import VNABase, VNAConfig
 from .scpi_commands import (
     CMD_ABORT,
+    CMD_BUS_TRIGGER,
     CMD_GET_FREQ_DATA,
     CMD_GET_INIT_CONTINUOUS,
     CMD_GET_SDATA,
@@ -487,7 +488,7 @@ class HPE5071B(VNABase):
         # Trigger new measurement
         self._send_command(CMD_INIT)
         time.sleep(0.1)
-        self._send_command("*TRG")
+        self._send_command(CMD_BUS_TRIGGER)
         time.sleep(0.1)
 
         # Wait for sweep completion
