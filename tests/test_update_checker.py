@@ -11,6 +11,7 @@ from tina.gui.modals.update_notification import (
     DEFAULT_GITHUB_RELEASE_URL,
     DEFAULT_GITHUB_RELEASES_URL,
     build_update_screen,
+    build_welcome_screen,
 )
 from tina.utils.update_checker import ReleaseInfo, _fetch_releases
 
@@ -65,3 +66,26 @@ def test_update_modal_falls_back_when_release_url_missing() -> None:
         screen.open_github_release()
 
     open_browser.assert_called_once_with(DEFAULT_GITHUB_RELEASE_URL)
+
+
+@pytest.mark.parametrize("version", ["1.2.3", "v1.2.3"])
+def test_update_modal_title_uses_single_leading_v(version: str) -> None:
+    """Update titles should normalize plain and prefixed versions to one leading v."""
+    release = ReleaseInfo(
+        version=version,
+        is_prerelease=False,
+        changelog="Bug fixes.",
+        html_url="https://github.com/MysteriousWolf/tui-vna/releases/latest",
+    )
+
+    screen = build_update_screen(release)
+
+    assert screen._title == "Update available:  v1.2.3"
+
+
+@pytest.mark.parametrize("version", ["1.2.3", "v1.2.3"])
+def test_welcome_modal_title_uses_single_leading_v(version: str) -> None:
+    """Welcome titles should normalize plain and prefixed versions to one leading v."""
+    screen = build_welcome_screen(version, "Thanks for updating.")
+
+    assert screen._title == "Thanks for updating to v1.2.3!"

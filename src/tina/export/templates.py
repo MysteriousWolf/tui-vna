@@ -86,6 +86,7 @@ class TemplateHistory:
 
 
 def _stable_unique(values: Sequence[str]) -> tuple[str, ...]:
+    """Return items in first-seen order with duplicates removed."""
     seen: set[str] = set()
     out: list[str] = []
     for item in values:

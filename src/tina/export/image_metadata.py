@@ -19,6 +19,7 @@ _SVG_NOTES_BEGIN = "TINA NOTES BEGIN"
 _SVG_NOTES_END = "TINA NOTES END"
 _SVG_METADATA_BEGIN = "TINA METADATA BEGIN"
 _SVG_METADATA_END = "TINA METADATA END"
+_SVG_OPEN_TAG_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE | re.DOTALL)
 
 _yaml = YAML()
 _yaml.default_flow_style = False
@@ -256,7 +257,8 @@ def embed_svg_metadata(
     )
 
     svg_text = path.read_text(encoding="utf-8")
-    if "<svg" not in svg_text:
+    svg_open_match = _SVG_OPEN_TAG_RE.search(svg_text)
+    if svg_open_match is None:
         raise ValueError("SVG file does not contain an <svg> root element")
 
     svg_text = _strip_svg_comment_block(
@@ -275,12 +277,7 @@ def embed_svg_metadata(
         machine_settings=metadata.machine_settings,
     )
 
-    svg_start = svg_text.find("<svg")
-    if svg_start == -1:
-        raise ValueError("SVG file does not contain an <svg> root element")
-    insert_at = svg_text.find(">", svg_start)
-    if insert_at == -1:
-        raise ValueError("SVG file does not contain a valid opening <svg> tag")
+    insert_at = svg_open_match.end() - 1
 
     updated_svg = (
         svg_text[: insert_at + 1] + "\n" + comment_block + svg_text[insert_at + 1 :]

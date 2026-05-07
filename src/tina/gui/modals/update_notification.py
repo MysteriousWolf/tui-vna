@@ -108,12 +108,25 @@ def _build_release_url(version: str, fallback_url: str | None = None) -> str:
     return DEFAULT_GITHUB_RELEASE_URL
 
 
+def _display_version(version: str) -> str:
+    """Return a release version with exactly one leading ``v`` when present."""
+    normalized_version = version.strip()
+    if not normalized_version:
+        return ""
+    return (
+        normalized_version
+        if normalized_version.startswith("v")
+        else f"v{normalized_version}"
+    )
+
+
 def build_update_screen(release_info) -> UpdateNotificationScreen:
     """Create an update notification screen configured for the given release information."""
     rel = release_info
     release_url = _build_release_url(rel.version, rel.html_url or None)
+    display_version = _display_version(rel.version)
     if rel.is_prerelease:
-        intro = f"A new pre-release **v{rel.version}** is available.\n\n"
+        intro = f"A new pre-release **{display_version}** is available.\n\n"
         body = intro + (
             rel.changelog if rel.changelog else f"[View on GitHub]({release_url})"
         )
@@ -122,7 +135,7 @@ def build_update_screen(release_info) -> UpdateNotificationScreen:
         body = rel.changelog or "_No changelog provided._"
         badge, badge_class = "STABLE", "badge-stable"
     return UpdateNotificationScreen(
-        title=f"Update available:  v{rel.version}",
+        title=f"Update available:  {display_version}",
         body=body,
         button_label="Dismiss",
         badge=badge,
@@ -134,8 +147,9 @@ def build_update_screen(release_info) -> UpdateNotificationScreen:
 def build_welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
     """Build an update notification screen for the post-update welcome."""
     release_url = _build_release_url(version)
+    display_version = _display_version(version)
     return UpdateNotificationScreen(
-        title=f"Thanks for updating to v{version}!",
+        title=f"Thanks for updating to {display_version}!",
         body=changelog,
         button_label="Got it!",
         button_variant="success",

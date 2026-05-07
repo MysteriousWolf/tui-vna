@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from PIL import Image
 
-from src.tina.export.image_metadata import (
+from tina.export.image_metadata import (
     ImageExportMetadata,
     build_image_export_metadata,
     embed_png_metadata,
@@ -175,7 +176,10 @@ class TestEmbedPngMetadata:
             notes_markdown="updated notes",
             machine_settings={
                 **sample_machine_settings,
-                "setup": {**sample_machine_settings["setup"], "host": "updated-host"},
+                "setup": {
+                    **cast(dict[str, Any], sample_machine_settings["setup"]),
+                    "host": "updated-host",
+                },
             },
         )
 
@@ -264,6 +268,38 @@ class TestEmbedSvgMetadata:
         assert metadata_begin > svg_open_end
         assert "<g><circle" in content
 
+    def test_embed_svg_metadata_inserts_after_multiline_svg_root_tag(
+        self, tmp_path: Path, sample_machine_settings: dict[str, object]
+    ) -> None:
+        """Metadata insertion should handle an opening SVG tag split across lines."""
+        image_path = tmp_path / "plot.svg"
+        original = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            "<svg\n"
+            '  xmlns="http://www.w3.org/2000/svg"\n'
+            '  viewBox="0 0 10 10">\n'
+            "  <text>&lt;svg should stay literal in content</text>\n"
+            "</svg>\n"
+        )
+        image_path.write_text(original, encoding="utf-8")
+
+        embed_svg_metadata(
+            image_path,
+            notes_markdown="notes",
+            machine_settings=sample_machine_settings,
+        )
+
+        content = image_path.read_text(encoding="utf-8")
+        svg_open_end = content.find('viewBox="0 0 10 10">') + len(
+            'viewBox="0 0 10 10">'
+        )
+        metadata_begin = content.find("<!-- TINA NOTES BEGIN")
+        text_node = content.find("<text>")
+
+        assert metadata_begin != -1
+        assert metadata_begin > svg_open_end
+        assert metadata_begin < text_node
+
     def test_embed_svg_metadata_rejects_missing_svg_root(
         self, tmp_path: Path, sample_machine_settings: dict[str, object]
     ) -> None:
@@ -297,7 +333,10 @@ class TestEmbedSvgMetadata:
             notes_markdown="updated notes",
             machine_settings={
                 **sample_machine_settings,
-                "setup": {**sample_machine_settings["setup"], "host": "updated-host"},
+                "setup": {
+                    **cast(dict[str, Any], sample_machine_settings["setup"]),
+                    "host": "updated-host",
+                },
             },
         )
 
