@@ -31,6 +31,17 @@ class _TemplateRefreshApp(Protocol):
     ) -> bool: ...
 
 
+def _build_dropdown_item(choice: AutocompleteChoice) -> DropdownItem:
+    """Build a dropdown item whose emitted value stays canonical."""
+    prefix_parts: list[str] = []
+    if choice.prefix:
+        prefix_parts.append(choice.prefix)
+    if choice.label != choice.value:
+        prefix_parts.append(f"{choice.label} ")
+    prefix = "".join(prefix_parts) or None
+    return DropdownItem(choice.value, prefix=prefix)
+
+
 class HistoryReplaceAutoComplete(AutoComplete):
     """Autocomplete for inputs where selecting a suggestion replaces the full value."""
 
@@ -57,7 +68,7 @@ class HistoryReplaceAutoComplete(AutoComplete):
                 and query not in choice.value.lower()
             ):
                 continue
-            items.append(DropdownItem(choice.label, prefix=choice.prefix))
+            items.append(_build_dropdown_item(choice))
         return items
 
 
@@ -85,7 +96,7 @@ class TemplateAutoComplete(AutoComplete):
             haystack = f"{choice.label} {choice.value}".lower()
             if search and search not in haystack:
                 continue
-            items.append(DropdownItem(choice.label, prefix=choice.prefix))
+            items.append(_build_dropdown_item(choice))
         return items
 
     def get_search_string(self, target_state: TargetState) -> str:

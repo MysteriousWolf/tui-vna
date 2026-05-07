@@ -96,6 +96,7 @@ class StatusPollProvider(Provider):
         app = cast(_VNAAppProtocol, self.app)
         app.settings.status_poll_interval = value
         self.app.query_one("#sb_poll_interval", Select).value = value
+        app.settings_manager.save(app.settings)
         if app.connected:
             app._start_status_polling(value)
 

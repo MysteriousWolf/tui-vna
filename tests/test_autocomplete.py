@@ -5,10 +5,10 @@ from typing import cast
 from textual.widgets import Input
 from textual_autocomplete._autocomplete import TargetState
 
-from src.tina.gui.components.autocomplete import (
+from tina.gui.components.autocomplete import (
     AutocompleteChoice as _AutocompleteChoice,
 )
-from src.tina.gui.components.autocomplete import (
+from tina.gui.components.autocomplete import (
     HistoryReplaceAutoComplete,
     TemplateAutoComplete,
 )
@@ -118,6 +118,23 @@ class TestHistoryReplaceAutoComplete:
         )
 
         assert [item.value for item in candidates] == ["inst0"]
+
+    def test_get_candidates_emit_canonical_value_when_label_differs(self):
+        choices = [
+            _AutocompleteChoice(
+                value="main.plain",
+                kind="history",
+                label="Main Plain",
+                prefix="↺ ",
+            ),
+        ]
+        autocomplete = _HistoryReplaceAutoCompleteUnderTest(choices)
+
+        candidates = autocomplete.get_candidates(
+            cast(TargetState, _FakeState("main", 4))
+        )
+
+        assert [item.value for item in candidates] == ["main.plain"]
 
 
 class TestTemplateAutoComplete:
@@ -278,3 +295,26 @@ class TestTemplateAutoComplete:
         )
 
         assert [item.value for item in candidates] == ["{date}", "measurement_{date}"]
+
+    def test_tag_completion_uses_canonical_value_when_label_differs(self):
+        choices = [
+            _AutocompleteChoice(
+                value="main.plain",
+                kind="tag",
+                label="Main Plain",
+                prefix="# ",
+            ),
+        ]
+        autocomplete = _TemplateAutoCompleteUnderTest(
+            choices,
+            target_value="theme={mai}",
+        )
+        autocomplete.target.cursor_position = len("theme={mai")
+
+        autocomplete.apply_completion(
+            "main.plain",
+            cast(TargetState, _FakeState("theme={mai}", len("theme={mai"))),
+        )
+
+        assert autocomplete.target.value == "theme=main.plain"
+        assert autocomplete.target.cursor_position == len("theme=main.plain")
