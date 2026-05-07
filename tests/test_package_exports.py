@@ -13,8 +13,21 @@ import pytest
 
 @contextmanager
 def _evict_module(*names: str):
-    """Temporarily remove named modules from sys.modules and restore them afterward."""
+    """Temporarily remove named modules from sys.modules and restore them afterward.
+
+    Also restores the submodule attribute on parent packages so that
+    ``sys.modules["tina"].gui`` stays consistent with ``sys.modules["tina.gui"]``.
+    """
     saved = {n: sys.modules.pop(n, None) for n in names}
+    # Record the current submodule attribute on each parent package.
+    parent_state: list[tuple[object, str, object]] = []
+    for name in names:
+        dot = name.rfind(".")
+        if dot != -1:
+            parent_name, attr = name[:dot], name[dot + 1 :]
+            parent = sys.modules.get(parent_name)
+            if parent is not None:
+                parent_state.append((parent, attr, getattr(parent, attr, None)))
     try:
         yield
     finally:
@@ -22,6 +35,15 @@ def _evict_module(*names: str):
             sys.modules.pop(name, None)
             if module is not None:
                 sys.modules[name] = module
+        # Restore parent submodule attributes so later imports stay consistent.
+        for parent, attr, original_val in parent_state:
+            if original_val is not None:
+                setattr(parent, attr, original_val)
+            else:
+                try:
+                    delattr(parent, attr)
+                except AttributeError:
+                    pass
 
 
 @pytest.mark.unit
