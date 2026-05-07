@@ -346,6 +346,13 @@ def create_smith_chart(
         fig.patch.set_facecolor(colors["bg"])
     ax.set_facecolor("none" if transparent else colors["bg"])
     ax.set_aspect("equal")
+    freq_start_mhz = freqs[0] / 1e6
+    freq_end_mhz = freqs[-1] / 1e6
+    label_box_style = {
+        "boxstyle": "round,pad=0.3",
+        "facecolor": colors["bg"],
+        "alpha": 0.8,
+    }
 
     rf.plotting.smith(
         ax=ax,
@@ -436,8 +443,6 @@ def create_smith_chart(
             zorder=15,
         )
 
-        freq_start_mhz = freqs[0] / 1e6
-        freq_end_mhz = freqs[-1] / 1e6
         ax.annotate(
             f"{freq_start_mhz:.0f} MHz",
             (s_complex[0].real, s_complex[0].imag),
@@ -445,12 +450,7 @@ def create_smith_chart(
             textcoords="offset points",
             color=trace_color,
             fontsize=base_size * 0.7,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=colors["bg"],
-                edgecolor=trace_color,
-                alpha=0.8,
-            ),
+            bbox={**label_box_style, "edgecolor": trace_color},
         )
         ax.annotate(
             f"{freq_end_mhz:.0f} MHz",
@@ -459,12 +459,7 @@ def create_smith_chart(
             textcoords="offset points",
             color=trace_color,
             fontsize=base_size * 0.7,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=colors["bg"],
-                edgecolor=trace_color,
-                alpha=0.8,
-            ),
+            bbox={**label_box_style, "edgecolor": trace_color},
         )
 
     ax.set_title("Smith Chart", color=fg_color, fontsize=base_size * 1.2, pad=15)

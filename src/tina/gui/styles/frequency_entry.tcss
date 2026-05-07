@@ -39,15 +39,3 @@ FrequencyEntry .freq-input {
     height: 3;
     /* Allow the input to autosize and take remaining space in the row */
 }
-
-/* DEBUG-ALIGN: temporary visual helpers for alignment inspection */
-FrequencyEntry > .freq-entry-row.dbg-row {
-    background: $accent;
-}
-FrequencyEntry > .freq-entry-row > Button.dbg-btn {
-    background: $primary;
-    color: $surface;
-    border: round $surface;
-}
-/* measurement buttons debug style (same visual) */
-Button.dbg-btn { background: $primary; color: $surface; border: round $surface; }
