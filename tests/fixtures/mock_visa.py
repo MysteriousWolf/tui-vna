@@ -94,7 +94,7 @@ class MockVisaResource:
         if indexed_match:
             return int(indexed_match.group(1))
 
-        named_match = re.search("CALC1:PAR:SEL\\s+['\"]?(S[12][12])['\"]?", normalized)
+        named_match = re.search(r"CALC1:PAR:SEL\s+['\"]?(S[12][12])['\"]?", normalized)
         if named_match:
             return {"S11": 1, "S21": 2, "S12": 3, "S22": 4}[named_match.group(1)]
 

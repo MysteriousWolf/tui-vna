@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.css.query import NoMatches, WrongType
 from textual.widgets import Button, Input, Label, Static
 
 # Unit multipliers for converting displayed unit -> Hz
@@ -46,10 +47,6 @@ class FrequencyEntry(Static):
       label: optional label text displayed to the left of the input
       freq_unit: visible/default unit for the input ("MHz" by default)
 
-    Events:
-      FrequencyEntry.FrequencyChanged(self, hz: Optional[float])
-      FrequencyEntry.ExtremaNavigate(self, direction: int, minima: bool, smoothing: bool)
-      FrequencyEntry.ModeChanged(self, minima: bool, smoothing: bool)
     """
 
     # FrequencyChanged message class removed — FrequencyEntry no longer emits
@@ -172,14 +169,14 @@ class FrequencyEntry(Static):
             try:
                 inp = self.query_one(f"#{self.input_id}", Input)
                 inp.placeholder = f"Frequency ({self.freq_unit})"
-            except Exception:
+            except (NoMatches, WrongType):
                 pass
 
     def set_frequency_hz(self, hz: float | None) -> None:
         """Update the input display from a frequency in Hz. Pass None to clear."""
         try:
             inp = self.query_one(f"#{self.input_id}", Input)
-        except Exception:
+        except (NoMatches, WrongType):
             return
         if hz is None:
             inp.value = ""
@@ -241,7 +238,7 @@ class FrequencyEntry(Static):
             elif btn_id == self.smooth_toggle_id:
                 btn.label = "∿" if active else "⎍"
                 btn.set_class(bool(active), "--active")
-        except Exception:
+        except (NoMatches, WrongType):
             pass
 
     # Event handlers -------------------------------------------------------
@@ -340,7 +337,7 @@ class FrequencyEntry(Static):
         """
         try:
             inp = self.query_one(f"#{self.input_id}", Input)
-        except Exception:
+        except (NoMatches, WrongType):
             return
         hz = self._parse_input_value_to_hz(inp.value or "")
         self._last_hz = hz

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.css.query import NoMatches, WrongType
 from textual.widgets import Footer, Static
 
 if TYPE_CHECKING:
@@ -151,7 +152,7 @@ class StatusFooter(Footer):
             w.remove_class(*_ALL_SB_STATE_CLASSES)
             if css_class:
                 w.add_class(css_class)
-        except Exception:
+        except (NoMatches, WrongType):
             pass
 
     def _apply_debug_chip(self) -> None:
@@ -170,7 +171,7 @@ class StatusFooter(Footer):
             chip.remove_class(*_ALL_SB_STATE_CLASSES)
             if css_class:
                 chip.add_class(css_class)
-        except Exception:
+        except (NoMatches, WrongType):
             pass
 
     def set_disconnected(self) -> None:
@@ -182,7 +183,7 @@ class StatusFooter(Footer):
                 w = self.query_one(f"#{item_id}", Static)
                 w.remove_class(*_ALL_SB_STATE_CLASSES)
                 w.add_class("--stale")
-            except Exception:
+            except (NoMatches, WrongType):
                 pass
         # Gray out debug chip while disconnected
         prev_text, _ = self._debug_chip_state

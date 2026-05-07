@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
+from io import StringIO
 from typing import Any
 
 import numpy as np
@@ -29,9 +30,13 @@ _NOTES_END = "TINA NOTES END"
 _METADATA_BEGIN = "TINA METADATA BEGIN"
 _METADATA_END = "TINA METADATA END"
 
-_yaml = YAML()
-_yaml.default_flow_style = False
-_yaml.width = 4096
+
+def _create_yaml() -> YAML:
+    """Return a fresh YAML serializer/parser with stable Touchstone settings."""
+    yaml = YAML()
+    yaml.default_flow_style = False
+    yaml.width = 4096
+    return yaml
 
 
 @dataclass(slots=True, frozen=True)
@@ -162,11 +167,7 @@ class TouchstoneExporter:
 
         payload = cls._build_metadata_payload(metadata)
 
-        from io import StringIO
-
-        yaml = YAML()
-        yaml.default_flow_style = False
-        yaml.width = 4096
+        yaml = _create_yaml()
         buffer = StringIO()
         yaml.dump(payload, buffer)
         yaml_text = buffer.getvalue().rstrip("\n")
@@ -262,7 +263,7 @@ class TouchstoneExporter:
             return None
 
         try:
-            yaml = YAML()
+            yaml = _create_yaml()
             parsed = yaml.load(yaml_text)
         except Exception:
             return None
