@@ -1,8 +1,9 @@
-"""
-Unit tests for VNA driver base classes and configuration.
+"""Unit tests for VNA driver base classes and configuration.
 
 Tests the base driver abstraction, driver discovery, and configuration.
 """
+
+import inspect
 
 import pytest
 
@@ -295,9 +296,9 @@ class TestVNABase:
 
     @pytest.mark.unit
     def test_vna_base_is_abstract(self):
-        """Test that VNABase cannot be instantiated directly."""
-        with pytest.raises(TypeError):
-            VNABase()
+        """Test that VNABase is declared abstract."""
+        assert inspect.isabstract(VNABase)
+        assert VNABase.__abstractmethods__
 
     @pytest.mark.unit
     def test_dummy_vna_instantiation(self, vna_config):
