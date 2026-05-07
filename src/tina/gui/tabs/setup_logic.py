@@ -20,12 +20,46 @@ from ..components import (
 )
 
 
+def _parse_float_preview_value(raw_value: str, fallback: float) -> float:
+    """Parse a float-like setup input for previews, falling back on invalid edits."""
+    try:
+        candidate = raw_value.strip()
+        if not candidate:
+            return fallback
+        return float(candidate)
+    except (AttributeError, ValueError):
+        return fallback
+
+
+def _parse_int_preview_value(raw_value: str, fallback: int) -> int:
+    """Parse an integer-like setup input for previews, falling back on invalid edits."""
+    try:
+        candidate = raw_value.strip()
+        if not candidate:
+            return fallback
+        return int(candidate)
+    except (AttributeError, ValueError):
+        return fallback
+
+
 def build_export_template_context_for_app(app) -> dict[str, object]:
     """Build export-template context from the current setup state."""
-    start_freq = float(app.query_one("#input_start_freq", Input).value or "1.0")
-    stop_freq = float(app.query_one("#input_stop_freq", Input).value or "1100.0")
-    sweep_points = int(app.query_one("#input_points", Input).value or "601")
-    averaging_count = int(app.query_one("#input_avg_count", Input).value or "16")
+    start_freq = _parse_float_preview_value(
+        app.query_one("#input_start_freq", Input).value,
+        app.settings.start_freq_mhz,
+    )
+    stop_freq = _parse_float_preview_value(
+        app.query_one("#input_stop_freq", Input).value,
+        app.settings.stop_freq_mhz,
+    )
+    sweep_points = _parse_int_preview_value(
+        app.query_one("#input_points", Input).value,
+        app.settings.sweep_points,
+    )
+    averaging_count = _parse_int_preview_value(
+        app.query_one("#input_avg_count", Input).value,
+        app.settings.averaging_count,
+    )
     span = stop_freq - start_freq
 
     return build_export_template_context(
@@ -301,6 +335,10 @@ def debounced_export_template_refresh(app) -> None:
 
 def handle_export_template_change(app) -> None:
     """Refresh export-template validation when the template inputs change."""
+    app.settings.filename_template = app.query_one(
+        "#input_filename_prefix", Input
+    ).value
+    app.settings.folder_template = app.query_one("#input_output_folder", Input).value
     if app._template_input_timer is not None:
         app._template_input_timer.stop()
     app._template_input_timer = app.set_timer(

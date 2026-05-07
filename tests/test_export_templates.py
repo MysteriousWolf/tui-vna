@@ -1,6 +1,8 @@
 """Tests for export template rendering and validation."""
 
 from datetime import datetime
+from inspect import getsource
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +13,8 @@ from tina.export import (
     render_template,
     validate_template,
 )
+from tina.gui.tabs import setup_logic
+from tina.gui.tabs.setup import compose_setup_tab
 
 
 @pytest.mark.unit
@@ -308,3 +312,128 @@ class TestRenderTemplate:
         should_clear = current_filename not in filename_values
 
         assert should_clear is False
+
+
+@pytest.mark.unit
+class TestSetupTemplateBindings:
+    """Tests for Setup tab template bindings and resilient preview parsing."""
+
+    class _PreviewStub:
+        """Minimal preview widget stub for setup preview tests."""
+
+        def __init__(self) -> None:
+            self.updated_text = ""
+            self.classes: dict[str, bool] = {}
+
+        def update(self, value: str) -> None:
+            """Capture the latest preview text."""
+            self.updated_text = value
+
+        def set_class(self, enabled: bool, class_name: str) -> None:
+            """Record class toggles applied by the preview helper."""
+            self.classes[class_name] = enabled
+
+    def test_compose_setup_tab_seeds_template_inputs_from_template_fields(self):
+        """Setup tab inputs should reflect filename/folder template settings."""
+        source = getsource(compose_setup_tab)
+
+        assert "value=app.settings.filename_template" in source
+        assert "value=app.settings.folder_template" in source
+        assert "value=app.settings.filename_prefix" not in source
+        assert "value=app.settings.output_folder" not in source
+
+    def test_handle_export_template_change_persists_template_fields(self):
+        """Template input changes should update the template settings source of truth."""
+        filename_input = SimpleNamespace(value="run_{host}_{date}")
+        folder_input = SimpleNamespace(value="exports/{model}")
+        app = SimpleNamespace(
+            settings=SimpleNamespace(
+                filename_template="old_template",
+                folder_template="old_folder",
+            ),
+            _template_input_timer=None,
+            query_one=lambda selector, _widget_type: {
+                "#input_filename_prefix": filename_input,
+                "#input_output_folder": folder_input,
+            }[selector],
+            set_timer=lambda _delay, callback: SimpleNamespace(
+                stop=lambda: None,
+                callback=callback,
+            ),
+        )
+
+        setup_logic.handle_export_template_change(app)
+
+        assert app.settings.filename_template == "run_{host}_{date}"
+        assert app.settings.folder_template == "exports/{model}"
+        assert app._template_input_timer is not None
+
+    def test_build_export_template_context_tolerates_invalid_numeric_input(self):
+        """Preview context generation should fall back cleanly during in-progress edits."""
+        widgets = {
+            "#input_start_freq": SimpleNamespace(value="  "),
+            "#input_stop_freq": SimpleNamespace(value="1."),
+            "#input_points": SimpleNamespace(value="six-oh-one"),
+            "#input_avg_count": SimpleNamespace(value=""),
+            "#input_host": SimpleNamespace(value="10.0.0.5 "),
+        }
+        app = SimpleNamespace(
+            settings=SimpleNamespace(
+                start_freq_mhz=100.0,
+                stop_freq_mhz=200.0,
+                sweep_points=401,
+                averaging_count=8,
+            ),
+            worker=SimpleNamespace(vendor="Keysight", model="E5071B"),
+            query_one=lambda selector, _widget_type: widgets[selector],
+        )
+
+        context = setup_logic.build_export_template_context_for_app(app)
+
+        assert context["host"] == "10.0.0.5"
+        assert context["vend"] == "Keysight"
+        assert context["model"] == "E5071B"
+        assert context["start"] == "100"
+        assert context["stop"] == "1"
+        assert context["span"] == "-99"
+        assert context["pts"] == 401
+        assert context["avg"] == 8
+
+    def test_update_template_preview_survives_invalid_numeric_input(self):
+        """Preview refresh should not crash when one numeric setup field is invalid."""
+        filename_input = SimpleNamespace(value="run_{start}_{stop}_{pts}_{avg}")
+        preview = self._PreviewStub()
+        widgets = {
+            "#input_filename_prefix": filename_input,
+            "#preview_filename_template": preview,
+            "#input_start_freq": SimpleNamespace(value="abc"),
+            "#input_stop_freq": SimpleNamespace(value="  "),
+            "#input_points": SimpleNamespace(value="601.5"),
+            "#input_avg_count": SimpleNamespace(value="-"),
+            "#input_host": SimpleNamespace(value="lab-vna"),
+        }
+        app = SimpleNamespace(
+            settings=SimpleNamespace(
+                filename_template="measurement_{date}_{time}",
+                start_freq_mhz=1.0,
+                stop_freq_mhz=1100.0,
+                sweep_points=601,
+                averaging_count=16,
+            ),
+            worker=SimpleNamespace(vendor="", model=""),
+            query_one=lambda selector, _widget_type: widgets[selector],
+        )
+
+        setup_logic.update_template_preview(
+            app,
+            "#input_filename_prefix",
+            "#preview_filename_template",
+            allow_path_separators=False,
+            default_template="measurement_{date}_{time}",
+        )
+
+        assert "[bold $accent]1[/]" in preview.updated_text
+        assert "[bold $accent]1100[/]" in preview.updated_text
+        assert "[bold $accent]601[/]" in preview.updated_text
+        assert "[bold $accent]16[/]" in preview.updated_text
+        assert preview.classes["preview-border-round"] is True

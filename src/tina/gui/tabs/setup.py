@@ -130,7 +130,7 @@ def compose_setup_tab(app) -> ComposeResult:
             with Horizontal(classes="param-row"):
                 yield Label("Filename:", classes="col-label")
                 yield Input(
-                    value=app.settings.filename_prefix,
+                    value=app.settings.filename_template,
                     placeholder="measurement_{date}_{time}",
                     id="input_filename_prefix",
                     classes="col-input",
@@ -144,7 +144,7 @@ def compose_setup_tab(app) -> ComposeResult:
             with Horizontal(classes="param-row"):
                 yield Label("Folder:", classes="col-label")
                 yield Input(
-                    value=app.settings.output_folder,
+                    value=app.settings.folder_template,
                     placeholder="measurement",
                     id="input_output_folder",
                     classes="col-input",
