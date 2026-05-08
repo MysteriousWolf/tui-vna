@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.3.0
 
 ### Highlights
 - Improved extrema-detection pipeline: SciPy savgol + median filter +
@@ -23,7 +23,7 @@ All notable changes to this project will be documented in this file.
 - Tests for config migration module.
 
 ### Completed Units
-- Units done: 1 (templating), 2 (setup output UI), 3 (CSV export)
+- Units done: 1 (templating), 2 (setup output UI), 3 (CSV export),
   4 (measurement notes UI), 5 (notes + metadata), 6 (PNG/SVG metadata),
   7 (import/recovery), 8 (alt minimal export), 9 (frequency-entry),
   10 (extrema navigation in tools), 11 (copy full tool results),

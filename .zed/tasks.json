@@ -45,11 +45,6 @@
     "use_new_terminal": true,
   },
   {
-    "label": "run-frequency-entry-sandbox",
-    "command": "uv run python scripts/frequency_entry_sandbox.py",
-    "use_new_terminal": true,
-  },
-  {
     "label": "screenshot",
     "command": "uv run python scripts/screenshot.py",
     "use_new_terminal": true,
