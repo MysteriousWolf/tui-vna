@@ -47,6 +47,12 @@ from .scpi_commands import (
     cmd_set_trigger_source,
 )
 
+_VISA_EXC: tuple[type[Exception], ...] = (
+    ValueError,
+    OSError,
+    pyvisa.errors.VisaIOError,
+)
+
 
 class _VisaResourceProtocol(Protocol):
     """Subset of VISA resource methods used by the HP driver."""
@@ -249,7 +255,7 @@ class HPE5071B(VNABase):
 
         params = {}
 
-        _visa_exc = (ValueError, OSError, pyvisa.errors.VisaIOError)
+        _visa_exc = _VISA_EXC
 
         try:
             params["start_freq_hz"] = float(self._query(CMD_GET_FREQ_START).strip())
@@ -306,7 +312,7 @@ class HPE5071B(VNABase):
         )
 
         status = {}
-        _visa_exc = (ValueError, OSError, pyvisa.errors.VisaIOError)
+        _visa_exc = _VISA_EXC
 
         try:
             raw = self._query(CMD_GET_CORRECTION_STATE).strip()
@@ -523,11 +529,12 @@ class HPE5071B(VNABase):
         # Query complex data (real/imag pairs)
         data = self._query_ascii_values(CMD_GET_SDATA)
 
-        # Validate even length - raise on odd/truncated response
-        if len(data) % 2 != 0:
+        # Validate response: must be a non-empty interleaved real/imag pair stream.
+        if not data or len(data) % 2 != 0:
             raise ValueError(
-                f"{CMD_GET_SDATA} returned an odd number of values "
-                f"({len(data)}); expected interleaved real/imaginary pairs"
+                f"{CMD_GET_SDATA} returned an unexpected number of values "
+                f"({len(data)}); expected a non-empty even count of "
+                "interleaved real/imaginary pairs"
             )
 
         # Parse real and imaginary parts
