@@ -1035,6 +1035,7 @@ class MeasurementWorker:
                         freq_unit=str(data.get("freq_unit", "MHz"))
                     )
                     report(f"{kind}: writing Touchstone...", 45)
+                    raw_filename = data.get("filename")
                     result = exporter.export(
                         np.array(data["freqs"], dtype=float),
                         {
@@ -1045,8 +1046,8 @@ class MeasurementWorker:
                             for name, values in dict(data["sparams"]).items()
                         },
                         str(data["output_folder"]),
-                        str(data.get("filename", "measurement")),
-                        str(data.get("output_name", "measurement")),
+                        str(raw_filename) if raw_filename is not None else None,
+                        str(data.get("output_name") or "measurement"),
                         notes_markdown=str(data.get("notes_markdown", "")),
                         metadata=data.get("metadata"),
                     )
