@@ -2,6 +2,8 @@
 
 from typing import cast
 
+import pytest
+
 from textual.widgets import Input
 from textual_autocomplete._autocomplete import TargetState
 
@@ -73,7 +75,9 @@ class _TemplateAutoCompleteUnderTest(TemplateAutoComplete):
 class TestHistoryReplaceAutoComplete:
     """Tests for full-value replacement autocomplete behavior."""
 
+    @pytest.mark.unit
     def test_get_candidates_filters_history_entries(self):
+        """History entries not matching the prefix should be excluded from candidates."""
         choices = [
             _AutocompleteChoice(
                 value="192.168.1.100",
@@ -96,7 +100,9 @@ class TestHistoryReplaceAutoComplete:
 
         assert [item.value for item in candidates] == ["lab-vna.local"]
 
+    @pytest.mark.unit
     def test_get_candidates_ignores_duplicate_values(self):
+        """Duplicate history values should appear only once in the candidate list."""
         choices = [
             _AutocompleteChoice(
                 value="inst0",
@@ -119,7 +125,9 @@ class TestHistoryReplaceAutoComplete:
 
         assert [item.value for item in candidates] == ["inst0"]
 
+    @pytest.mark.unit
     def test_get_candidates_emit_canonical_value_when_label_differs(self):
+        """Candidates should expose the canonical value even when the display label differs."""
         choices = [
             _AutocompleteChoice(
                 value="main.plain",
@@ -140,7 +148,9 @@ class TestHistoryReplaceAutoComplete:
 class TestTemplateAutoComplete:
     """Tests for template autocomplete behavior."""
 
+    @pytest.mark.unit
     def test_get_search_string_uses_current_token_fragment(self):
+        """Search string should return the fragment from the last { or space to the cursor."""
         autocomplete = _TemplateAutoCompleteUnderTest([])
 
         search = autocomplete.get_search_string(
@@ -149,7 +159,9 @@ class TestTemplateAutoComplete:
 
         assert search == "{da"
 
+    @pytest.mark.unit
     def test_get_search_string_falls_back_to_full_text_without_token(self):
+        """Search string should fall back to full text when no token delimiter is present."""
         autocomplete = _TemplateAutoCompleteUnderTest([])
 
         search = autocomplete.get_search_string(
@@ -158,7 +170,9 @@ class TestTemplateAutoComplete:
 
         assert search == "measure"
 
+    @pytest.mark.unit
     def test_get_candidates_include_matching_history_and_tags(self):
+        """Both history and tag candidates matching the search string should be returned."""
         choices = [
             _AutocompleteChoice(
                 value="measurement_{date}_{time}",
@@ -190,7 +204,9 @@ class TestTemplateAutoComplete:
             "{date}",
         ]
 
+    @pytest.mark.unit
     def test_history_completion_replaces_entire_value(self):
+        """Selecting a history entry should replace the whole input value."""
         choices = [
             _AutocompleteChoice(
                 value="measurement_{date}_{time}",
@@ -218,7 +234,9 @@ class TestTemplateAutoComplete:
         assert autocomplete.target.value == "measurement_{date}_{time}"
         assert autocomplete.target.cursor_position == len("measurement_{date}_{time}")
 
+    @pytest.mark.unit
     def test_tag_completion_replaces_only_current_fragment(self):
+        """Selecting a tag should replace only the current {fragment} around the cursor."""
         choices = [
             _AutocompleteChoice(
                 value="{date}",
@@ -244,7 +262,9 @@ class TestTemplateAutoComplete:
         assert autocomplete.target.value == "measurement_{date}_suffix"
         assert autocomplete.target.cursor_position == len("measurement_{date}")
 
+    @pytest.mark.unit
     def test_tag_completion_inserts_when_no_token_prefix_exists(self):
+        """Tag completion should insert at the cursor when no { prefix is present."""
         choices = [
             _AutocompleteChoice(
                 value="{host}",
@@ -267,7 +287,9 @@ class TestTemplateAutoComplete:
         assert autocomplete.target.value == "prefix {host}"
         assert autocomplete.target.cursor_position == len("prefix {host}")
 
+    @pytest.mark.unit
     def test_get_candidates_deduplicates_same_kind_and_value(self):
+        """Identical kind+value pairs should appear only once in the candidate list."""
         choices = [
             _AutocompleteChoice(
                 value="{date}",
@@ -296,7 +318,9 @@ class TestTemplateAutoComplete:
 
         assert [item.value for item in candidates] == ["{date}", "measurement_{date}"]
 
+    @pytest.mark.unit
     def test_tag_completion_uses_canonical_value_when_label_differs(self):
+        """Tag completion should insert the canonical value, not the display label."""
         choices = [
             _AutocompleteChoice(
                 value="main.plain",

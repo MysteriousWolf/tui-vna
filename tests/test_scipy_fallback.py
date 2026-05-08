@@ -18,10 +18,13 @@ def _sample_waveform() -> tuple[np.ndarray, np.ndarray]:
 
 
 class TestScipyFallback:
+    """Verify that _detect_candidates_with_smoothing falls back to NumPy when SciPy is unavailable."""
+
     @pytest.mark.unit
     def test_detect_candidates_with_smoothing_falls_back_to_numpy_when_scipy_missing(
         self,
     ):
+        """Fallback should use np.convolve and return valid maxima indices."""
         freqs, data = _sample_waveform()
 
         with patch.dict("sys.modules", {"scipy.signal": None}):
@@ -46,6 +49,7 @@ class TestScipyFallback:
     def test_detect_candidates_with_smoothing_returns_meaningful_minima_without_scipy(
         self,
     ):
+        """Fallback should return valid minima indices with values below -0.9."""
         freqs, data = _sample_waveform()
 
         with patch.dict("sys.modules", {"scipy.signal": None}):

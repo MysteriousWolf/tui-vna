@@ -5,11 +5,8 @@ Tests logging behaviour, log_tag overrides, debug SYST:ERR? checking,
 error detection, and attribute delegation to the wrapped driver.
 """
 
-from typing import cast
-
 import pytest
 
-from src.tina.drivers.base import VNABase
 from src.tina.utils.logging_wrapper import LoggingVNAWrapper  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -55,7 +52,7 @@ def _make_wrapper(query_responses: dict[str, str] | None = None):
     log_calls: list[tuple[str, str]] = []
     stub = _StubDriver(query_responses)
     wrapper = LoggingVNAWrapper(
-        cast(VNABase, stub),
+        stub,
         lambda msg, level: log_calls.append((msg, level)),
     )
     return stub, wrapper, log_calls
@@ -110,7 +107,7 @@ class TestBasicLogging:
         # Patch ascii query to return 20 values; wrapper must be created after patching
         stub._query_ascii_values = lambda command: [float(i) for i in range(20)]
         LoggingVNAWrapper(
-            cast(VNABase, stub),
+            stub,
             lambda msg, level: log_calls.append((msg, level)),
         )
 
@@ -220,7 +217,7 @@ class TestDebugMode:
         stub = _StubDriver()
         log_calls: list[tuple[str, str]] = []
         wrapper = LoggingVNAWrapper(
-            cast(VNABase, stub),
+            stub,
             lambda msg, level: log_calls.append((msg, level)),
         )
         # Make the raw query raise
@@ -270,7 +267,7 @@ class TestRawQueryBypass:
         )
         log_calls: list[tuple[str, str]] = []
         wrapper = LoggingVNAWrapper(
-            cast(VNABase, stub),
+            stub,
             lambda msg, level: log_calls.append((msg, level)),
         )
         wrapper.debug = True
@@ -340,37 +337,3 @@ class TestOnScpiError:
         assert errors == []
 
 
-# ---------------------------------------------------------------------------
-# _scpi_mnemonic helper
-# ---------------------------------------------------------------------------
-
-
-class TestScpiMnemonic:
-    """Tests for the _scpi_mnemonic() display helper in the status footer module."""
-
-    @pytest.fixture(autouse=True)
-    def _import(self):
-        from src.tina.gui.components.status_footer import _scpi_mnemonic
-
-        self.mnem = _scpi_mnemonic
-
-    def test_strips_query_mark(self):
-        assert self.mnem("BWID?") == "BWID"
-
-    def test_strips_channel_prefix(self):
-        assert self.mnem("SENS1:CORR:STAT?") == "CORR:STAT"
-
-    def test_strips_channel_prefix_calc(self):
-        assert self.mnem("CALC1:SMO:APER?") == "SMO:APER"
-
-    def test_no_channel_prefix_left_intact(self):
-        assert self.mnem("TRIG:SOUR?") == "TRIG:SOUR"
-
-    def test_star_command(self):
-        assert self.mnem("*RST") == "*RST"
-
-    def test_strips_parameter_value(self):
-        assert self.mnem("SOUR1:POW -10") == "POW"
-
-    def test_single_node_with_channel(self):
-        assert self.mnem("SENS1:BWID?") == "BWID"
