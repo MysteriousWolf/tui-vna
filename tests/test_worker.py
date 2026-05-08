@@ -279,9 +279,13 @@ class TestWorkerMeasurement:
         """worker.py should select the Agg backend before importing pyplot."""
         source = getsource(__import__("tina.worker", fromlist=["MeasurementWorker"]))
 
+        assert 'matplotlib.use("Agg")' in source, "Expected matplotlib.use('Agg') in worker.py"
+        assert "from matplotlib import pyplot as plt" in source, (
+            "Expected pyplot import in worker.py"
+        )
         assert source.index('matplotlib.use("Agg")') < source.index(
             "from matplotlib import pyplot as plt"
-        )
+        ), "matplotlib.use('Agg') must precede the pyplot import"
 
 
 class TestWorkerProgressUpdates:
@@ -362,19 +366,19 @@ class TestWorkerProgressUpdates:
         )
 
         progress_messages: list[str] = []
-        completed = None
-        for _ in range(12):
-            msg = worker.get_response(timeout=1.0)
-            if msg.type == MessageType.IMPORT_PROGRESS:
-                progress_messages.append(msg.data.message)
-            elif msg.type == MessageType.IMPORT_COMPLETE:
-                completed = msg
-                break
-            elif msg.type == MessageType.ERROR:
-                completed = msg
-                break
-
         try:
+            completed = None
+            for _ in range(12):
+                try:
+                    msg = worker.get_response(timeout=1.0)
+                except queue.Empty:
+                    break
+                if msg.type == MessageType.IMPORT_PROGRESS:
+                    progress_messages.append(msg.data.message)
+                elif msg.type in (MessageType.IMPORT_COMPLETE, MessageType.ERROR):
+                    completed = msg
+                    break
+
             assert completed is not None
             assert completed.type == MessageType.IMPORT_COMPLETE
             assert progress_messages[0] == "Resolving import path..."
