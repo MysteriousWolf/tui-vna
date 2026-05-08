@@ -68,14 +68,18 @@ class TouchstoneExporter:
             freq_unit: Frequency unit ('Hz', 'kHz', 'MHz', 'GHz')
             reference_impedance: Reference impedance in ohms
         """
-        self.freq_unit = freq_unit
+        normalized = {k.lower(): k for k in _FREQ_UNIT_FACTORS}.get(freq_unit.lower())
+        if normalized is None:
+            raise ValueError(
+                f"Unsupported frequency unit: {freq_unit!r}. "
+                f"Valid options: {list(_FREQ_UNIT_FACTORS)}"
+            )
+        self.freq_unit = normalized
         self.reference_impedance = reference_impedance
 
     def _convert_frequency(self, freq_hz: float) -> float:
         """Convert frequency from Hz to configured unit."""
-        return freq_hz / _FREQ_UNIT_FACTORS.get(
-            self.freq_unit, _FREQ_UNIT_FACTORS["MHz"]
-        )
+        return freq_hz / _FREQ_UNIT_FACTORS[self.freq_unit]
 
     @staticmethod
     def _normalize_export_params(
