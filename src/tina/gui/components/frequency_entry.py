@@ -171,6 +171,8 @@ class FrequencyEntry(Static):
                 inp.placeholder = f"Frequency ({self.freq_unit})"
             except (NoMatches, WrongType):
                 pass
+            if self._last_hz is not None:
+                self.set_frequency_hz(self._last_hz)
 
     def set_frequency_hz(self, hz: float | None) -> None:
         """Update the input display from a frequency in Hz. Pass None to clear."""
@@ -274,20 +276,27 @@ class FrequencyEntry(Static):
                     # Best-effort: ignore if app state can't be set
                     pass
 
-                # Debounced refresh: mirror the same behavior used elsewhere in tools logic
+                # Debounced refresh: mirror the same behavior used elsewhere in tools logic.
+                # Only schedule when the tools tab is active to avoid spurious background work.
                 try:
-                    # Stop an existing timer if present
-                    if getattr(app, "_tools_input_timer", None) is not None:
-                        try:
-                            app._tools_input_timer.stop()
-                        except Exception:
-                            pass
-                    # Schedule the delayed refresh used by the tools tab
-                    app._tools_input_timer = app.set_timer(
-                        0.2, app._delayed_tools_refresh
-                    )
+                    tab_active = getattr(app, "_is_tools_tab_active", lambda: True)()
+                    if tab_active:
+                        if getattr(app, "_tools_input_timer", None) is not None:
+                            try:
+                                app._tools_input_timer.stop()
+                            except Exception:
+                                pass
+                        app._tools_input_timer = app.set_timer(
+                            0.2, app._delayed_tools_refresh
+                        )
+                    else:
+                        if getattr(app, "_tools_input_timer", None) is not None:
+                            try:
+                                app._tools_input_timer.stop()
+                                app._tools_input_timer = None
+                            except Exception:
+                                pass
                 except Exception:
-                    # If the app doesn't expose the expected timer API, ignore silently
                     pass
         except Exception:
             # Defensive: do not let widget-level forwarding raise to the caller
@@ -355,14 +364,23 @@ class FrequencyEntry(Static):
                 except Exception:
                     pass
                 try:
-                    if getattr(app, "_tools_input_timer", None) is not None:
-                        try:
-                            app._tools_input_timer.stop()
-                        except Exception:
-                            pass
-                    app._tools_input_timer = app.set_timer(
-                        0.2, app._delayed_tools_refresh
-                    )
+                    tab_active = getattr(app, "_is_tools_tab_active", lambda: True)()
+                    if tab_active:
+                        if getattr(app, "_tools_input_timer", None) is not None:
+                            try:
+                                app._tools_input_timer.stop()
+                            except Exception:
+                                pass
+                        app._tools_input_timer = app.set_timer(
+                            0.2, app._delayed_tools_refresh
+                        )
+                    else:
+                        if getattr(app, "_tools_input_timer", None) is not None:
+                            try:
+                                app._tools_input_timer.stop()
+                                app._tools_input_timer = None
+                            except Exception:
+                                pass
                 except Exception:
                     pass
         except Exception:
