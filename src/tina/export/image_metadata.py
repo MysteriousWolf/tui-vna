@@ -81,9 +81,10 @@ def read_png_metadata(image_path: str | Path) -> ImageExportMetadata:
     with Image.open(path) as image:
         notes_markdown = str(image.info.get(_PNG_NOTES_KEY, ""))
         yaml_text = str(image.info.get(_PNG_METADATA_KEY, ""))
+    parsed = _load_yaml(yaml_text)
     return ImageExportMetadata(
         notes_markdown=notes_markdown,
-        machine_settings=_load_yaml(yaml_text),
+        machine_settings=_normalize_machine_settings(parsed) if parsed else parsed,
     )
 
 
@@ -233,9 +234,10 @@ def read_svg_metadata(image_path: str | Path) -> ImageExportMetadata:
         }
     ]
 
+    parsed = _load_yaml("\n".join(metadata_lines))
     return ImageExportMetadata(
         notes_markdown="\n".join(notes_lines).rstrip(),
-        machine_settings=_load_yaml("\n".join(metadata_lines)),
+        machine_settings=_normalize_machine_settings(parsed) if parsed else parsed,
     )
 
 
