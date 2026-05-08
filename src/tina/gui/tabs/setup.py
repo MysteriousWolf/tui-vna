@@ -28,7 +28,7 @@ def compose_setup_tab(app: VNAApp) -> ComposeResult:
                 )
                 yield Label("@", classes="conn-symbol")
                 yield Input(
-                    value=app.settings.last_port,
+                    value=str(app.settings.last_port),
                     placeholder="inst0",
                     id="input_port",
                     classes="conn-port",

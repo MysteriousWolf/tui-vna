@@ -33,7 +33,7 @@ def _scpi_mnemonic(cmd: str) -> str:
     channel-number suffix on the first node (e.g. ``SENS1`` → removed so
     ``SENS1:CORR:STAT?`` becomes ``CORR:STAT``).
     """
-    base = cmd.split(" ")[0].rstrip("?")
+    base = cmd.split(" ")[0].lstrip(":").rstrip("?")
     parts = base.split(":")
     if parts and parts[0] and parts[0][-1].isdigit():
         parts = parts[1:]
@@ -211,10 +211,14 @@ class StatusFooter(Footer):
             raw_error: Stripped SYST:ERR? response, e.g. ``+0,"No error"``
                        or ``-113,"Undefined header"``.
         """
-        if raw_error.startswith("+0") or raw_error.startswith("0,"):
+        code = raw_error.split(",", 1)[0].strip().lstrip("+")
+        try:
+            is_ok = int(code) == 0
+        except ValueError:
+            is_ok = False
+        if is_ok:
             self._debug_chip_state = ("ERR OK", "--state-ok")
         else:
-            code = raw_error.split(",")[0].strip()
             name = _SCPI_ERROR_NAMES.get(code, code)
             mnem = _scpi_mnemonic(command)
             self._debug_chip_state = (f"{mnem} {name}", "--state-off")
@@ -233,10 +237,13 @@ class StatusFooter(Footer):
         # Smoothing
         if result.smoothing_enabled is None:
             self._set_item("sb_smooth", self._sb_state["sb_smooth"][0], "--stale")
-        elif result.smoothing_enabled and result.smoothing_aperture is not None:
-            self._set_item(
-                "sb_smooth", f"SMTH {result.smoothing_aperture:.1f}%", "--smo-on"
+        elif result.smoothing_enabled:
+            label = (
+                f"SMTH {result.smoothing_aperture:.1f}%"
+                if result.smoothing_aperture is not None
+                else "SMTH"
             )
+            self._set_item("sb_smooth", label, "--smo-on")
         else:
             self._set_item("sb_smooth", "SMTH", "--state-off")
 

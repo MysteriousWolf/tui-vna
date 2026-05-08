@@ -277,13 +277,13 @@ def _write_touchstone_save_back(
     if header_lines:
         out_lines.extend(header_lines)
     else:
-        out_lines.append("! HP E5071B S-Parameter Data")
+        out_lines.append("! S-Parameter Data")
     out_lines.extend(notes_lines)
     out_lines.extend(option_and_data_lines)
     out_lines.extend(metadata_lines)
 
     destination = Path(resolved)
-    temp_path = destination.with_suffix(".s2p.tmp")
+    temp_path = destination.with_name(destination.name + ".tmp")
     with open(temp_path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(out_lines) + "\n")
     temp_path.replace(destination)

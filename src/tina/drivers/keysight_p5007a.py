@@ -22,6 +22,7 @@ from ..config.constants import (
     VXI11_PORTMAPPER_PORT,
 )
 from .base import VNABase, VNAConfig
+from .scpi_commands import CMD_BUS_TRIGGER
 
 
 class _VisaResourceProtocol(Protocol):
@@ -71,7 +72,13 @@ class KeysightP5007A(VNABase):
     def _check_host_reachable(
         self, host: str, timeout: float = SOCKET_TIMEOUT_SEC
     ) -> bool:
-        """Check whether the instrument host responds on a SCPI-capable port."""
+        """Check whether the instrument host responds on a SCPI-capable port.
+
+        Probes VXI11_PORTMAPPER_PORT and SCPI_RAW_PORT using a TCP connect.
+        A successful connect only confirms OS-level reachability — it does NOT
+        guarantee the peer implements VXI-11 or SCPI protocols. Callers must
+        perform a proper protocol handshake (e.g. *IDN?) after this preflight.
+        """
         for port in (VXI11_PORTMAPPER_PORT, SCPI_RAW_PORT):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -99,7 +106,11 @@ class KeysightP5007A(VNABase):
         report("Initializing VISA...", 25)
         try:
             resource_manager = pyvisa.ResourceManager("@py")
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug(
+                "pyvisa-py backend unavailable, falling back to default: %s", exc
+            )
             resource_manager = pyvisa.ResourceManager()
 
         report("Opening connection...", 50)
@@ -110,6 +121,10 @@ class KeysightP5007A(VNABase):
 
             report("Verifying connection...", 80)
             self._idn = self._query("*IDN?").strip()
+            if not self.idn_matcher(self._idn):
+                raise ConnectionError(
+                    f"Expected {self.driver_name}, got {self._idn!r}"
+                )
 
             report("Connected", 100)
             return True
@@ -386,7 +401,7 @@ class KeysightP5007A(VNABase):
         time.sleep(0.1)
 
         self._send_command("INIT1:IMM")
-        self._send_command("*TRG")
+        self._send_command(CMD_BUS_TRIGGER)
         self._wait_for_operation_complete(timeout_seconds=SWEEP_TIMEOUT_SEC)
 
     def get_frequency_axis(self) -> np.ndarray:

@@ -843,6 +843,8 @@ def get_tools_plot_cache_key(app) -> tuple[object, ...] | None:
 
 async def delayed_tools_refresh(app) -> None:
     """Debounced tools refresh: redraw plot then recompute results."""
+    if not app._is_tools_tab_active():
+        return
     await app._refresh_tools_plot()
     app._run_tools_computation()
 
@@ -1013,7 +1015,8 @@ async def refresh_tools_plot(app) -> None:
         plot_widget.refresh()
 
     else:
-        await app._refresh_tools_plot()
+        # Image rendering is handled by the caller (_refresh_tools_plot in main.py)
+        return
 
 
 def run_tools_computation(app) -> None:

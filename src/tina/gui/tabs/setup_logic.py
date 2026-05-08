@@ -219,6 +219,18 @@ def get_template_tag_choices() -> list[AutocompleteChoice]:
     return choices
 
 
+def should_clear_history_selector(
+    current_value: str, history_options: list[tuple[str, str]]
+) -> bool:
+    """Return True when current_value is absent from the history option values.
+
+    Used to decide whether a history Select widget should be cleared when the
+    user types a value that does not match any saved entry.
+    """
+    values = {value for _, value in history_options}
+    return current_value not in values
+
+
 def get_filename_template_autocomplete_choices(app) -> list[AutocompleteChoice]:
     """Build autocomplete choices for filename templates."""
     history = [
@@ -335,6 +347,7 @@ def handle_export_template_change(app) -> None:
         "#input_filename_template", Input
     ).value
     app.settings.folder_template = app.query_one("#input_folder_template", Input).value
+    app.settings_manager.save(app.settings)
     if app._template_input_timer is not None:
         app._template_input_timer.stop()
     app._template_input_timer = app.set_timer(

@@ -412,7 +412,8 @@ class TouchstoneExporter:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        freq_unit = "MHz"
+        freq_unit: str | None = None
+        saw_option_line = False
         frequencies: list[float] = []
         s_params: dict[str, tuple[list[float], list[float]]] = {
             "S11": ([], []),
@@ -457,12 +458,18 @@ class TouchstoneExporter:
                         f"got format {parts[3]!r}"
                     )
                 freq_unit = unit_map[unit_token]
+                saw_option_line = True
                 continue
+
+            if not saw_option_line:
+                raise ValueError(
+                    "Touchstone option line must appear before data rows"
+                )
 
             try:
                 values = [float(v) for v in line.split()]
-            except ValueError:
-                continue
+            except ValueError as exc:
+                raise ValueError(f"Invalid numeric data row: {line!r}") from exc
 
             expected_count = 1 + 2 * len(_TOUCHSTONE_PARAM_ORDER)
             if len(values) != expected_count:
@@ -482,8 +489,10 @@ class TouchstoneExporter:
         if not frequencies:
             raise ValueError("No valid data found in file")
 
+        if freq_unit is None:
+            raise ValueError("Missing Touchstone option line")
         freq_array = np.array(frequencies, dtype=float)
-        multiplier = _FREQ_UNIT_FACTORS.get(freq_unit, _FREQ_UNIT_FACTORS["MHz"])
+        multiplier = _FREQ_UNIT_FACTORS[freq_unit]
         freq_hz = freq_array * multiplier
 
         result_params: dict[str, tuple[np.ndarray, np.ndarray]] = {}
