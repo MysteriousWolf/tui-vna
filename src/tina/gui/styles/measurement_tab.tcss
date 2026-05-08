@@ -156,6 +156,9 @@
     margin: 0;
     overflow-y: auto;
     background: transparent;
+}
+
+#measurement_notes_preview.notes-empty {
     content-align: center middle;
     color: $text-muted;
 }

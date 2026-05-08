@@ -3221,8 +3221,10 @@ class VNAApp(App):
         if self.last_measurement is not None:
             self.last_measurement["notes"] = self.measurement_notes
         if notes:
+            preview.set_class(False, "notes-empty")
             preview.update(self.measurement_notes)
         else:
+            preview.set_class(True, "notes-empty")
             preview.update("No notes yet")
 
     def action_save_back(self) -> None:
