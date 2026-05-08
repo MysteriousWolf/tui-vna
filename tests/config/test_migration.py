@@ -76,7 +76,8 @@ class TestMigrateLegacyConfig:
                 return new_dir
 
             mock_cfg.side_effect = side_effect
-            result = migrate_legacy_config()
+            with patch("tina.config.settings.SettingsManager.save"):
+                result = migrate_legacy_config()
 
         assert result is not None
         assert "Migrated" in result
@@ -150,6 +151,36 @@ class TestMigrateLegacyConfig:
         assert result is not None
         assert result.startswith("Partially migrated settings")
         assert old_dir.exists()
+
+    def test_partial_migration_sentinel_prevents_deletion_on_next_startup(
+        self, tmp_path
+    ):
+        """Sentinel written after partial migration must survive the next startup cycle."""
+        from tina.config.migration import _PARTIAL_SENTINEL
+
+        old_dir = tmp_path / _OLD_APP_NAME
+        old_dir.mkdir()
+
+        new_dir = tmp_path / _NEW_APP_NAME
+        new_dir.mkdir()
+
+        # Simulate a settings.yaml already present (as if sm.save ran previously).
+        (new_dir / "settings.yaml").write_text("last_host: ''\n")
+        # Simulate the partial-migration sentinel written in the previous run.
+        (new_dir / _PARTIAL_SENTINEL).touch()
+
+        with patch("tina.config.migration.user_config_dir") as mock_cfg:
+
+            def side_effect(name):
+                if name == _OLD_APP_NAME:
+                    return old_dir
+                return new_dir
+
+            mock_cfg.side_effect = side_effect
+            result = migrate_legacy_config()
+
+        assert result is None
+        assert old_dir.exists(), "old_dir must not be deleted when sentinel is present"
 
     def test_migration_exception_is_swallowed(self, tmp_path, monkeypatch):
         """Errors during migration must not propagate — returns None silently."""

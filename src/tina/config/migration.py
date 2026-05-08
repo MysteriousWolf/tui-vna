@@ -18,6 +18,7 @@ from platformdirs import user_config_dir
 
 _OLD_APP_NAME = "hp-e5071b"
 _NEW_APP_NAME = "tina"
+_PARTIAL_SENTINEL = ".migration_partial"
 
 
 def migrate_legacy_config() -> str | None:
@@ -34,9 +35,12 @@ def migrate_legacy_config() -> str | None:
 
     new_settings_file = new_dir / "settings.yaml"
 
-    # New config already present — just clean up the orphaned old directory.
+    # New config already present — clean up the orphaned old directory, but
+    # only if the previous migration was complete (no partial-migration sentinel).
     if new_settings_file.exists():
-        _try_remove(old_dir)
+        partial_sentinel = new_dir / _PARTIAL_SENTINEL
+        if not partial_sentinel.exists():
+            _try_remove(old_dir)
         return None
 
     try:
@@ -95,6 +99,12 @@ def migrate_legacy_config() -> str | None:
         _try_remove(old_dir)
         return f"Migrated settings from {old_dir} to {new_dir}"
 
+    # Write a sentinel so subsequent startups skip the early-cleanup branch and
+    # leave old_dir intact until the user resolves the partial migration.
+    try:
+        (new_dir / _PARTIAL_SENTINEL).touch()
+    except OSError:
+        pass
     return (
         f"Partially migrated settings from {old_dir} to {new_dir}; "
         "legacy directory was preserved"
