@@ -166,6 +166,7 @@ class HelpScreen(ModalScreen):
         Returns:
             tuple[Path, int, int] | None: `(path, width_px, height_px)` on success, or `None` on failure.
         """
+        fig = None
         try:
             from io import BytesIO
 
@@ -202,6 +203,7 @@ class HelpScreen(ModalScreen):
                     transparent=True,
                 )
                 plt.close(fig)
+                fig = None
 
             buf.seek(0)
             img = PILImage.open(buf).convert("RGBA")
@@ -229,12 +231,13 @@ class HelpScreen(ModalScreen):
             self._temp_files.append(tmp)
             return tmp, final.width, final.height
         except Exception:
-            try:
-                import matplotlib.pyplot as plt
+            if fig is not None:
+                try:
+                    import matplotlib.pyplot as plt
 
-                plt.close("all")
-            except Exception:
-                pass
+                    plt.close(fig)
+                except Exception:
+                    pass
             return None
 
     def compose(self) -> ComposeResult:
