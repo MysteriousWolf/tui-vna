@@ -46,7 +46,10 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
 
         # Validate required settings
         if not settings.last_host:
-            print("Error: No host IP configured. Use --host option or run GUI first.")
+            print(
+                "Error: No host IP configured. Use --host option or run GUI first.",
+                file=sys.stderr,
+            )
             return 1
 
         print(f"Connecting to VNA at {settings.last_host}...")

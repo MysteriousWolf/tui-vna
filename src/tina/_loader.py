@@ -66,7 +66,7 @@ def main() -> None:
     import sys
 
     # Skip bar for --help/-h (output would be garbled) and --now (CLI mode)
-    skip_bar = any(arg in sys.argv[1:] for arg in ("--help", "-h", "--now"))
+    skip_bar = any(arg in sys.argv[1:] for arg in ("--help", "-h", "--now", "-n"))
 
     if skip_bar:
         from .main import main as app_main
