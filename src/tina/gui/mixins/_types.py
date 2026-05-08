@@ -6,6 +6,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
+try:
+    from typing import NotRequired
+except ImportError:  # Python < 3.11
+    from typing_extensions import NotRequired  # type: ignore[assignment]
+
 import numpy as np
 
 from ...config.settings import AppSettings, SettingsManager
@@ -31,13 +36,13 @@ class MeasurementRecord(TypedDict):
     freqs: np.ndarray
     sparams: SParamMap
     output_path: str
-    touchstone_path: str | None
-    csv_path: str | None
-    png_path: str | None
-    svg_path: str | None
     freq_unit: str
-    notes: str
-    metadata: dict[str, object] | None
+    touchstone_path: NotRequired[str | None]
+    csv_path: NotRequired[str | None]
+    png_path: NotRequired[str | None]
+    svg_path: NotRequired[str | None]
+    notes: NotRequired[str]
+    metadata: NotRequired[dict[str, object] | None]
 
 
 class GUIAppTypingMixin:
