@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from rich.markup import escape as rich_escape
 from textual.widgets import Input, Static
 
 from ...export import (
@@ -135,11 +136,11 @@ def update_template_preview(
     rendered_markup = []
     for segment in rendered.segments:
         if segment.source in ("tag", "time_format"):
-            rendered_markup.append(f"[bold $accent]{segment.text}[/]")
+            rendered_markup.append(f"[bold $accent]{rich_escape(segment.text)}[/]")
         elif segment.source == "unknown":
-            rendered_markup.append(f"[italic $warning]{segment.text}[/]")
+            rendered_markup.append(f"[italic $warning]{rich_escape(segment.text)}[/]")
         else:
-            rendered_markup.append(segment.text)
+            rendered_markup.append(rich_escape(segment.text))
 
     preview.update(
         "".join(rendered_markup) if rendered_markup else "[dim](empty)[/dim]"
