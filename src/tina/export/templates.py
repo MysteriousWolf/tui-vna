@@ -206,7 +206,7 @@ def render_template(
                         token=token,
                     )
                 )
-        elif token in context:
+        elif token in allowed_tags and token in context:
             used_tags.append(token)
             rendered_text = _bool_to_human(context[token])
             rendered_parts.append(rendered_text)

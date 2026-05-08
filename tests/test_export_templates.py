@@ -266,6 +266,18 @@ class TestRenderTemplate:
             ("{unknown}", "unknown", "unknown"),
         ]
 
+    def test_context_key_outside_allowed_tags_is_not_substituted(self):
+        """Tags in context but excluded from allowed_tags must not be rendered."""
+        context = {"host": "192.168.1.50", "secret": "password"}
+        rendered = render_template(
+            "{host}_{secret}",
+            context=context,
+            allowed_tags={"host"},
+        )
+
+        assert rendered.rendered == "192.168.1.50_{secret}"
+        assert rendered.validation.unknown_tags == ("secret",)
+
     def test_empty_template_renders_to_empty_string(self, sample_context):
         """An empty template should render to an empty string cleanly."""
         rendered = render_template(
