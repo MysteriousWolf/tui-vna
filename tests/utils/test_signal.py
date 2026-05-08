@@ -59,3 +59,12 @@ def test_calculate_plot_range_all_non_finite_uses_fallback() -> None:
     result = calculate_plot_range_with_outlier_filtering(data)
 
     assert result == (0.0, 1.0)
+
+
+def test_calculate_plot_range_empty_data_uses_fallback() -> None:
+    """Empty data array should return the documented fallback range."""
+    data = np.array([], dtype=float)
+
+    result = calculate_plot_range_with_outlier_filtering(data)
+
+    assert result == (0.0, 1.0)

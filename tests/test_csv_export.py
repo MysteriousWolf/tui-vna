@@ -78,6 +78,28 @@ class TestCsvExporter:
 
         assert exporter.freq_unit == "GHz"
 
+    def test_initialization_rejects_unsupported_frequency_unit(self) -> None:
+        """Unsupported freq_unit should raise ValueError with the offending value."""
+        with pytest.raises(ValueError, match="Unsupported frequency unit"):
+            CsvExporter(freq_unit="THz")
+
+    def test_export_rejects_filename_with_path_components(
+        self,
+        tmp_path: Path,
+        sample_frequencies: np.ndarray,
+        sample_sparameters: dict[str, tuple[np.ndarray, np.ndarray]],
+    ) -> None:
+        """Filenames with path separators should be rejected to prevent path traversal."""
+        exporter = CsvExporter()
+
+        with pytest.raises(ValueError, match="path components"):
+            exporter.export(
+                sample_frequencies,
+                {"S11": sample_sparameters["S11"]},
+                str(tmp_path),
+                filename="../escape",
+            )
+
     def test_export_writes_csv_file_with_expected_header(
         self,
         tmp_path: Path,
