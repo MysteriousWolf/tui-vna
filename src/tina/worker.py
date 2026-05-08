@@ -1132,7 +1132,7 @@ class MeasurementWorker:
                     result = file_path
                 elif export_kind == "results_plot":
                     report(f"{kind}: rendering plot...", 40)
-                    result = _render_plot_image_snapshot(
+                    _render_plot_image_snapshot(
                         np.array(data["freqs"], dtype=float),
                         {
                             str(name): (
