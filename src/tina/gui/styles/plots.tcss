@@ -51,8 +51,7 @@ ImageWidget {
     margin-right: 1;
 }
 
-#tools_plot_placeholder,
-#results_plot_placeholder {
+#tools_plot_placeholder {
     padding: 1 1;
     content-align: center middle;
     width: 100%;

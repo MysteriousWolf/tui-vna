@@ -36,7 +36,6 @@ def compose_measurement_tab(app) -> ComposeResult:
                 "▢\nMin",
                 id="btn_minimal_export",
                 variant="default",
-                disabled=False,
                 flat=True,
                 classes="panel-button",
             )

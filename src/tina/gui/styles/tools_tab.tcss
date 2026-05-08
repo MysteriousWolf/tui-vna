@@ -199,9 +199,7 @@
    class) so it takes precedence over broader `.plot-controls Button` rules and
    ensures the compact 5x2 footprint is applied in the app. */
 #tools_params_container FrequencyEntry.tools-compact > .freq-entry-row > Button.tools-frequency-button {
-    width: auto;
-    min-width: 5;
-    max-width: 5;
+    width: 5;
     height: 2;
     min-height: 2;
     max-height: 2;

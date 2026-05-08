@@ -229,6 +229,11 @@ class _PathHistoryProvider(Provider):
     SETTING_NAME: str = ""
 
     def _get_action(self, _app: _VNAAppProtocol, _path: str):
+        """Return the action callable for a given path hit.
+
+        Subclasses must override this to return a callable that will be invoked
+        when the user selects the hit in the command palette.
+        """
         raise NotImplementedError
 
     async def discover(self) -> Hits:
@@ -253,6 +258,7 @@ class SetupRestoreHistoryProvider(_PathHistoryProvider):
     SETTING_NAME = "setup_restore_history"
 
     def _get_action(self, app: _VNAAppProtocol, path: str):
+        """Return an action that restores a saved setup from the given path."""
         return partial(app.action_restore_setup_from_path, path)
 
 
@@ -262,6 +268,7 @@ class RecentExportedProvider(_PathHistoryProvider):
     SETTING_NAME = "recent_exported_measurements"
 
     def _get_action(self, app: _VNAAppProtocol, path: str):
+        """Return an action that opens a recently exported measurement from the given path."""
         return partial(app.action_open_recent_measurement, path)
 
 
@@ -271,4 +278,5 @@ class RecentImportedProvider(_PathHistoryProvider):
     SETTING_NAME = "recent_imported_measurements"
 
     def _get_action(self, app: _VNAAppProtocol, path: str):
+        """Return an action that opens a recently imported measurement from the given path."""
         return partial(app.action_open_recent_measurement, path)
