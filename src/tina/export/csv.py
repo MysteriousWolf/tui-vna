@@ -105,9 +105,16 @@ class CsvExporter:
         if not resolved_name.lower().endswith(".csv"):
             resolved_name += ".csv"
 
-        # Restrict to a plain filename to prevent path traversal via template output.
-        safe_name = Path(resolved_name).name
-        candidate = (output_dir / safe_name).resolve()
+        candidate_name = Path(resolved_name)
+        if (
+            candidate_name.is_absolute()
+            or len(candidate_name.parts) != 1
+            or candidate_name.name in {"", ".", ".."}
+        ):
+            raise ValueError(
+                f"filename must be a plain file name with no path components: {resolved_name!r}"
+            )
+        candidate = (output_dir / resolved_name).resolve()
         if not candidate.is_relative_to(output_dir.resolve()):
             raise ValueError(
                 f"Resolved filename escapes output directory: {resolved_name!r}"

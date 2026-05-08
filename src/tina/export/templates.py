@@ -19,8 +19,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
-# Windows-invalid path chars; broadly safe to enforce cross-platform.
-_INVALID_PATH_CHARS = set('<>:"|?*')
+# Windows-invalid path chars plus separators; broadly safe to enforce cross-platform.
+_INVALID_PATH_CHARS = set('<>:"|?*/\\')
 _TOKEN_RE = re.compile(r"\{([^{}]+)\}")
 
 
@@ -154,10 +154,14 @@ def render_template(
     if allowed_tags is None:
         allowed_tags = set(context.keys())
 
+    effective_invalid = (
+        _INVALID_PATH_CHARS if invalid_path_chars is None else invalid_path_chars
+    )
+
     validation = validate_template(
         template,
         allowed_tags=allowed_tags,
-        invalid_path_chars=invalid_path_chars,
+        invalid_path_chars=effective_invalid,
     )
 
     used_tags: list[str] = []
@@ -237,6 +241,13 @@ def render_template(
         )
 
     rendered = "".join(rendered_parts)
+
+    rendered_invalid = [ch for ch in rendered if ch in effective_invalid]
+    if rendered_invalid:
+        validation = TemplateValidation(
+            unknown_tags=validation.unknown_tags,
+            invalid_characters=_stable_unique(rendered_invalid),
+        )
 
     return RenderedTemplate(
         template=template,
