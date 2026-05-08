@@ -13,7 +13,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from src.tina.utils.touchstone import (
+from tina.utils.touchstone import (
     TouchstoneExporter,
     TouchstoneImportResult,
     TouchstoneMetadata,

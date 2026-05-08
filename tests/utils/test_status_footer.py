@@ -8,7 +8,7 @@ class TestScpiMnemonic:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from src.tina.gui.components.status_footer import _scpi_mnemonic
+        from tina.gui.components.status_footer import _scpi_mnemonic
 
         self.mnem = _scpi_mnemonic
 

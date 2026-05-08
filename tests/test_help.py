@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from src.tina.gui.modals.help import (
+from tina.gui.modals.help import (
     HelpScreen,
     _pixel_graphics_available,
     _preprocess_inline_latex,
@@ -124,7 +124,7 @@ class TestPreprocessInlineLaTeX:
     @pytest.mark.unit
     def test_fallback_when_converter_unavailable(self, monkeypatch):
         """When _latex_converter is None the raw expression is kept in backticks."""
-        import src.tina.gui.modals.help as help_mod
+        import tina.gui.modals.help as help_mod
 
         monkeypatch.setattr(help_mod, "_latex_converter", None)
         result = _preprocess_inline_latex("Value $\\alpha$ here.")
@@ -148,7 +148,7 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_false_when_textual_image_unavailable(self, monkeypatch):
         """Returns False immediately if textual_image isn't installed."""
-        import src.tina.gui.modals.help as help_mod
+        import tina.gui.modals.help as help_mod
 
         monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", False)
         assert _pixel_graphics_available() is False
@@ -156,7 +156,7 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_true_when_auto_is_sixel(self, monkeypatch):
         """Returns True when the auto-selected renderer is Sixel."""
-        import src.tina.gui.modals.help as help_mod
+        import tina.gui.modals.help as help_mod
 
         monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
@@ -174,7 +174,7 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_true_when_auto_is_tgp(self, monkeypatch):
         """Returns True when the auto-selected renderer is TGP (Kitty)."""
-        import src.tina.gui.modals.help as help_mod
+        import tina.gui.modals.help as help_mod
 
         monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
@@ -196,7 +196,7 @@ class TestPixelGraphicsAvailable:
 
         Simulates TEXTUAL_IMAGE_AVAILABLE and mock renderer modules, and asserts _pixel_graphics_available() returns False.
         """
-        import src.tina.gui.modals.help as help_mod
+        import tina.gui.modals.help as help_mod
 
         monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
@@ -214,7 +214,7 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_false_on_import_error(self, monkeypatch):
         """Returns False gracefully if internal imports fail."""
-        import src.tina.gui.modals.help as help_mod
+        import tina.gui.modals.help as help_mod
 
         monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
