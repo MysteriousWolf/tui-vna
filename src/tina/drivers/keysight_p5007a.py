@@ -323,34 +323,25 @@ class KeysightP5007A(VNABase):
     def _wait_for_operation_complete(
         self, timeout_seconds: float = OPERATION_TIMEOUT_SEC
     ) -> None:
-        """Poll *OPC? until the current operation is complete.
+        """Wait for the current operation to complete using *OPC?.
 
-        Temporarily raises the VISA timeout above timeout_seconds so the blocking
-        *OPC? query is not cut short by the per-command VISA timeout.
+        Sets the VISA timeout to exactly timeout_seconds so the blocking *OPC?
+        query respects the advertised deadline without overrunning it.
         """
         self._ensure_connected()
         resource = cast(_VisaResourceProtocol, self.inst)
         original_timeout = resource.timeout
-        resource.timeout = max(int(timeout_seconds * 1000) + 5000, original_timeout)
+        resource.timeout = int(timeout_seconds * 1000)
         try:
-            deadline = time.time() + timeout_seconds
-            while time.time() < deadline:
-                try:
-                    if self._query("*OPC?").strip() in {"1", "+1"}:
-                        return
-                except pyvisa.errors.VisaIOError:
-                    if time.time() >= deadline:
-                        raise TimeoutError(
-                            f"Operation did not complete within {timeout_seconds} seconds"
-                        )
-                    raise
-                time.sleep(0.1)
+            try:
+                if self._query("*OPC?").strip() in {"1", "+1"}:
+                    return
+            except pyvisa.errors.VisaIOError as exc:
+                raise TimeoutError(
+                    f"Operation did not complete within {timeout_seconds} seconds"
+                ) from exc
         finally:
             resource.timeout = original_timeout
-
-        raise TimeoutError(
-            f"Operation did not complete within {timeout_seconds} seconds"
-        )
 
     def get_trigger_source(self) -> str:
         """Return the current trigger source."""
