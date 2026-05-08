@@ -39,8 +39,8 @@ class MeasureTool(BaseTool):
                 where `mag` and `phase` are arrays aligned with `freqs`.
             trace (str): Key selecting which entry from `sparams` to use.
             plot_type (str): Selects which data to interpolate: `"magnitude"`
-                uses `mag`, `"phase"` uses unwrapped `phase`, any other
-                value uses raw `phase`.
+                uses `mag`, `"phase"` uses unwrapped `phase`, and
+                `"phase_raw"` uses raw `phase`.
             cursor1_hz (float | None): Frequency for cursor 1; when `None` or
                 outside `freqs` range, cursor1 value is `None`.
             cursor2_hz (float | None): Frequency for cursor 2; when `None` or
@@ -63,8 +63,13 @@ class MeasureTool(BaseTool):
             data = mag
         elif plot_type == "phase":
             data = unwrap_phase(phase)
-        else:
+        elif plot_type == "phase_raw":
             data = phase
+        else:
+            raise ValueError(
+                f"Unsupported plot_type: {plot_type!r}. "
+                "Valid options: 'magnitude', 'phase', 'phase_raw'"
+            )
 
         def _interp(freq_hz: float) -> float:
             """
