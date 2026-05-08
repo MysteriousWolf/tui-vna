@@ -402,9 +402,9 @@ class SettingsManager:
 
     def add_recent_exported_measurement(self, path: str) -> None:
         """Record a recently exported measurement path (most recent first)."""
-        if not path or not str(path).strip():
+        p = str(path).strip()
+        if not p:
             return
-        p = str(path)
         history = list(getattr(self.settings, "recent_exported_measurements") or [])
         if p in history:
             history.remove(p)
@@ -417,9 +417,9 @@ class SettingsManager:
 
     def add_recent_imported_measurement(self, path: str) -> None:
         """Record a recently imported measurement path (most recent first)."""
-        if not path or not str(path).strip():
+        p = str(path).strip()
+        if not p:
             return
-        p = str(path)
         history = list(getattr(self.settings, "recent_imported_measurements") or [])
         if p in history:
             history.remove(p)
