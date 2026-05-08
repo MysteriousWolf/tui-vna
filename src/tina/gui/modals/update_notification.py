@@ -21,7 +21,7 @@ DEFAULT_GITHUB_RELEASE_URL = "https://github.com/MysteriousWolf/tui-vna/releases
 class UpdateNotificationScreen(ModalScreen):
     """Reusable modal for update-related notifications."""
 
-    CSS_PATH = ["gui/styles/update_dialogs.tcss"]
+    CSS_PATH = ["../styles/update_dialogs.tcss"]
 
     BINDINGS = [
         ("escape", "close", "Close"),
