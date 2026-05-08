@@ -279,10 +279,12 @@ class TestWorkerMeasurement:
         """worker.py should select the Agg backend before importing pyplot."""
         source = getsource(__import__("tina.worker", fromlist=["MeasurementWorker"]))
 
-        assert 'matplotlib.use("Agg")' in source, "Expected matplotlib.use('Agg') in worker.py"
-        assert "from matplotlib import pyplot as plt" in source, (
-            "Expected pyplot import in worker.py"
-        )
+        assert (
+            'matplotlib.use("Agg")' in source
+        ), "Expected matplotlib.use('Agg') in worker.py"
+        assert (
+            "from matplotlib import pyplot as plt" in source
+        ), "Expected pyplot import in worker.py"
         assert source.index('matplotlib.use("Agg")') < source.index(
             "from matplotlib import pyplot as plt"
         ), "matplotlib.use('Agg') must precede the pyplot import"

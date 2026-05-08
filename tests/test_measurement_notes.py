@@ -28,10 +28,19 @@ class _FakeMarkdown:
 
     def __init__(self) -> None:
         self.content = ""
+        self._classes: set[str] = set()
 
     def update(self, content: str) -> None:
         """Store the latest rendered markdown content."""
         self.content = content
+
+    def set_class(self, active: bool, *css_classes: str) -> None:
+        """Add or remove CSS classes, mirroring the Textual widget API."""
+        for cls in css_classes:
+            if active:
+                self._classes.add(cls)
+            else:
+                self._classes.discard(cls)
 
 
 class _FakeApp:
