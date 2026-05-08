@@ -5,9 +5,18 @@ Automatically logs all SCPI commands sent to the VNA for debugging and monitorin
 """
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
+
+
+@runtime_checkable
+class ScpiDriver(Protocol):
+    """Structural protocol for any VNA object that can be wrapped."""
+
+    def _send_command(self, command: str) -> Any: ...
+    def _query(self, command: str) -> str: ...
+    def _query_ascii_values(self, command: str) -> list[float]: ...
 
 
 class LoggingVNAWrapper:
@@ -33,7 +42,7 @@ class LoggingVNAWrapper:
 
     def __init__(
         self,
-        vna: Any,
+        vna: ScpiDriver,
         log_callback: Callable[[str, str], None],
         on_scpi_error: Callable[[str, str], None] | None = None,
     ):
@@ -62,11 +71,17 @@ class LoggingVNAWrapper:
         can bypass the wrapper and avoid recursive logging.
         """
         original_send = cast(Callable[[str], Any], getattr(self._vna, "_send_command"))
+        if not callable(original_send):
+            raise TypeError(f"vna._send_command is not callable: {type(original_send)}")
         original_query = cast(Callable[[str], str], getattr(self._vna, "_query"))
+        if not callable(original_query):
+            raise TypeError(f"vna._query is not callable: {type(original_query)}")
         original_query_ascii = cast(
             Callable[[str], list[float]],
             getattr(self._vna, "_query_ascii_values"),
         )
+        if not callable(original_query_ascii):
+            raise TypeError(f"vna._query_ascii_values is not callable: {type(original_query_ascii)}")
 
         # Must not route SYST:ERR? back through the patched _query — that would
         # trigger another debug check, causing infinite recursion.

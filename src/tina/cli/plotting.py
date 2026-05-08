@@ -45,40 +45,46 @@ def export_plots_cli(
     plot_path = os.path.join(output_path, plot_filename)
 
     # Use the same matplotlib plotting function as the GUI
-    create_matplotlib_plot(
-        frequencies,
-        s_parameters,
-        plot_params,
-        plot_type="magnitude",
-        output_path=Path(plot_path),
-        dpi=dpi,
-        pixel_width=1920,
-        pixel_height=1080,
-        transparent=False,
-        render_scale=render_scale,
-        colors=plot_colors,
-        y_min=None,  # Auto-detect with outlier filtering
-        y_max=None,  # Auto-detect with outlier filtering
-    )
-    print(f"Magnitude plot saved: {plot_path}")
+    try:
+        create_matplotlib_plot(
+            frequencies,
+            s_parameters,
+            plot_params,
+            plot_type="magnitude",
+            output_path=Path(plot_path),
+            dpi=dpi,
+            pixel_width=1920,
+            pixel_height=1080,
+            transparent=False,
+            render_scale=render_scale,
+            colors=plot_colors,
+            y_min=None,
+            y_max=None,
+        )
+        print(f"Magnitude plot saved: {plot_path}")
+    except Exception as exc:
+        print(f"Warning: failed to save magnitude plot: {exc}")
 
     # Create phase plot using the same method as GUI
     phase_plot_filename = f"{base_filename}_phase.png"
     phase_plot_path = os.path.join(output_path, phase_plot_filename)
 
-    create_matplotlib_plot(
-        frequencies,
-        s_parameters,
-        plot_params,
-        plot_type="phase",  # Unwrapped phase
-        output_path=Path(phase_plot_path),
-        dpi=dpi,
-        pixel_width=1920,
-        pixel_height=1080,
-        transparent=False,
-        render_scale=render_scale,
-        colors=plot_colors,
-        y_min=None,  # Auto-detect with outlier filtering
-        y_max=None,  # Auto-detect with outlier filtering
-    )
-    print(f"Phase plot saved: {phase_plot_path}")
+    try:
+        create_matplotlib_plot(
+            frequencies,
+            s_parameters,
+            plot_params,
+            plot_type="phase",
+            output_path=Path(phase_plot_path),
+            dpi=dpi,
+            pixel_width=1920,
+            pixel_height=1080,
+            transparent=False,
+            render_scale=render_scale,
+            colors=plot_colors,
+            y_min=None,
+            y_max=None,
+        )
+        print(f"Phase plot saved: {phase_plot_path}")
+    except Exception as exc:
+        print(f"Warning: failed to save phase plot: {exc}")

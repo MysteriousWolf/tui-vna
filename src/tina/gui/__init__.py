@@ -24,7 +24,9 @@ def __getattr__(name: str) -> Any:
             "run_gui": run_gui,
             "main": main,
         }
-        return exports[name]
+        val = exports[name]
+        globals()[name] = val
+        return val
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
