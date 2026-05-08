@@ -80,7 +80,7 @@ def get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
     Returns:
         A dictionary containing plotting colors and RGB tuples.
     """
-    if theme_vars:
+    if theme_vars is not None:
         traces = {}
         for param, key in SPARAM_THEME_KEYS.items():
             hex_val = theme_vars.get(key)
