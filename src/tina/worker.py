@@ -866,13 +866,23 @@ class MeasurementWorker:
                             continue
                         magnitude_db = values.get("magnitude_db", [])
                         phase_deg = values.get("phase_deg", [])
-                        if isinstance(magnitude_db, list) and isinstance(
-                            phase_deg, list
+                        if not (
+                            isinstance(magnitude_db, list)
+                            and isinstance(phase_deg, list)
                         ):
-                            sparams[name] = (
-                                np.array(magnitude_db, dtype=float),
-                                np.array(phase_deg, dtype=float),
+                            continue
+                        if len(magnitude_db) != len(freqs) or len(phase_deg) != len(
+                            freqs
+                        ):
+                            raise ValueError(
+                                f"Recovered trace {name!r} has inconsistent array "
+                                f"lengths: magnitude={len(magnitude_db)}, "
+                                f"phase={len(phase_deg)}, freqs={len(freqs)}"
                             )
+                        sparams[name] = (
+                            np.array(magnitude_db, dtype=float),
+                            np.array(phase_deg, dtype=float),
+                        )
 
                     if len(freqs) == 0 or not sparams:
                         raise ValueError(
