@@ -197,6 +197,10 @@ class StatusFooter(Footer):
             self._debug_chip_state = ("ERR OK", "--state-ok")
         elif not connected:
             self._debug_chip_state = ("ERR OK", "--stale")
+        else:
+            text, css_class = self._debug_chip_state
+            if css_class == "--stale":
+                self._debug_chip_state = (text, "--state-ok")
         self._apply_debug_chip()
 
     def update_last_error(self, command: str, raw_error: str) -> None:
