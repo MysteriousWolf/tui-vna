@@ -68,12 +68,17 @@ def _split_sample_generator_kwargs(kwargs: dict[str, Any]) -> dict[str, dict[str
         "S22": {"resonance_freq", "q_factor", "return_loss_db"},
     }
 
+    allowed_keys = shared_keys | {k for keys in generator_keys.values() for k in keys}
+    unknown = set(kwargs) - allowed_keys
+    if unknown:
+        raise ValueError(f"Unknown sample generator kwargs: {sorted(unknown)}")
+
     split_kwargs: dict[str, dict[str, Any]] = {}
-    for name, allowed_keys in generator_keys.items():
+    for name, param_keys in generator_keys.items():
         split_kwargs[name] = {
             key: value
             for key, value in kwargs.items()
-            if key in allowed_keys or key in shared
+            if key in param_keys or key in shared
         }
     return split_kwargs
 
@@ -207,7 +212,7 @@ def generate_realistic_s21(
         seed,
         insertion_loss_db,
         rolloff_db_per_decade,
-        cutoff_freq,
+        resolved_cutoff_freq,
     )
     magnitude_db += rng.normal(0, 0.05, len(frequencies))
     phase_deg += rng.normal(0, 0.3, len(frequencies))
@@ -240,11 +245,12 @@ def generate_realistic_s12(
     Returns:
         Tuple of (magnitude_db, phase_deg)
     """
+    resolved_cutoff_freq = frequencies[-1] * 0.7 if cutoff_freq is None else cutoff_freq
     mag, phase = generate_realistic_s21(
         frequencies,
         insertion_loss_db=insertion_loss_db,
         rolloff_db_per_decade=rolloff_db_per_decade,
-        cutoff_freq=cutoff_freq,
+        cutoff_freq=resolved_cutoff_freq,
         seed=seed,
     )
 
@@ -254,7 +260,7 @@ def generate_realistic_s12(
         seed,
         insertion_loss_db,
         rolloff_db_per_decade,
-        cutoff_freq,
+        resolved_cutoff_freq,
     )
     mag += rng.normal(0, 0.1, len(frequencies))
     phase += rng.normal(0, 2.0, len(frequencies))
