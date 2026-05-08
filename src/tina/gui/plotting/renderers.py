@@ -13,8 +13,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
 
+from tina.utils.signal import calculate_plot_range_with_outlier_filtering, unwrap_phase
+
 from .colors import get_plot_colors
-from .utils import calculate_plot_range_with_outlier_filtering, unwrap_phase
 
 
 def get_terminal_font() -> tuple[str, float | None]:

@@ -1,5 +1,7 @@
 """Plotting helpers for the TINA GUI."""
 
+from tina.utils.signal import calculate_plot_range_with_outlier_filtering, unwrap_phase
+
 from .colors import (
     DISTORTION_OVERLAY_COLORS,
     DISTORTION_OVERLAY_LABELS,
@@ -11,11 +13,7 @@ from .colors import (
     hex_to_rgb,
 )
 from .renderers import create_matplotlib_plot, create_smith_chart, get_terminal_font
-from .utils import (
-    calculate_plot_range_with_outlier_filtering,
-    truncate_path_intelligently,
-    unwrap_phase,
-)
+from .utils import truncate_path_intelligently
 
 __all__ = [
     "DISTORTION_OVERLAY_COLORS",

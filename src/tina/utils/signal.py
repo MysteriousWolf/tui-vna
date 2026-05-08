@@ -56,7 +56,8 @@ def calculate_plot_range_with_outlier_filtering(
         raise ValueError("outlier_percentile must be in [0, 50)")
     safety_margin = float(np.clip(safety_margin, 0.0, 1.0))
 
-    finite_data = np.asarray(data, dtype=float)[np.isfinite(data)]
+    data_arr = np.asarray(data, dtype=float)
+    finite_data = data_arr[np.isfinite(data_arr)]
     if finite_data.size == 0:
         return (0.0, 1.0)
 
