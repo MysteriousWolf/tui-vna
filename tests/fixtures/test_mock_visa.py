@@ -29,3 +29,6 @@ class TestMockVisaResource:
 
         resource.write(":CALC1:PAR:SEL 'S22'")
         assert resource._active_param == 4
+
+        resource.write("CALC1:PAR:SEL 'CH1_S11'")
+        assert resource._active_param == 1
