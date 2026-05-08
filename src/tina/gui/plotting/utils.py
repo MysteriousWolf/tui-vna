@@ -53,7 +53,9 @@ def truncate_path_intelligently(path_str: str, max_width: int) -> str:
             return truncated
 
     if len(parts) > 1:
-        abbreviated = "/".join(p[0] for p in parts[:-1]) + "/" + parts[-1]
+        root = "/" if parts[0] in ("", "/") else ""
+        middle_parts = parts[1:-1] if root else parts[:-1]
+        abbreviated = root + "/".join(p[0] for p in middle_parts) + "/" + parts[-1]
         if len(abbreviated) <= effective_width:
             return abbreviated
 

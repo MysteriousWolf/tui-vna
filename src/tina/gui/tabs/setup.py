@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Checkbox, Input, Label, Select, Static
+from textual.widgets import Button, Checkbox, Input, Label, Select, Static
+
+if TYPE_CHECKING:
+    from tina.main import VNAApp
 
 
-def compose_setup_tab(app) -> ComposeResult:
+def compose_setup_tab(app: "VNAApp") -> ComposeResult:
     """Compose the Setup tab contents."""
     with VerticalScroll():
         # Connection Settings
@@ -123,9 +128,15 @@ def compose_setup_tab(app) -> ComposeResult:
 
         # Output Settings
         with Container(classes="panel") as panel:
-            panel.border_title = (
-                "Output [@click='app.show_output_help'][#121212 on $primary] ? [/]"
-            )
+            panel.border_title = "Output"
+            with Horizontal(classes="param-row panel-header-row"):
+                yield Static("", classes="spacer")
+                yield Button(
+                    "?",
+                    id="btn_output_help",
+                    classes="help-button",
+                    flat=True,
+                )
 
             with Horizontal(classes="param-row"):
                 yield Label("Filename:", classes="col-label")

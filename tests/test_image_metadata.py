@@ -384,7 +384,7 @@ class TestReadPngMetadata:
         metadata = read_png_metadata(image_path)
 
         assert metadata.notes_markdown == ""
-        assert metadata.machine_settings == {}
+        assert metadata.machine_settings == {"metadata_version": 1}
 
 
 @pytest.mark.unit
@@ -425,7 +425,7 @@ class TestReadSvgMetadata:
         metadata = read_svg_metadata(image_path)
 
         assert metadata.notes_markdown == ""
-        assert metadata.machine_settings == {}
+        assert metadata.machine_settings == {"metadata_version": 1}
 
 
 @pytest.mark.unit

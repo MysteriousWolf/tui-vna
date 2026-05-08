@@ -383,10 +383,10 @@ class TestRenderMathImage:
             assert not p.exists(), f"{p} was not deleted"
 
     @pytest.mark.unit
-    def test_cleanup_tolerates_missing_files(self):
+    def test_cleanup_tolerates_missing_files(self, tmp_path):
         """on_unmount does not raise if a temp file was already removed."""
         screen = _bare_screen()
-        screen._temp_files.append(Path("/tmp/__nonexistent_help_test__.png"))
+        screen._temp_files.append(tmp_path / "__nonexistent_help_test__.png")
         screen.on_unmount()  # should not raise
 
 

@@ -188,5 +188,5 @@ def consume_worker_messages_until(
                 # Return error immediately
                 return msg
         except queue.Empty:
-            return None
+            continue
     return None

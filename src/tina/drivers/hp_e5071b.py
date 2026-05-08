@@ -249,32 +249,34 @@ class HPE5071B(VNABase):
 
         params = {}
 
+        _visa_exc = (ValueError, OSError, pyvisa.errors.VisaIOError)
+
         try:
             params["start_freq_hz"] = float(self._query(CMD_GET_FREQ_START).strip())
-        except Exception:
+        except _visa_exc:
             params["start_freq_hz"] = None
 
         try:
             params["stop_freq_hz"] = float(self._query(CMD_GET_FREQ_STOP).strip())
-        except Exception:
+        except _visa_exc:
             params["stop_freq_hz"] = None
 
         try:
             params["sweep_points"] = int(self._query(CMD_GET_SWEEP_POINTS).strip())
-        except Exception:
+        except _visa_exc:
             params["sweep_points"] = None
 
         try:
             avg_state = self._query(CMD_GET_AVERAGING_STATE).strip()
             params["averaging_enabled"] = avg_state in ("1", "ON")
-        except Exception:
+        except _visa_exc:
             params["averaging_enabled"] = None
 
         try:
             params["averaging_count"] = int(
                 self._query(CMD_GET_AVERAGING_COUNT).strip()
             )
-        except Exception:
+        except _visa_exc:
             params["averaging_count"] = None
 
         return params
@@ -304,46 +306,47 @@ class HPE5071B(VNABase):
         )
 
         status = {}
+        _visa_exc = (ValueError, OSError, pyvisa.errors.VisaIOError)
 
         try:
             raw = self._query(CMD_GET_CORRECTION_STATE).strip()
             status["cal_enabled"] = raw in ("1", "ON")
-        except Exception:
+        except _visa_exc:
             status["cal_enabled"] = None
 
         try:
             raw = self._query(CMD_GET_CORRECTION_TYPE).strip()
             # Response may contain extra comma-separated fields; take first token only
             status["cal_type"] = raw.split(",")[0].strip()
-        except Exception:
+        except _visa_exc:
             status["cal_type"] = None
 
         try:
             raw = self._query(CMD_GET_SMOOTHING_STATE).strip()
             status["smoothing_enabled"] = raw in ("1", "ON")
-        except Exception:
+        except _visa_exc:
             status["smoothing_enabled"] = None
 
         try:
             status["smoothing_aperture"] = float(
                 self._query(CMD_GET_SMOOTHING_APERTURE).strip()
             )
-        except Exception:
+        except _visa_exc:
             status["smoothing_aperture"] = None
 
         try:
             status["if_bandwidth_hz"] = float(self._query(CMD_GET_IF_BANDWIDTH).strip())
-        except Exception:
+        except _visa_exc:
             status["if_bandwidth_hz"] = None
 
         try:
             status["port_power_dbm"] = float(self._query(CMD_GET_PORT_POWER).strip())
-        except Exception:
+        except _visa_exc:
             status["port_power_dbm"] = None
 
         try:
             status["trigger_source"] = self._query(CMD_GET_TRIGGER_SOURCE).strip()
-        except Exception:
+        except _visa_exc:
             status["trigger_source"] = None
 
         return status

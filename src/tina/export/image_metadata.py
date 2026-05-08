@@ -84,7 +84,7 @@ def read_png_metadata(image_path: str | Path) -> ImageExportMetadata:
     parsed = _load_yaml(yaml_text)
     return ImageExportMetadata(
         notes_markdown=notes_markdown,
-        machine_settings=_normalize_machine_settings(parsed) if parsed else parsed,
+        machine_settings=_normalize_machine_settings(parsed or {}),
     )
 
 
@@ -151,13 +151,20 @@ def embed_png_metadata(
 
 
 def _escape_svg_comment(text: str) -> str:
-    """Escape '-->' so it cannot prematurely close an XML comment."""
-    return text.replace("-->", "--&gt;")
+    """Escape '--' sequences that are forbidden anywhere in an XML comment.
+
+    XML comments must not contain '--' (two consecutive hyphens). We replace
+    each ASCII '--' with two Unicode HYPHEN characters (U+2010) which are
+    visually identical but do not trigger the XML comment rule.
+    """
+    return text.replace("--", "‐‐")
 
 
 def _unescape_svg_comment(text: str) -> str:
-    """Reverse _escape_svg_comment."""
-    return text.replace("--&gt;", "-->")
+    """Reverse _escape_svg_comment, also handling the legacy '--&gt;' encoding."""
+    text = text.replace("‐‐", "--")
+    text = text.replace("--&gt;", "-->")  # backward compat with old exports
+    return text
 
 
 def _build_svg_comment_block(
@@ -237,7 +244,7 @@ def read_svg_metadata(image_path: str | Path) -> ImageExportMetadata:
     parsed = _load_yaml("\n".join(metadata_lines))
     return ImageExportMetadata(
         notes_markdown="\n".join(notes_lines).rstrip(),
-        machine_settings=_normalize_machine_settings(parsed) if parsed else parsed,
+        machine_settings=_normalize_machine_settings(parsed or {}),
     )
 
 

@@ -226,9 +226,9 @@ class HelpScreen(ModalScreen):
 
             fd, tmp_path = tempfile.mkstemp(suffix=".png")
             os.close(fd)
-            final.convert("RGB").save(tmp_path, "PNG")
             tmp = Path(tmp_path)
             self._temp_files.append(tmp)
+            final.convert("RGB").save(tmp_path, "PNG")
             return tmp, final.width, final.height
         except Exception:
             if fig is not None:
