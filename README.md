@@ -172,6 +172,7 @@ with HPE5071B(config) as vna:
 
 - `config/` - Constants and settings
 - `drivers/` - VNA drivers with auto-discovery
+- `tools/` - Tool computations (cursor, measure, distortion)
 - `utils/` - Colors, terminal, paths, touchstone
 - `gui/` - TUI resources (CSS in `.tcss`)
 
