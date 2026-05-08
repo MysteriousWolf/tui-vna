@@ -72,11 +72,11 @@ UpdateNotificationScreen .notif-btn {
     min-width: 0;
 }
 
-#btn-notif-github {
+UpdateNotificationScreen #btn-notif-github {
     max-width: 25;
 }
 
-#btn-notif-dismiss {
+UpdateNotificationScreen #btn-notif-dismiss {
     max-width: 15;
 }
 
