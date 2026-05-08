@@ -269,7 +269,7 @@ class MockVisaResource:
                 )
             )
 
-        if "DATA:SDAT?" in cmd or "CALC1:DATA:SDAT?" in cmd:
+        if "DATA:SDAT?" in cmd:
             t = np.linspace(0, 1, self._sweep_points)
 
             if self._active_param == 1:
