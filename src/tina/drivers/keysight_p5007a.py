@@ -335,8 +335,15 @@ class KeysightP5007A(VNABase):
         try:
             deadline = time.time() + timeout_seconds
             while time.time() < deadline:
-                if self._query("*OPC?").strip() in {"1", "+1"}:
-                    return
+                try:
+                    if self._query("*OPC?").strip() in {"1", "+1"}:
+                        return
+                except pyvisa.errors.VisaIOError:
+                    if time.time() >= deadline:
+                        raise TimeoutError(
+                            f"Operation did not complete within {timeout_seconds} seconds"
+                        )
+                    raise
                 time.sleep(0.1)
         finally:
             resource.timeout = original_timeout
