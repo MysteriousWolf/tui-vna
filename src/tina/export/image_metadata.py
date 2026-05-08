@@ -176,7 +176,7 @@ def _build_svg_comment_block(
     lines: list[str] = []
 
     notes = notes_markdown.rstrip("\n")
-    if notes:
+    if notes.strip():
         lines.append(f"<!-- {_SVG_NOTES_BEGIN}")
         lines.append("Raw markdown notes below. You may edit these manually.")
         lines.extend(_escape_svg_comment(notes).splitlines())
