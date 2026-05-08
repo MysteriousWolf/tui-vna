@@ -51,10 +51,12 @@ class HistoryReplaceAutoComplete(AutoComplete):
         get_choices: Callable[[], list[AutocompleteChoice]],
         **kwargs,
     ) -> None:
+        """Initialise with a target input and a callable that provides choices."""
         super().__init__(target=target, candidates=None, **kwargs)
         self._get_choices = get_choices
 
     def get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
+        """Return deduplicated dropdown items filtered by the current query."""
         query = target_state.text.strip().lower()
         seen: set[str] = set()
         items: list[DropdownItem] = []
@@ -81,10 +83,12 @@ class TemplateAutoComplete(AutoComplete):
         get_choices: Callable[[], list[AutocompleteChoice]],
         **kwargs,
     ) -> None:
+        """Initialise with a target input and a callable that provides template choices."""
         super().__init__(target=target, candidates=None, **kwargs)
         self._get_choices = get_choices
 
     def get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
+        """Return deduplicated dropdown items filtered by the token near the cursor."""
         search = self.get_search_string(target_state).lower().strip()
         seen: set[tuple[str, str]] = set()
         items: list[DropdownItem] = []

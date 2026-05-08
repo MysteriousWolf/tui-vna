@@ -33,6 +33,7 @@ class TestDistortionCache:
     def test_same_inputs_reuse_cached_result_for_overlay_and_results(
         self, monkeypatch: pytest.MonkeyPatch, distortion_fixture
     ) -> None:
+        """Identical inputs should return the cached result and call compute only once."""
         freqs, sparams = distortion_fixture
         app = _FakeApp()
         compute_calls: list[tuple[str, str, float | None, float | None]] = []
@@ -87,6 +88,7 @@ class TestDistortionCache:
     def test_parameter_change_causes_cache_miss(
         self, monkeypatch: pytest.MonkeyPatch, distortion_fixture
     ) -> None:
+        """Changing a cursor parameter should invalidate the cache and trigger recomputation."""
         freqs, sparams = distortion_fixture
         app = _FakeApp()
         compute_calls: list[tuple[float | None, float | None]] = []
@@ -133,6 +135,7 @@ class TestDistortionCache:
     def test_new_data_object_invalidates_existing_cache(
         self, monkeypatch: pytest.MonkeyPatch, distortion_fixture
     ) -> None:
+        """Replacing sparams with a new array object should clear the old cache entry."""
         freqs, sparams = distortion_fixture
         app = _FakeApp()
         compute_calls: list[tuple[int, int, int]] = []
