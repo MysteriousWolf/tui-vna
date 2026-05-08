@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import re
@@ -16,6 +17,8 @@ import skrf as rf
 from tina.utils.signal import calculate_plot_range_with_outlier_filtering, unwrap_phase
 
 from .colors import get_plot_colors
+
+_log = logging.getLogger(__name__)
 
 
 def get_terminal_font() -> tuple[str, float | None]:
@@ -41,7 +44,7 @@ def get_terminal_font() -> tuple[str, float | None]:
         nonlocal font_name, font_size
         cfg = home / ".config" / "ghostty" / "config"
         if cfg.exists():
-            for line in cfg.read_text().splitlines():
+            for line in cfg.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line.startswith("#"):
                     continue
@@ -62,7 +65,7 @@ def get_terminal_font() -> tuple[str, float | None]:
         elif "kitty" in term:
             cfg = home / ".config" / "kitty" / "kitty.conf"
             if cfg.exists():
-                for line in cfg.read_text().splitlines():
+                for line in cfg.read_text(encoding="utf-8").splitlines():
                     line = line.strip()
                     if line.startswith("font_family") and not font_name:
                         font_name = line.split(None, 1)[1].strip().strip("\"'")
@@ -76,7 +79,7 @@ def get_terminal_font() -> tuple[str, float | None]:
             for name in ("alacritty.toml", "alacritty.yml"):
                 cfg = home / ".config" / "alacritty" / name
                 if cfg.exists():
-                    text = cfg.read_text()
+                    text = cfg.read_text(encoding="utf-8")
                     if name.endswith(".toml"):
                         m = re.search(
                             r'\[font\.normal\]\s*\n\s*family\s*=\s*["\']([^"\']+)',
@@ -108,7 +111,7 @@ def get_terminal_font() -> tuple[str, float | None]:
                 home / ".wezterm.lua",
             ):
                 if cfg.exists():
-                    text = cfg.read_text()
+                    text = cfg.read_text(encoding="utf-8")
                     m = re.search(
                         r'font\s*=\s*wezterm\.font\s*\(\s*["\']([^"\']+)', text
                     )
@@ -147,7 +150,7 @@ def get_terminal_font() -> tuple[str, float | None]:
                         if "WindowsTerminal" in pkg.name:
                             settings = pkg / "LocalState" / "settings.json"
                             if settings.exists():
-                                data = json.loads(settings.read_text())
+                                data = json.loads(settings.read_text(encoding="utf-8"))
                                 profiles = data.get("profiles", {})
                                 defaults = profiles.get("defaults", {})
                                 font_cfg = defaults.get("font", {})
@@ -159,11 +162,11 @@ def get_terminal_font() -> tuple[str, float | None]:
                                     font_size = float(size)
                                 break
 
-        if not font_name:
+        if not font_name and "ghostty" in term:
             _parse_ghostty_config()
 
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("Terminal font detection failed: %s", exc, exc_info=True)
 
     resolved_name = "monospace"
     if font_name:

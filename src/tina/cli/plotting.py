@@ -1,6 +1,7 @@
 """CLI plotting utilities for tina."""
 
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +18,6 @@ def export_plots_cli(
     base_filename: str,
 ) -> None:
     """Generate and export plots in CLI mode using same scaling as GUI."""
-    # Create plots for magnitude and phase
     plot_params = []
     if settings.plot_s11 and "S11" in s_parameters:
         plot_params.append("S11")
@@ -32,59 +32,30 @@ def export_plots_cli(
         print("No S-parameters selected for plotting")
         return
 
-    # Use the same plot settings as GUI for consistency
-    # Match the GUI's high-quality rendering parameters
     render_scale = 2
-    dpi = 150 * render_scale  # 300 DPI for high quality
+    dpi = 150 * render_scale
+    plot_colors = get_plot_colors(None)
 
-    # Get proper themed colors (use fallback colors which are already well-themed)
-    plot_colors = get_plot_colors(None)  # This will use the nice fallback colors
+    def _export_one(plot_type: str, file_path: str) -> None:
+        try:
+            create_matplotlib_plot(
+                frequencies,
+                s_parameters,
+                plot_params,
+                plot_type=plot_type,
+                output_path=Path(file_path),
+                dpi=dpi,
+                pixel_width=1920,
+                pixel_height=1080,
+                transparent=False,
+                render_scale=render_scale,
+                colors=plot_colors,
+                y_min=None,
+                y_max=None,
+            )
+            print(f"{plot_type.capitalize()} plot saved: {file_path}")
+        except Exception as exc:
+            print(f"Warning: failed to save {plot_type} plot: {exc}", file=sys.stderr)
 
-    # Create magnitude plot using the same method as GUI
-    plot_filename = f"{base_filename}_magnitude.png"
-    plot_path = os.path.join(output_path, plot_filename)
-
-    # Use the same matplotlib plotting function as the GUI
-    try:
-        create_matplotlib_plot(
-            frequencies,
-            s_parameters,
-            plot_params,
-            plot_type="magnitude",
-            output_path=Path(plot_path),
-            dpi=dpi,
-            pixel_width=1920,
-            pixel_height=1080,
-            transparent=False,
-            render_scale=render_scale,
-            colors=plot_colors,
-            y_min=None,
-            y_max=None,
-        )
-        print(f"Magnitude plot saved: {plot_path}")
-    except Exception as exc:
-        print(f"Warning: failed to save magnitude plot: {exc}")
-
-    # Create phase plot using the same method as GUI
-    phase_plot_filename = f"{base_filename}_phase.png"
-    phase_plot_path = os.path.join(output_path, phase_plot_filename)
-
-    try:
-        create_matplotlib_plot(
-            frequencies,
-            s_parameters,
-            plot_params,
-            plot_type="phase",
-            output_path=Path(phase_plot_path),
-            dpi=dpi,
-            pixel_width=1920,
-            pixel_height=1080,
-            transparent=False,
-            render_scale=render_scale,
-            colors=plot_colors,
-            y_min=None,
-            y_max=None,
-        )
-        print(f"Phase plot saved: {phase_plot_path}")
-    except Exception as exc:
-        print(f"Warning: failed to save phase plot: {exc}")
+    _export_one("magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png"))
+    _export_one("phase", os.path.join(output_path, f"{base_filename}_phase.png"))

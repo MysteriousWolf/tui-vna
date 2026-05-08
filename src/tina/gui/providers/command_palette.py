@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import abc
 from functools import partial
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -223,18 +224,25 @@ class SetupImportProvider(Provider):
         app.action_import_setup_from_measurement_output()
 
 
-class _PathHistoryProvider(Provider):
+class _PathHistoryProvider(Provider, abc.ABC):
     """Base provider for MRU path-history command sources."""
 
     SETTING_NAME: str = ""
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if not getattr(cls, "__abstractmethods__", None) and not cls.SETTING_NAME:
+            raise TypeError(
+                f"{cls.__name__} must define a non-empty SETTING_NAME class attribute"
+            )
+
+    @abc.abstractmethod
     def _get_action(self, _app: _VNAAppProtocol, _path: str):
         """Return the action callable for a given path hit.
 
         Subclasses must override this to return a callable that will be invoked
         when the user selects the hit in the command palette.
         """
-        raise NotImplementedError
 
     async def discover(self) -> Hits:
         """Yield one hit per path in the configured settings list."""

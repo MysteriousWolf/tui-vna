@@ -95,7 +95,6 @@ class CsvExporter:
     ) -> Path:
         """Resolve and create the destination path for the CSV export."""
         output_dir = Path(output_path)
-        output_dir.mkdir(parents=True, exist_ok=True)
 
         resolved_name = filename
         if resolved_name is None:
@@ -119,7 +118,31 @@ class CsvExporter:
             raise ValueError(
                 f"Resolved filename escapes output directory: {resolved_name!r}"
             )
+        output_dir.mkdir(parents=True, exist_ok=True)
         return candidate
+
+    def _write_csv(
+        self,
+        frequencies_hz: np.ndarray,
+        s_parameters: dict[str, tuple[np.ndarray, np.ndarray]],
+        trace_names: tuple[str, ...],
+        output_path: str,
+        filename: str | None,
+        prefix: str,
+    ) -> str:
+        """Write CSV to disk and return the resolved path string."""
+        destination = self._resolve_output_path(output_path, filename, prefix)
+        with destination.open("w", encoding="utf-8", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(self._build_header(trace_names))
+            for index, freq_hz in enumerate(frequencies_hz):
+                row = [f"{self._convert_frequency(float(freq_hz)):.6f}"]
+                for trace_name in trace_names:
+                    magnitude_db, phase_deg = s_parameters[trace_name]
+                    row.append(f"{float(magnitude_db[index]):.6f}")
+                    row.append(f"{float(phase_deg[index]):.6f}")
+                writer.writerow(row)
+        return str(destination)
 
     def export(
         self,
@@ -132,21 +155,7 @@ class CsvExporter:
         """Export measurement traces to CSV and return the created file path."""
         trace_names = self._normalize_trace_order(s_parameters)
         self._validate_inputs(frequencies_hz, s_parameters, trace_names)
-        destination = self._resolve_output_path(output_path, filename, prefix)
-
-        with destination.open("w", encoding="utf-8", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(self._build_header(trace_names))
-
-            for index, freq_hz in enumerate(frequencies_hz):
-                row = [f"{self._convert_frequency(float(freq_hz)):.6f}"]
-                for trace_name in trace_names:
-                    magnitude_db, phase_deg = s_parameters[trace_name]
-                    row.append(f"{float(magnitude_db[index]):.6f}")
-                    row.append(f"{float(phase_deg[index]):.6f}")
-                writer.writerow(row)
-
-        return str(destination)
+        return self._write_csv(frequencies_hz, s_parameters, trace_names, output_path, filename, prefix)
 
     def export_with_result(
         self,
@@ -158,13 +167,8 @@ class CsvExporter:
     ) -> CsvExportResult:
         """Export measurement traces to CSV and return structured result metadata."""
         trace_names = self._normalize_trace_order(s_parameters)
-        path = self.export(
-            frequencies_hz,
-            s_parameters,
-            output_path,
-            filename=filename,
-            prefix=prefix,
-        )
+        self._validate_inputs(frequencies_hz, s_parameters, trace_names)
+        path = self._write_csv(frequencies_hz, s_parameters, trace_names, output_path, filename, prefix)
         return CsvExportResult(
             path=path,
             trace_names=trace_names,
