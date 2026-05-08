@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 
 from ..config.migration import migrate_legacy_config
 from ..config.settings import AppSettings, SettingsManager
@@ -113,11 +114,14 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
     finally:
         if vna is not None:
             try:
                 vna.disconnect()
-            except Exception:
-                pass
+            except Exception as cleanup_err:
+                print(
+                    f"Warning: VNA disconnect failed during cleanup: {cleanup_err}",
+                    file=sys.stderr,
+                )
