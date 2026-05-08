@@ -363,6 +363,11 @@ def create_smith_chart(
         draw_vswr=None,
     )
 
+    # Capture grid artists before adding any user markers/annotations so the
+    # post-styling loops below only restyle the Smith-chart grid, not traces.
+    grid_collections = list(ax.collections)
+    grid_texts = list(ax.texts)
+
     ax.scatter(
         [1.0],
         [0.0],
@@ -465,11 +470,11 @@ def create_smith_chart(
 
     ax.set_title("Smith Chart", color=fg_color, fontsize=base_size * 1.2, pad=15)
 
-    for collection in ax.collections:
+    for collection in grid_collections:
         collection.set_edgecolor(grid_color)
         collection.set_alpha(0.3)
 
-    for text in ax.texts:
+    for text in grid_texts:
         text.set_color(fg_color)
         text.set_fontsize(base_size * 0.7)
 
