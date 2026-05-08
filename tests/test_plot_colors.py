@@ -83,6 +83,15 @@ class TestGetPlotColors:
         assert result["traces"] == SPARAM_FALLBACK_COLORS
 
     @pytest.mark.unit
+    def test_empty_dict_uses_fallback_colors(self):
+        """get_plot_colors({}) must use SPARAM_FALLBACK_COLORS (is not None regression guard)."""
+        result = get_plot_colors({})
+        for param in SPARAM_FALLBACK_COLORS:
+            assert result["traces"][param] == SPARAM_FALLBACK_COLORS[param]
+        assert result["distortion_overlays"] == list(DISTORTION_OVERLAY_COLORS)
+        assert result["default_trace"] == TRACE_COLOR_DEFAULT
+
+    @pytest.mark.unit
     def test_none_uses_fallback_distortion_overlays(self):
         """get_plot_colors(None) should use DISTORTION_OVERLAY_COLORS."""
         result = get_plot_colors(None)

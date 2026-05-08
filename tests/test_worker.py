@@ -920,12 +920,12 @@ class TestWorkerCancellation:
         """Test cancelling a job that doesn't exist."""
         worker = MeasurementWorker()
         worker.start()
-
-        # Cancel non-existent job - returns 1 (first cancel generates token 1)
-        result = worker.cancel_job(99999)
-        assert result == 1
-
-        worker.stop()
+        try:
+            # Cancel non-existent job - returns 1 (first cancel generates token 1)
+            result = worker.cancel_job(99999)
+            assert result == 1
+        finally:
+            worker.stop()
 
     @pytest.mark.unit
     def test_background_job_cancelled_error(self):
@@ -941,29 +941,29 @@ class TestWorkerCancellation:
         """Test that cancel_job changes the token."""
         worker = MeasurementWorker()
         worker.start()
+        try:
+            # First cancel
+            token1 = worker.cancel_job(1)
+            assert token1 == 1
 
-        # First cancel
-        token1 = worker.cancel_job(1)
-        assert token1 == 1
-
-        # Second cancel increments
-        token2 = worker.cancel_job(1)
-        assert token2 == 2
-
-        worker.stop()
+            # Second cancel increments
+            token2 = worker.cancel_job(1)
+            assert token2 == 2
+        finally:
+            worker.stop()
 
     @pytest.mark.unit
     def test_multiple_cancel_operations(self):
         """Test multiple cancel operations don't crash."""
         worker = MeasurementWorker()
         worker.start()
-
-        # Cancel multiple non-existent jobs
-        assert worker.cancel_job(1) == 1
-        assert worker.cancel_job(2) == 1
-        assert worker.cancel_job(999) == 1
-
-        worker.stop()
+        try:
+            # Cancel multiple non-existent jobs
+            assert worker.cancel_job(1) == 1
+            assert worker.cancel_job(2) == 1
+            assert worker.cancel_job(999) == 1
+        finally:
+            worker.stop()
 
 
 class TestWorkerFailureHandling:
@@ -976,21 +976,15 @@ class TestWorkerFailureHandling:
 
         worker = MeasurementWorker()
         worker.start()
-
-        # Set a token
-        worker._job_tokens[1] = 1
-
-        # Check with matching token - should NOT raise
         try:
+            # Set a token
+            worker._job_tokens[1] = 1
+
+            # Matching token — must not raise
             worker._check_job_cancelled(1, 1)
-        except BackgroundJobCancelledError:
-            assert False, "_check_job_cancelled should not raise with matching token"
 
-        # Check with mismatched token - SHOULD raise
-        try:
-            worker._check_job_cancelled(1, 0)  # Old token
-            assert False, "_check_job_cancelled should raise with mismatched token"
-        except BackgroundJobCancelledError:
-            pass  # Expected
-
-        worker.stop()
+            # Mismatched token — must raise
+            with pytest.raises(BackgroundJobCancelledError):
+                worker._check_job_cancelled(1, 0)
+        finally:
+            worker.stop()

@@ -80,10 +80,9 @@ def test_gui_app_module_exports_names_without_eager_main_import():
     """The dedicated GUI app module should advertise app symbols lazily."""
     with _evict_module("tina.gui.app"):
         gui_app = importlib.import_module("tina.gui.app")
-
-    assert "VNAApp" in gui_app.__all__
-    assert "run_gui" in gui_app.__all__
-    assert "main" in gui_app.__all__
+        assert "VNAApp" in gui_app.__all__
+        assert "run_gui" in gui_app.__all__
+        assert "main" in gui_app.__all__
 
 
 @pytest.mark.unit
