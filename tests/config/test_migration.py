@@ -125,7 +125,9 @@ class TestMigrateLegacyConfig:
 
         # Both files corrupt, parse_failed True, _try_remove skipped
         assert result is None
-        assert old_dir.exists(), "Legacy directory must not be removed when all files are corrupt"
+        assert (
+            old_dir.exists()
+        ), "Legacy directory must not be removed when all files are corrupt"
 
     def test_partial_migration_reports_preserved_legacy_directory(self, tmp_path):
         """Corrupt update state should yield a partial migration message and keep the old dir."""

@@ -57,5 +57,7 @@ def export_plots_cli(
         except Exception as exc:
             print(f"Warning: failed to save {plot_type} plot: {exc}", file=sys.stderr)
 
-    _export_one("magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png"))
+    _export_one(
+        "magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png")
+    )
     _export_one("phase", os.path.join(output_path, f"{base_filename}_phase.png"))

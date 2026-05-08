@@ -462,9 +462,7 @@ class TouchstoneExporter:
                 continue
 
             if not saw_option_line:
-                raise ValueError(
-                    "Touchstone option line must appear before data rows"
-                )
+                raise ValueError("Touchstone option line must appear before data rows")
 
             try:
                 values = [float(v) for v in line.split()]

@@ -155,7 +155,9 @@ class CsvExporter:
         """Export measurement traces to CSV and return the created file path."""
         trace_names = self._normalize_trace_order(s_parameters)
         self._validate_inputs(frequencies_hz, s_parameters, trace_names)
-        return self._write_csv(frequencies_hz, s_parameters, trace_names, output_path, filename, prefix)
+        return self._write_csv(
+            frequencies_hz, s_parameters, trace_names, output_path, filename, prefix
+        )
 
     def export_with_result(
         self,
@@ -168,7 +170,9 @@ class CsvExporter:
         """Export measurement traces to CSV and return structured result metadata."""
         trace_names = self._normalize_trace_order(s_parameters)
         self._validate_inputs(frequencies_hz, s_parameters, trace_names)
-        path = self._write_csv(frequencies_hz, s_parameters, trace_names, output_path, filename, prefix)
+        path = self._write_csv(
+            frequencies_hz, s_parameters, trace_names, output_path, filename, prefix
+        )
         return CsvExportResult(
             path=path,
             trace_names=trace_names,
