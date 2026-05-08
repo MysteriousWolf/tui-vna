@@ -350,6 +350,14 @@ class TestWorkerProgressUpdates:
                     np.array([-1.0, -1.5, -2.0], dtype=float),
                     np.array([45.0, 46.0, 47.0], dtype=float),
                 ),
+                "S12": (
+                    np.array([-1.0, -1.5, -2.0], dtype=float),
+                    np.array([45.0, 46.0, 47.0], dtype=float),
+                ),
+                "S22": (
+                    np.array([-10.0, -11.0, -12.0], dtype=float),
+                    np.array([5.0, 6.0, 7.0], dtype=float),
+                ),
             },
             output_path=str(tmp_path),
             filename="worker_import.s2p",
@@ -397,7 +405,7 @@ class TestWorkerProgressUpdates:
             assert len(restored_freqs) == 3
             restored_sparams = result.measurement["sparams"]
             assert isinstance(restored_sparams, dict)
-            assert set(restored_sparams) == {"S11", "S21"}
+            assert set(restored_sparams) == {"S11", "S21", "S12", "S22"}
         finally:
             worker.stop()
 
@@ -670,11 +678,24 @@ class TestWorkerToolsRendering:
         """Repeated save-back should replace old TINA payload instead of duplicating it."""
         exporter = TouchstoneExporter()
         freqs = np.array([1.0e6, 2.0e6], dtype=float)
+        s11_data = (
+            np.array([-10.0, -11.0], dtype=float),
+            np.array([5.0, 6.0], dtype=float),
+        )
         sparams = {
-            "S11": (
-                np.array([-10.0, -11.0], dtype=float),
-                np.array([5.0, 6.0], dtype=float),
-            )
+            "S11": s11_data,
+            "S21": (
+                np.array([-20.0, -21.0], dtype=float),
+                np.array([0.0, 1.0], dtype=float),
+            ),
+            "S12": (
+                np.array([-20.0, -21.0], dtype=float),
+                np.array([0.0, 1.0], dtype=float),
+            ),
+            "S22": (
+                np.array([-30.0, -31.0], dtype=float),
+                np.array([90.0, 91.0], dtype=float),
+            ),
         }
         output_path = exporter.export(
             freqs,
@@ -729,7 +750,19 @@ class TestWorkerToolsRendering:
                 "S11": (
                     np.array([-10.0, -11.0], dtype=float),
                     np.array([5.0, 6.0], dtype=float),
-                )
+                ),
+                "S21": (
+                    np.array([-20.0, -21.0], dtype=float),
+                    np.array([0.0, 1.0], dtype=float),
+                ),
+                "S12": (
+                    np.array([-20.0, -21.0], dtype=float),
+                    np.array([0.0, 1.0], dtype=float),
+                ),
+                "S22": (
+                    np.array([-30.0, -31.0], dtype=float),
+                    np.array([90.0, 91.0], dtype=float),
+                ),
             },
             str(tmp_path),
             filename="stale-token.s2p",

@@ -135,9 +135,9 @@ class TestTouchstoneExporter:
                     content = f.read()
                     assert f"# {unit} S DB R" in content
 
-    @pytest.mark.integration
-    def test_export_partial_sparameters(self, sample_frequencies) -> None:
-        """Test export with only some S-parameters."""
+    @pytest.mark.unit
+    def test_export_partial_sparameters_raises(self, sample_frequencies) -> None:
+        """Exporting fewer than all four 2-port S-parameters must raise ValueError."""
         partial_sparams = {
             "S11": (
                 np.random.randn(len(sample_frequencies)),
@@ -152,18 +152,8 @@ class TestTouchstoneExporter:
         exporter = TouchstoneExporter()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = exporter.export(sample_frequencies, partial_sparams, tmpdir)
-
-            assert os.path.exists(output_path)
-
-            with open(output_path, encoding="utf-8") as f:
-                lines = f.readlines()
-                data_lines = [
-                    line
-                    for line in lines
-                    if line.strip() and not line.startswith(("!", "#"))
-                ]
-                assert len(data_lines) > 0
+            with pytest.raises(ValueError, match="missing"):
+                exporter.export(sample_frequencies, partial_sparams, tmpdir)
 
     @pytest.mark.unit
     def test_export_length_mismatch_error(self, sample_frequencies) -> None:
@@ -223,7 +213,8 @@ class TestTouchstoneExporter:
                 notes_markdown=notes,
             )
 
-            content = open(output_path, encoding="utf-8").read()
+            with open(output_path, encoding="utf-8") as f:
+                content = f.read()
 
         assert "! TINA NOTES BEGIN" in content
         assert "! Raw markdown notes below. You may edit these manually." in content
@@ -248,7 +239,8 @@ class TestTouchstoneExporter:
                 notes_markdown="",
             )
 
-            content = open(output_path, encoding="utf-8").read()
+            with open(output_path, encoding="utf-8") as f:
+                content = f.read()
 
         assert "! TINA NOTES BEGIN" not in content
         assert "! TINA NOTES END" not in content
@@ -280,7 +272,8 @@ class TestTouchstoneExporter:
                 metadata=metadata,
             )
 
-            content = open(output_path, encoding="utf-8").read()
+            with open(output_path, encoding="utf-8") as f:
+                content = f.read()
 
         assert "! TINA METADATA BEGIN" in content
         assert "! Machine-readable settings for TINA import/recovery." in content
@@ -337,7 +330,8 @@ class TestTouchstoneExporter:
                 metadata={"setup": {"host": "lab-vna"}},
             )
 
-            content = open(output_path, encoding="utf-8").read()
+            with open(output_path, encoding="utf-8") as f:
+                content = f.read()
 
         assert "! metadata_version: 1" in content
 
@@ -360,7 +354,8 @@ class TestTouchstoneExporter:
                 },
             )
 
-            content = open(output_path, encoding="utf-8").read()
+            with open(output_path, encoding="utf-8") as f:
+                content = f.read()
 
         assert "! metadata_version: 7" in content
 

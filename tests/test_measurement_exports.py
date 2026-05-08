@@ -2107,6 +2107,8 @@ class TestMeasurementOutputRoundTrips:
             {
                 "S11": sample_measurement["sparams"]["S11"],
                 "S21": sample_measurement["sparams"]["S21"],
+                "S12": sample_measurement["sparams"]["S12"],
+                "S22": sample_measurement["sparams"]["S22"],
             },
             str(tmp_path),
             filename="roundtrip.s2p",
@@ -2237,7 +2239,7 @@ class TestMeasurementOutputRoundTrips:
         np.testing.assert_allclose(
             app.last_measurement["freqs"], sample_measurement["freqs"]
         )
-        assert set(app.last_measurement["sparams"]) == {"S11", "S21"}
+        assert set(app.last_measurement["sparams"]) == {"S11", "S21", "S12", "S22"}
         assert app.last_measurement["notes"] == sample_measurement["notes"]
         assert app.last_measurement["touchstone_path"] == str(
             Path(export_path).resolve()

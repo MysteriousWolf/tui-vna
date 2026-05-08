@@ -85,13 +85,22 @@ class TouchstoneExporter:
     def _normalize_export_params(
         s_parameters: dict[str, tuple[np.ndarray, np.ndarray]],
     ) -> list[str]:
-        """Return exported S-parameters in Touchstone column order."""
+        """Return exported S-parameters in Touchstone column order.
+
+        Raises ValueError if any of the four required 2-port S-parameters are absent.
+        """
         export_params = [
             name for name in _TOUCHSTONE_PARAM_ORDER if name in s_parameters
         ]
         if not export_params:
             raise ValueError("No valid S-parameters provided for export")
-        return export_params
+        missing = [name for name in _TOUCHSTONE_PARAM_ORDER if name not in s_parameters]
+        if missing:
+            raise ValueError(
+                "Touchstone .s2p export requires all four 2-port S-parameters "
+                "(S11, S21, S12, S22); missing: " + ", ".join(missing)
+            )
+        return list(_TOUCHSTONE_PARAM_ORDER)
 
     @staticmethod
     def _validate_inputs(
@@ -117,7 +126,11 @@ class TouchstoneExporter:
         filename: str | None,
         prefix: str,
     ) -> str:
-        """Resolve and create the destination path for the Touchstone export."""
+        """Resolve and create the destination path for the Touchstone export.
+
+        Raises ValueError if the resolved filename contains path components that
+        could escape the output directory.
+        """
         os.makedirs(output_path, exist_ok=True)
 
         resolved_name = filename
@@ -125,10 +138,24 @@ class TouchstoneExporter:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             resolved_name = f"{prefix}_{timestamp}"
 
+        if (
+            os.path.isabs(resolved_name)
+            or "/" in resolved_name
+            or "\\" in resolved_name
+            or resolved_name in {"", ".", ".."}
+        ):
+            raise ValueError(
+                "filename must be a plain file name with no path components"
+            )
+
         if not resolved_name.lower().endswith(".s2p"):
             resolved_name += ".s2p"
 
-        return os.path.join(output_path, resolved_name)
+        full_path = os.path.realpath(os.path.join(output_path, resolved_name))
+        base_path = os.path.realpath(output_path)
+        if os.path.commonpath([base_path, full_path]) != base_path:
+            raise ValueError("resolved output path escapes output directory")
+        return full_path
 
     @staticmethod
     def _build_notes_comment_lines(notes_markdown: str) -> list[str]:
@@ -411,26 +438,46 @@ class TouchstoneExporter:
 
             if line.startswith("#"):
                 parts = line.split()
-                if len(parts) >= 2:
-                    freq_unit = parts[1]
+                if len(parts) < 5:
+                    raise ValueError(f"Invalid Touchstone option line: {line!r}")
+                unit_map = {k.lower(): k for k in _FREQ_UNIT_FACTORS}
+                unit_token = parts[1].lower()
+                if unit_token not in unit_map:
+                    raise ValueError(
+                        f"Unsupported Touchstone frequency unit: {parts[1]!r}"
+                    )
+                if parts[2].upper() != "S":
+                    raise ValueError(
+                        "Only S-parameter Touchstone files are supported; "
+                        f"got parameter type {parts[2]!r}"
+                    )
+                if parts[3].upper() != "DB":
+                    raise ValueError(
+                        "Only DB-format Touchstone files are supported; "
+                        f"got format {parts[3]!r}"
+                    )
+                freq_unit = unit_map[unit_token]
                 continue
 
             try:
                 values = [float(v) for v in line.split()]
-                if len(values) < 3:
-                    continue
-
-                frequencies.append(values[0])
-
-                for idx, param_name in enumerate(_TOUCHSTONE_PARAM_ORDER):
-                    mag_idx = 1 + idx * 2
-                    phase_idx = 2 + idx * 2
-                    if phase_idx < len(values):
-                        s_params[param_name][0].append(values[mag_idx])
-                        s_params[param_name][1].append(values[phase_idx])
-
-            except (ValueError, IndexError):
+            except ValueError:
                 continue
+
+            expected_count = 1 + 2 * len(_TOUCHSTONE_PARAM_ORDER)
+            if len(values) != expected_count:
+                raise ValueError(
+                    f"Expected {expected_count} values per data row, "
+                    f"got {len(values)}: {line!r}"
+                )
+
+            frequencies.append(values[0])
+
+            for idx, param_name in enumerate(_TOUCHSTONE_PARAM_ORDER):
+                mag_idx = 1 + idx * 2
+                phase_idx = 2 + idx * 2
+                s_params[param_name][0].append(values[mag_idx])
+                s_params[param_name][1].append(values[phase_idx])
 
         if not frequencies:
             raise ValueError("No valid data found in file")
