@@ -5,7 +5,7 @@ Automatically logs all SCPI commands sent to the VNA for debugging and monitorin
 """
 
 from collections.abc import Callable
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
 
@@ -14,9 +14,17 @@ from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
 class ScpiDriver(Protocol):
     """Structural protocol for any VNA object that can be wrapped."""
 
-    def _send_command(self, command: str) -> Any: ...
-    def _query(self, command: str) -> str: ...
-    def _query_ascii_values(self, command: str) -> list[float]: ...
+    def _send_command(self, command: str) -> Any:
+        """Send a SCPI command without expecting a response."""
+        ...
+
+    def _query(self, command: str) -> str:
+        """Send a SCPI query and return the raw textual response."""
+        ...
+
+    def _query_ascii_values(self, command: str) -> list[float]:
+        """Send a SCPI query and return ASCII-decoded float values."""
+        ...
 
 
 class LoggingVNAWrapper:
@@ -70,20 +78,16 @@ class LoggingVNAWrapper:
         ``_raw_query`` is stored separately so the ``SYST:ERR?`` debug check
         can bypass the wrapper and avoid recursive logging.
         """
-        original_send = cast(Callable[[str], Any], getattr(self._vna, "_send_command"))
-        if not callable(original_send):
-            raise TypeError(f"vna._send_command is not callable: {type(original_send)}")
-        original_query = cast(Callable[[str], str], getattr(self._vna, "_query"))
-        if not callable(original_query):
-            raise TypeError(f"vna._query is not callable: {type(original_query)}")
-        original_query_ascii = cast(
-            Callable[[str], list[float]],
-            getattr(self._vna, "_query_ascii_values"),
-        )
-        if not callable(original_query_ascii):
-            raise TypeError(
-                f"vna._query_ascii_values is not callable: {type(original_query_ascii)}"
-            )
+        original_send = self._vna._send_command
+        original_query = self._vna._query
+        original_query_ascii = self._vna._query_ascii_values
+        for name, fn in (
+            ("_send_command", original_send),
+            ("_query", original_query),
+            ("_query_ascii_values", original_query_ascii),
+        ):
+            if not callable(fn):
+                raise TypeError(f"vna.{name} is not callable: {type(fn)}")
 
         # Must not route SYST:ERR? back through the patched _query — that would
         # trigger another debug check, causing infinite recursion.
