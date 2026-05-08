@@ -80,7 +80,7 @@ def test_update_modal_title_uses_single_leading_v(version: str) -> None:
 
     screen = build_update_screen(release)
 
-    assert screen._title == "Update available:  v1.2.3"
+    assert screen._title == "Update available: v1.2.3"
 
 
 @pytest.mark.parametrize("version", ["1.2.3", "v1.2.3"])

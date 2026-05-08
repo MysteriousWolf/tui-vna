@@ -119,6 +119,25 @@ class TestKeysightP5007AConnection:
                 assert vna.inst is mock_inst
 
     @pytest.mark.unit
+    def test_connect_rejects_mismatched_idn(self, vna_config):
+        """Connection should fail when *IDN? identifies a different instrument."""
+        vna = KeysightP5007A(vna_config)
+
+        mock_inst = MagicMock()
+        mock_inst.timeout = None
+        mock_inst.query.return_value = "Keysight Technologies,N9913A,MY12345678,A.01.00"
+
+        with patch.object(vna, "_check_host_reachable", return_value=True):
+            with patch("pyvisa.ResourceManager") as mock_rm_class:
+                mock_rm = MagicMock()
+                mock_rm.open_resource.return_value = mock_inst
+                mock_rm_class.return_value = mock_rm
+
+                with pytest.raises(ConnectionError, match="Expected Keysight P5007A"):
+                    vna.connect(progress_callback=None)
+                assert not vna.is_connected()
+
+    @pytest.mark.unit
     def test_connect_host_unreachable(self, vna_config):
         """Test connection fails when host is unreachable."""
         vna = KeysightP5007A(vna_config)

@@ -296,21 +296,15 @@ class TestRenderTemplate:
         """Templates outside history should require clearing the history selector."""
         history_options = [("measurement_{date}_{time}", "measurement_{date}_{time}")]
         current_filename = "both_frontends_tuned"
-        filename_values = {value for _, value in history_options}
 
-        should_clear = current_filename not in filename_values
-
-        assert should_clear is True
+        assert setup_logic.should_clear_history_selector(current_filename, history_options) is True
 
     def test_manual_folder_template_not_in_history_should_clear_history_select(self):
         """Folder templates outside history should also require clearing the selector."""
         history_options = [("measurement", "measurement")]
         current_folder = "exports/custom_run"
-        folder_values = {value for _, value in history_options}
 
-        should_clear = current_folder not in folder_values
-
-        assert should_clear is True
+        assert setup_logic.should_clear_history_selector(current_folder, history_options) is True
 
     def test_known_history_template_should_not_clear_history_select(self):
         """Templates already in history should remain selected rather than cleared."""
@@ -319,11 +313,8 @@ class TestRenderTemplate:
             ("both_frontends_tuned", "both_frontends_tuned"),
         ]
         current_filename = "both_frontends_tuned"
-        filename_values = {value for _, value in history_options}
 
-        should_clear = current_filename not in filename_values
-
-        assert should_clear is False
+        assert setup_logic.should_clear_history_selector(current_filename, history_options) is False
 
 
 @pytest.mark.unit
@@ -358,11 +349,13 @@ class TestSetupTemplateBindings:
         """Template input changes should update the template settings source of truth."""
         filename_input = SimpleNamespace(value="run_{host}_{date}")
         folder_input = SimpleNamespace(value="exports/{model}")
+        saved: list = []
         app = SimpleNamespace(
             settings=SimpleNamespace(
                 filename_template="old_template",
                 folder_template="old_folder",
             ),
+            settings_manager=SimpleNamespace(save=lambda s: saved.append(s)),
             _template_input_timer=None,
             query_one=lambda selector, _widget_type: {
                 "#input_filename_template": filename_input,
@@ -379,6 +372,7 @@ class TestSetupTemplateBindings:
         assert app.settings.filename_template == "run_{host}_{date}"
         assert app.settings.folder_template == "exports/{model}"
         assert app._template_input_timer is not None
+        assert saved, "settings_manager.save() should have been called"
 
     def test_build_export_template_context_tolerates_invalid_numeric_input(self):
         """Preview context generation should fall back cleanly during in-progress edits."""
