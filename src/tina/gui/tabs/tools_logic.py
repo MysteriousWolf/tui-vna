@@ -1021,7 +1021,7 @@ async def refresh_tools_plot(app) -> None:
         plot_widget.refresh()
 
     else:
-        await apply_tools_render_result(app)
+        await app._refresh_tools_plot()
 
 
 def run_tools_computation(app) -> None:
