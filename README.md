@@ -65,7 +65,7 @@ For systems without Python/uv, download standalone executables from [GitHub Rele
 - **Linux**: `tina-quick-v{VERSION}-linux-x86_64`
 - **macOS**: `tina-quick-v{VERSION}-macos-x86_64`
 
-Replace `v{VERSION}` with the release tag (e.g. `v0.2.1`). Pick the asset matching your platform from the Releases page.
+Replace `v{VERSION}` with the release tag (e.g. `v0.3.0`). Pick the asset matching your platform from the Releases page.
 
 Quick variants are optimized for scripting and automation. Run the full version at least once to configure connection settings, then use quick version for fast measurements without parameters.
 
