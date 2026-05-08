@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## v0.3.0
+## v0.3.0 - 2026-05-08
 
 ### Highlights
 - Improved extrema-detection pipeline: SciPy savgol + median filter +

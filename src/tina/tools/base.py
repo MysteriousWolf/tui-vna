@@ -43,8 +43,9 @@ class BaseTool(ABC):
         ``"phase"``, or ``"phase_raw"``.
 
         When ``cursor1_hz`` or ``cursor2_hz`` are provided, implementors **must**
-        clamp them to ``[freqs[0], freqs[-1]]`` before interpolating; ``np.interp``
-        silently extrapolates out-of-range values.
+        validate them against ``[freqs[0], freqs[-1]]`` and return ``None`` for
+        any value outside that range; do not call ``np.interp`` with an
+        out-of-range frequency, as it silently extrapolates.
 
         Parameters:
             freqs (np.ndarray): Frequency array in Hz.

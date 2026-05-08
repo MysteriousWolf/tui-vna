@@ -137,7 +137,7 @@ def build_update_screen(release_info: ReleaseInfo) -> UpdateNotificationScreen:
         body = rel.changelog or "_No changelog provided._"
         badge, badge_class = "STABLE", "badge-stable"
     return UpdateNotificationScreen(
-        title=f"Update available:  {display_version}",
+        title=f"Update available: {display_version}",
         body=body,
         button_label="Dismiss",
         badge=badge,

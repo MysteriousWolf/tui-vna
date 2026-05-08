@@ -266,6 +266,9 @@ class HelpScreen(ModalScreen):
                         if result is not None:
                             img_path, img_w_px, img_h_px = result
                             try:
+                                # textual_image._terminal.get_cell_size is a private
+                                # API (no public alternative in v0.8.0); fallback to
+                                # safe defaults when it moves or is removed.
                                 from textual_image._terminal import (
                                     get_cell_size as _gtcs,
                                 )
@@ -274,7 +277,6 @@ class HelpScreen(ModalScreen):
                                 cw = tc.width if tc.width > 0 else 8
                                 ch = tc.height if tc.height > 0 else 16
                             except Exception:
-                                # Fallback cell dimensions
                                 cw = 8
                                 ch = 16
 

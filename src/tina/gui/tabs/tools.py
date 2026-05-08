@@ -86,7 +86,9 @@ def compose_tools_tab(app: VNAApp) -> ComposeResult:
                     # logic in `rebuild_tools_params` can target the dynamic subcontainer
                     # `#tools_params_dynamic` without losing the always-visible static
                     # FrequencyEntry selectors.
-                    from ..components.frequency_entry import FrequencyEntry
+                    from ..components.frequency_entry import (
+                        FrequencyEntry,  # lazy: avoids circular import
+                    )
 
                     def _compose_cursor_row(index: int, color_class: str):
                         freq_unit = (
