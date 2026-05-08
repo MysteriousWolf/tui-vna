@@ -1,2 +1,0 @@
-(no matches)
-exit=1
