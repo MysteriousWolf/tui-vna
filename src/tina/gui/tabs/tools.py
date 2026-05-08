@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Label, RadioButton, RadioSet, Select, Static
 
+if TYPE_CHECKING:
+    from tina.main import VNAApp
 
-def compose_tools_tab(app) -> ComposeResult:
+
+def compose_tools_tab(app: "VNAApp") -> ComposeResult:
     """Compose the Tools tab UI.
 
     Plots can be tall and scrollable; the Selection and Results frames live in
@@ -83,42 +88,29 @@ def compose_tools_tab(app) -> ComposeResult:
                     # FrequencyEntry selectors.
                     from ..components.frequency_entry import FrequencyEntry
 
+                    def _compose_cursor_row(index: int, color_class: str):
+                        freq_unit = (
+                            app.last_measurement.get("freq_unit", "MHz")
+                            if app.last_measurement
+                            else "MHz"
+                        )
+                        with Horizontal(classes="plot-controls"):
+                            yield FrequencyEntry(
+                                input_id=f"input_tools_cursor{index}",
+                                prev_id=f"btn_freq{index}_prev",
+                                next_id=f"btn_freq{index}_next",
+                                minima_toggle_id=f"btn_freq{index}_toggle_min",
+                                smooth_toggle_id=f"btn_freq{index}_toggle_smooth",
+                                label=f"Cursor {index}",
+                                freq_unit=freq_unit,
+                                classes=f"tools-frequency-row {color_class} tools-compact",
+                            )
+
                     with Vertical(id="tools_params_container"):
                         # Static part: always-visible FrequencyEntry rows (mirror sandbox layout)
                         with Vertical(id="tools_params_static"):
-                            # Cursor 1 (static FrequencyEntry)
-                            with Horizontal(classes="plot-controls"):
-                                yield FrequencyEntry(
-                                    input_id="input_tools_cursor1",
-                                    prev_id="btn_freq1_prev",
-                                    next_id="btn_freq1_next",
-                                    minima_toggle_id="btn_freq1_toggle_min",
-                                    smooth_toggle_id="btn_freq1_toggle_smooth",
-                                    label="Cursor 1",
-                                    freq_unit=(
-                                        app.last_measurement.get("freq_unit", "MHz")
-                                        if app.last_measurement
-                                        else "MHz"
-                                    ),
-                                    classes="tools-frequency-row tools-cursor-1 tools-compact",
-                                )
-
-                            # Cursor 2 (static FrequencyEntry)
-                            with Horizontal(classes="plot-controls"):
-                                yield FrequencyEntry(
-                                    input_id="input_tools_cursor2",
-                                    prev_id="btn_freq2_prev",
-                                    next_id="btn_freq2_next",
-                                    minima_toggle_id="btn_freq2_toggle_min",
-                                    smooth_toggle_id="btn_freq2_toggle_smooth",
-                                    label="Cursor 2",
-                                    freq_unit=(
-                                        app.last_measurement.get("freq_unit", "MHz")
-                                        if app.last_measurement
-                                        else "MHz"
-                                    ),
-                                    classes="tools-frequency-row tools-cursor-2 tools-compact",
-                                )
+                            yield from _compose_cursor_row(1, "tools-cursor-1")
+                            yield from _compose_cursor_row(2, "tools-cursor-2")
 
                         # Dynamic subcontainer for tool-specific controls (populated by rebuild_tools_params).
                         # `rebuild_tools_params` should clear and mount into this subcontainer

@@ -139,9 +139,17 @@ class TemplateAutoComplete(AutoComplete):
             target.cursor_position = token_start + len(value)
 
         new_target_state = self._get_target_state()
-        self._rebuild_options(
-            new_target_state, self.get_search_string(new_target_state)
-        )
+        self.rebuild_options(new_target_state)
+
+    def rebuild_options(self, target_state=None) -> None:
+        """Rebuild the dropdown options for the current or given target state.
+
+        Wraps the upstream private _rebuild_options so callers use a stable method.
+        # TODO: open an issue against textual_autocomplete to expose a public rebuild hook.
+        """
+        if target_state is None:
+            target_state = self._get_target_state()
+        self._rebuild_options(target_state, self.get_search_string(target_state))
 
     def post_completion(self) -> None:
         """Hide the dropdown and refresh dependent previews after completion."""

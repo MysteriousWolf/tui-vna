@@ -302,6 +302,105 @@ async def rebuild_tools_params(app) -> None:
         )
 
 
+def _detect_peaks_numpy(
+    search_data: np.ndarray, minima: bool
+) -> np.ndarray:
+    """Detect extrema via derivative sign changes — no SciPy required."""
+    d = np.diff(search_data)
+    if d.size < 2:
+        return np.array([], dtype=int)
+    if minima:
+        cond = (d[:-1] < 0) & (d[1:] > 0)
+    else:
+        cond = (d[:-1] > 0) & (d[1:] < 0)
+    peaks = np.where(cond)[0] + 1
+    if peaks.size == 0:
+        return np.array([], dtype=int)
+    return np.sort(np.unique(np.asarray(peaks, dtype=int)))
+
+
+def _smooth_for_extrema(
+    data: np.ndarray,
+    win: int,
+    max_win: int,
+    outlier_count: int,
+    outlier_thresh: int,
+    spsig: Any,
+) -> np.ndarray:
+    """Apply smoothing to data and return the smoothed array.
+
+    Tries savgol_filter (SciPy), medfilt (SciPy), then boxcar convolution (NumPy)
+    in that order, falling back gracefully to the next option on failure.
+    """
+    wl: int
+    poly: int
+    if win >= 5:
+        wl = min(win, max_win)
+    else:
+        wl = min(5, max_win)
+    if wl % 2 == 0:
+        wl += 1
+    if wl < 3:
+        wl = 3
+    poly = min(3, max(1, wl - 2))
+
+    if spsig is not None:
+        try:
+            if wl >= 5 and hasattr(spsig, "savgol_filter"):
+                return np.asarray(
+                    cast(Any, spsig).savgol_filter(
+                        data, window_length=wl, polyorder=poly
+                    ),
+                    dtype=float,
+                )
+            if outlier_count > outlier_thresh and hasattr(spsig, "medfilt"):
+                k = win if win % 2 == 1 else win + 1
+                return np.asarray(
+                    cast(Any, spsig).medfilt(data, kernel_size=k), dtype=float
+                )
+        except Exception:
+            pass
+
+    k = max(3, win)
+    kernel = np.ones(k) / float(k)
+    return np.asarray(np.convolve(data, kernel, mode="same"), dtype=float)
+
+
+def _detect_peaks_scipy(
+    spsig: Any, target: np.ndarray, distance: int, prominence: float
+) -> np.ndarray:
+    """Call scipy.signal.find_peaks and return peaks array (empty on failure)."""
+    try:
+        peaks, _ = cast(Any, spsig).find_peaks(
+            target, distance=distance, prominence=prominence
+        )
+        return np.asarray(peaks, dtype=int)
+    except Exception:
+        return np.array([], dtype=int)
+
+
+def _select_top_by_prominence(
+    spsig: Any,
+    target: np.ndarray,
+    peaks: np.ndarray,
+    search_data: np.ndarray,
+    baseline: float,
+    desired_peaks: int,
+) -> np.ndarray:
+    """Trim peaks to desired_peaks by descending prominence."""
+    if spsig is not None and hasattr(spsig, "peak_prominences"):
+        try:
+            prominences = np.asarray(
+                cast(Any, spsig).peak_prominences(target, peaks)[0], dtype=float
+            )
+        except Exception:
+            prominences = np.asarray(np.abs(search_data[peaks] - baseline), dtype=float)
+    else:
+        prominences = np.asarray(np.abs(search_data[peaks] - baseline), dtype=float)
+    order = np.argsort(-prominences)
+    return peaks[order[:desired_peaks]]
+
+
 def _detect_candidates_with_smoothing(
     data, freqs, minima, smoothing, desired_peaks=10, prominence_factor=0.005
 ):
@@ -313,7 +412,6 @@ def _detect_candidates_with_smoothing(
     """
     data = np.asarray(data, dtype=float)
     freqs = np.asarray(freqs, dtype=float)
-    search_data: np.ndarray[Any, Any] = data
     if data.size < 3 or freqs.size != data.size:
         return np.array([], dtype=int)
 
@@ -327,25 +425,11 @@ def _detect_candidates_with_smoothing(
 
     try:
         import scipy.signal as spsig
-
-        _has_spsig = True
     except Exception:
         spsig = None
-        _has_spsig = False
 
     if not smoothing:
-        d = np.diff(data)
-        if d.size < 2:
-            return np.array([], dtype=int)
-        if minima:
-            cond = (d[:-1] < 0) & (d[1:] > 0)
-        else:
-            cond = (d[:-1] > 0) & (d[1:] < 0)
-        peaks = np.where(cond)[0] + 1
-        if peaks.size == 0:
-            return np.array([], dtype=int)
-        peaks = np.unique(np.asarray(peaks, dtype=int))
-        return np.sort(peaks)
+        return _detect_peaks_numpy(data, minima)
 
     med = float(np.median(data))
     mad = float(np.median(np.abs(data - med)))
@@ -354,124 +438,30 @@ def _detect_candidates_with_smoothing(
     )
     outlier_thresh = max(3, int(len(data) * 0.01))
 
-    try:
-        if win >= 5:
-            wl = min(win, max_win)
-        else:
-            wl = min(5, max_win)
-        if wl % 2 == 0:
-            wl += 1
-        if wl < 3:
-            wl = 3
-        poly = min(3, max(1, wl - 2))
-    except Exception:
-        wl = 5
-        poly = 3
-
-    if _has_spsig:
-        try:
-            if wl >= 5 and spsig is not None and hasattr(spsig, "savgol_filter"):
-                search_data = np.asarray(
-                    cast(Any, spsig).savgol_filter(
-                        data, window_length=wl, polyorder=poly
-                    ),
-                    dtype=float,
-                )
-            elif (
-                outlier_count > outlier_thresh
-                and spsig is not None
-                and hasattr(spsig, "medfilt")
-            ):
-                k = win
-                if k % 2 == 0:
-                    k += 1
-                search_data = np.asarray(
-                    cast(Any, spsig).medfilt(data, kernel_size=k), dtype=float
-                )
-            else:
-                k = max(3, win)
-                kernel = np.ones(k) / float(k)
-                search_data = np.convolve(data, kernel, mode="same")
-        except Exception:
-            k = max(3, win)
-            kernel = np.ones(k) / float(k)
-            search_data = np.convolve(data, kernel, mode="same")
-    else:
-        k = max(3, win)
-        kernel = np.ones(k) / float(k)
-        search_data = np.convolve(data, kernel, mode="same")
+    search_data = _smooth_for_extrema(data, win, max_win, outlier_count, outlier_thresh, spsig)
 
     baseline = float(np.median(search_data))
     rng = float(np.max(search_data) - np.min(search_data))
     madsm = float(np.median(np.abs(search_data - baseline)))
     min_prominence = max(prominence_factor * rng, 3 * madsm)
 
-    if _has_spsig and spsig is not None and hasattr(spsig, "find_peaks"):
+    if spsig is not None and hasattr(spsig, "find_peaks"):
         target = -search_data if minima else search_data
         distance = max(1, win // 2)
-        try:
-            peaks, _props = cast(Any, spsig).find_peaks(
-                target, distance=distance, prominence=min_prominence
-            )
-            peaks = np.asarray(peaks, dtype=int)
-        except Exception:
-            peaks = np.array([], dtype=int)
 
-        # If none found, retry with relaxed prominence=0 once
+        peaks = _detect_peaks_scipy(spsig, target, distance, min_prominence)
         if peaks.size == 0:
-            try:
-                peaks, _props = cast(Any, spsig).find_peaks(
-                    target, distance=distance, prominence=0
-                )
-                peaks = np.asarray(peaks, dtype=int)
-            except Exception:
-                peaks = np.array([], dtype=int)
+            peaks = _detect_peaks_scipy(spsig, target, distance, 0)
 
         if peaks.size == 0:
-            d = np.diff(search_data)
-            if d.size < 2:
-                return np.array([], dtype=int)
-            if minima:
-                cond = (d[:-1] < 0) & (d[1:] > 0)
-            else:
-                cond = (d[:-1] > 0) & (d[1:] < 0)
-            peaks = np.where(cond)[0] + 1
-            peaks = np.unique(np.asarray(peaks, dtype=int))
-            return np.sort(peaks)
+            return _detect_peaks_numpy(search_data, minima)
 
         if peaks.size > desired_peaks:
-            if spsig is not None and hasattr(spsig, "peak_prominences"):
-                try:
-                    prominences = np.asarray(
-                        cast(Any, spsig).peak_prominences(target, peaks)[0], dtype=float
-                    )
-                except Exception:
-                    prominences = np.asarray(
-                        np.abs(search_data[peaks] - baseline), dtype=float
-                    )
-            else:
-                prominences = np.asarray(
-                    np.abs(search_data[peaks] - baseline), dtype=float
-                )
-            order = np.argsort(-prominences)
-            chosen = order[:desired_peaks]
-            peaks = peaks[chosen]
+            peaks = _select_top_by_prominence(spsig, target, peaks, search_data, baseline, desired_peaks)
 
-        peaks = np.unique(np.asarray(peaks, dtype=int))
-        return np.sort(peaks)
+        return np.sort(np.unique(np.asarray(peaks, dtype=int)))
 
-    d = np.diff(search_data)
-    if d.size < 2:
-        return np.array([], dtype=int)
-    if minima:
-        cond = (d[:-1] < 0) & (d[1:] > 0)
-    else:
-        cond = (d[:-1] > 0) & (d[1:] < 0)
-    peaks = np.where(cond)[0] + 1
-    if peaks.size == 0:
-        return np.array([], dtype=int)
-    peaks = np.unique(np.asarray(peaks, dtype=int))
-    return np.sort(peaks)
+    return _detect_peaks_numpy(search_data, minima)
 
 
 def _get_cached_distortion_result(

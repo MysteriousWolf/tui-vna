@@ -77,17 +77,21 @@ def build_export_template_context_for_app(app) -> dict[str, object]:
     )
 
 
+def _build_invalid_path_chars(allow_path_separators: bool) -> set[str]:
+    """Return the set of invalid path characters, optionally permitting separators."""
+    chars = set(PATH_INVALID_CHARS)
+    if allow_path_separators:
+        chars.discard("/")
+        chars.discard("\\")
+    return chars
+
+
 def validate_export_template_for_app(template: str, *, allow_path_separators: bool):
     """Validate one export template, optionally permitting folder separators."""
-    invalid_chars = set(PATH_INVALID_CHARS)
-    if allow_path_separators:
-        invalid_chars.discard("/")
-        invalid_chars.discard("\\")
-
     return validate_template(
         template,
         allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
-        invalid_path_chars=invalid_chars,
+        invalid_path_chars=_build_invalid_path_chars(allow_path_separators),
     )
 
 
@@ -121,20 +125,11 @@ def update_template_preview(
     template = app.query_one(input_id, Input).value.strip() or default_template
     preview = app.query_one(preview_id, Static)
 
-    # Validate template but results are currently rendered-only; keep for side-effects
-    validate_export_template_for_app(
-        template,
-        allow_path_separators=allow_path_separators,
-    )
     rendered = render_template(
         template,
         context=build_export_template_context_for_app(app),
         allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
-        invalid_path_chars=(
-            set(PATH_INVALID_CHARS) - {"/", "\\"}
-            if allow_path_separators
-            else set(PATH_INVALID_CHARS)
-        ),
+        invalid_path_chars=_build_invalid_path_chars(allow_path_separators),
     )
 
     rendered_markup = []

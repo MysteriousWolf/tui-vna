@@ -148,18 +148,6 @@ class FrequencyEntry(Static):
             )
             yield btn_smooth
 
-    def on_mount(self) -> None:
-        """Debugging aid: log classes of this component and its buttons on mount.
-
-        This helps confirm that the tools-compact class and the tools-frequency-button
-        classes are present when the component is mounted inside the app (so
-        component-scoped tcss rules can apply). Remove when debugging is complete.
-        """
-        # Debug logging removed - left intentionally in earlier iterations to
-        # verify runtime class forwarding. Keeping the hook here but no-op to
-        # avoid noisy logs in normal runs.
-        return
-
     # Public API ------------------------------------------------------------
 
     def set_freq_unit(self, unit: str) -> None:
@@ -245,62 +233,55 @@ class FrequencyEntry(Static):
 
     # Event handlers -------------------------------------------------------
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle input changes and forward parsed Hz to the app when appropriate.
+    def _forward_tools_cursor_hz(self, hz: float | None) -> None:
+        """Mirror a parsed Hz value to app cursor state and debounce a tools refresh.
 
-        This widget keeps an internal `_last_hz` parsed value as before, but when
-        the input uses the legacy IDs used by the tools panel (for example
-        `input_tools_cursor1` / `input_tools_cursor2`) we forward the parsed Hz to
-        the application state (`app._tools_cursor{n}_hz`) and schedule the same
-        debounced refresh that the rest of the tools UI uses.
+        No-op if this FrequencyEntry is not acting as a legacy tools cursor input.
+        All accesses are best-effort; exceptions are swallowed so the widget never
+        raises into the Textual event loop.
         """
-        # Only handle changes for our input
+        try:
+            app = getattr(self, "app", None)
+            if app is None or self.input_id not in (
+                "input_tools_cursor1",
+                "input_tools_cursor2",
+            ):
+                return
+            cursor_index = 1 if self.input_id.endswith("1") else 2
+            try:
+                setattr(app, f"_tools_cursor{cursor_index}_hz", hz)
+            except Exception:
+                pass
+            try:
+                tab_active = getattr(app, "_is_tools_tab_active", lambda: True)()
+                if tab_active:
+                    if getattr(app, "_tools_input_timer", None) is not None:
+                        try:
+                            app._tools_input_timer.stop()
+                        except Exception:
+                            pass
+                    app._tools_input_timer = app.set_timer(
+                        0.2, app._delayed_tools_refresh
+                    )
+                else:
+                    if getattr(app, "_tools_input_timer", None) is not None:
+                        try:
+                            app._tools_input_timer.stop()
+                            app._tools_input_timer = None
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle input changes and forward parsed Hz to the app when appropriate."""
         if event.input.id != self.input_id:
             return
         hz = self._parse_input_value_to_hz(event.value or "")
         self._last_hz = hz
-
-        # Forward to application-level cursor state when this FrequencyEntry is
-        # acting as a tools cursor input (legacy IDs like input_tools_cursor1/2).
-        try:
-            app = getattr(self, "app", None)
-            if app is not None and self.input_id in (
-                "input_tools_cursor1",
-                "input_tools_cursor2",
-            ):
-                # Determine cursor index (1 or 2) from the id suffix
-                cursor_index = 1 if self.input_id.endswith("1") else 2
-                try:
-                    setattr(app, f"_tools_cursor{cursor_index}_hz", hz)
-                except Exception:
-                    # Best-effort: ignore if app state can't be set
-                    pass
-
-                # Debounced refresh: mirror the same behavior used elsewhere in tools logic.
-                # Only schedule when the tools tab is active to avoid spurious background work.
-                try:
-                    tab_active = getattr(app, "_is_tools_tab_active", lambda: True)()
-                    if tab_active:
-                        if getattr(app, "_tools_input_timer", None) is not None:
-                            try:
-                                app._tools_input_timer.stop()
-                            except Exception:
-                                pass
-                        app._tools_input_timer = app.set_timer(
-                            0.2, app._delayed_tools_refresh
-                        )
-                    else:
-                        if getattr(app, "_tools_input_timer", None) is not None:
-                            try:
-                                app._tools_input_timer.stop()
-                                app._tools_input_timer = None
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-        except Exception:
-            # Defensive: do not let widget-level forwarding raise to the caller
-            pass
+        self._forward_tools_cursor_hz(hz)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle navigation and toggle button presses."""
@@ -350,39 +331,5 @@ class FrequencyEntry(Static):
             return
         hz = self._parse_input_value_to_hz(inp.value or "")
         self._last_hz = hz
-
-        # Forward the committed value to the application if this is a legacy tools input
-        try:
-            app = getattr(self, "app", None)
-            if app is not None and self.input_id in (
-                "input_tools_cursor1",
-                "input_tools_cursor2",
-            ):
-                cursor_index = 1 if self.input_id.endswith("1") else 2
-                try:
-                    setattr(app, f"_tools_cursor{cursor_index}_hz", hz)
-                except Exception:
-                    pass
-                try:
-                    tab_active = getattr(app, "_is_tools_tab_active", lambda: True)()
-                    if tab_active:
-                        if getattr(app, "_tools_input_timer", None) is not None:
-                            try:
-                                app._tools_input_timer.stop()
-                            except Exception:
-                                pass
-                        app._tools_input_timer = app.set_timer(
-                            0.2, app._delayed_tools_refresh
-                        )
-                    else:
-                        if getattr(app, "_tools_input_timer", None) is not None:
-                            try:
-                                app._tools_input_timer.stop()
-                                app._tools_input_timer = None
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        self._forward_tools_cursor_hz(hz)
         # Emit nothing else — Input.Changed on the inner Input is the supported hook.
