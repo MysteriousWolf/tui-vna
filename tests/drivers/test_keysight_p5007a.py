@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from src.tina.drivers.keysight_p5007a import KeysightP5007A
+from tina.drivers.keysight_p5007a import KeysightP5007A
 
 
 class TestKeysightP5007AIdentification:
