@@ -282,19 +282,23 @@ class HelpScreen(ModalScreen):
                             w_cells = max(8, round(img_w_px / cw))
                             _h_cells = max(1, round(img_h_px / ch))
 
-                            if ImageWidget is None:
-                                raise RuntimeError("textual-image widget unavailable")
+                            if ImageWidget is not None:
+                                img_widget = ImageWidget(str(img_path))
+                                # Choose CSS class based on approximate width.
+                                if w_cells >= 30:
+                                    img_widget.set_class(True, "tools-help-image-large")
+                                else:
+                                    img_widget.set_class(True, "tools-help-image")
 
-                            img_widget = ImageWidget(str(img_path))
-                            # Choose a CSS class based on approximate width so we can
-                            # size large and small math images differently if needed.
-                            if w_cells >= 30:
-                                img_widget.set_class(True, "tools-help-image-large")
+                                with Horizontal(classes="math-img-row"):
+                                    yield img_widget
                             else:
-                                img_widget.set_class(True, "tools-help-image")
-
-                            with Horizontal(classes="math-img-row"):
-                                yield img_widget
+                                fallback = (
+                                    _latex_converter.latex_to_text(part).strip()
+                                    if _latex_converter is not None
+                                    else part.strip()
+                                )
+                                yield Markdown(f"\n```\n{fallback}\n```\n")
                         else:
                             fallback = (
                                 _latex_converter.latex_to_text(part).strip()
