@@ -81,7 +81,9 @@ class LoggingVNAWrapper:
             getattr(self._vna, "_query_ascii_values"),
         )
         if not callable(original_query_ascii):
-            raise TypeError(f"vna._query_ascii_values is not callable: {type(original_query_ascii)}")
+            raise TypeError(
+                f"vna._query_ascii_values is not callable: {type(original_query_ascii)}"
+            )
 
         # Must not route SYST:ERR? back through the patched _query — that would
         # trigger another debug check, causing infinite recursion.

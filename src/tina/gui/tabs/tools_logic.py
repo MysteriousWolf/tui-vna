@@ -302,9 +302,7 @@ async def rebuild_tools_params(app) -> None:
         )
 
 
-def _detect_peaks_numpy(
-    search_data: np.ndarray, minima: bool
-) -> np.ndarray:
+def _detect_peaks_numpy(search_data: np.ndarray, minima: bool) -> np.ndarray:
     """Detect extrema via derivative sign changes — no SciPy required."""
     d = np.diff(search_data)
     if d.size < 2:
@@ -438,7 +436,9 @@ def _detect_candidates_with_smoothing(
     )
     outlier_thresh = max(3, int(len(data) * 0.01))
 
-    search_data = _smooth_for_extrema(data, win, max_win, outlier_count, outlier_thresh, spsig)
+    search_data = _smooth_for_extrema(
+        data, win, max_win, outlier_count, outlier_thresh, spsig
+    )
 
     baseline = float(np.median(search_data))
     rng = float(np.max(search_data) - np.min(search_data))
@@ -457,7 +457,9 @@ def _detect_candidates_with_smoothing(
             return _detect_peaks_numpy(search_data, minima)
 
         if peaks.size > desired_peaks:
-            peaks = _select_top_by_prominence(spsig, target, peaks, search_data, baseline, desired_peaks)
+            peaks = _select_top_by_prominence(
+                spsig, target, peaks, search_data, baseline, desired_peaks
+            )
 
         return np.sort(np.unique(np.asarray(peaks, dtype=int)))
 

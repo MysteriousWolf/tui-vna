@@ -335,5 +335,3 @@ class TestOnScpiError:
         wrapper.debug = True
         stub._send_command("*RST")  # must not raise
         assert errors == []
-
-

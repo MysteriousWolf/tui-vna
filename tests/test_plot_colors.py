@@ -60,9 +60,19 @@ class TestGetPlotColors:
         """get_plot_colors(None) should return a dict with all required keys."""
         result = get_plot_colors(None)
         expected_keys = {
-            "traces", "traces_rgb", "fg", "bg", "surface", "grid",
-            "default_trace", "distortion_overlays", "distortion_overlays_rgb",
-            "cursor1", "cursor1_rgb", "cursor2", "cursor2_rgb",
+            "traces",
+            "traces_rgb",
+            "fg",
+            "bg",
+            "surface",
+            "grid",
+            "default_trace",
+            "distortion_overlays",
+            "distortion_overlays_rgb",
+            "cursor1",
+            "cursor1_rgb",
+            "cursor2",
+            "cursor2_rgb",
         }
         assert expected_keys <= result.keys()
 
