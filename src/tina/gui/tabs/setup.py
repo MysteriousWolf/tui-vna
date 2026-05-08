@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from tina.main import VNAApp
 
 
-def compose_setup_tab(app: "VNAApp") -> ComposeResult:
+def compose_setup_tab(app: VNAApp) -> ComposeResult:
     """Compose the Setup tab contents."""
     with VerticalScroll():
         # Connection Settings

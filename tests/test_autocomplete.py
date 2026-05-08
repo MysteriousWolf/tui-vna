@@ -3,7 +3,6 @@
 from typing import cast
 
 import pytest
-
 from textual.widgets import Input
 from textual_autocomplete._autocomplete import TargetState
 

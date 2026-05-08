@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from tina.main import VNAApp
 
 
-def compose_tools_tab(app: "VNAApp") -> ComposeResult:
+def compose_tools_tab(app: VNAApp) -> ComposeResult:
     """Compose the Tools tab UI.
 
     Plots can be tall and scrollable; the Selection and Results frames live in
