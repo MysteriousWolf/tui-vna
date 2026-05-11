@@ -462,7 +462,10 @@ class TestSettingsManager:
         """add_recent_exported_measurement should move duplicates to front."""
         settings_manager.settings.recent_exported_measurements = ["/a.s2p", "/b.s2p"]
         settings_manager.add_recent_exported_measurement("/b.s2p")
-        assert settings_manager.settings.recent_exported_measurements == ["/b.s2p", "/a.s2p"]
+        assert settings_manager.settings.recent_exported_measurements == [
+            "/b.s2p",
+            "/a.s2p",
+        ]
 
     def test_add_recent_exported_measurement_ignores_empty(self, settings_manager):
         """add_recent_exported_measurement should ignore blank paths."""
@@ -482,7 +485,10 @@ class TestSettingsManager:
         """add_recent_imported_measurement should move duplicates to front."""
         settings_manager.settings.recent_imported_measurements = ["/x.s2p", "/y.s2p"]
         settings_manager.add_recent_imported_measurement("/y.s2p")
-        assert settings_manager.settings.recent_imported_measurements == ["/y.s2p", "/x.s2p"]
+        assert settings_manager.settings.recent_imported_measurements == [
+            "/y.s2p",
+            "/x.s2p",
+        ]
 
     def test_add_recent_imported_measurement_ignores_empty(self, settings_manager):
         """add_recent_imported_measurement should ignore blank paths."""

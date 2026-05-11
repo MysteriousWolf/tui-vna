@@ -1205,7 +1205,9 @@ class VNAApp(App):
                 "distortion_components": self._get_distortion_comp_enabled(),
                 "render_cache_key": render_cache_key,
                 "output_path": str(self.plot_temp_dir / "tools_plot.png"),
-                "tool_result": cached_compute.get("tool_result") if cached_compute else None,
+                "tool_result": (
+                    cached_compute.get("tool_result") if cached_compute else None
+                ),
             },
         )
         return dict(result)
@@ -3512,11 +3514,17 @@ class VNAApp(App):
             # Prefer the dedicated compute cache; fall back to any tool_result
             # embedded in the last render result if that's still current.
             cached_compute = self._latest_tools_compute_result
-            if isinstance(cached_compute, dict) and self._latest_tools_compute_cache_key == current_cache_key:
+            if (
+                isinstance(cached_compute, dict)
+                and self._latest_tools_compute_cache_key == current_cache_key
+            ):
                 render_tools_computation_result(self, cached_compute.get("tool_result"))
                 return
             cached_render = self._latest_tools_render_result
-            if isinstance(cached_render, dict) and self._latest_tools_render_cache_key == current_cache_key:
+            if (
+                isinstance(cached_render, dict)
+                and self._latest_tools_render_cache_key == current_cache_key
+            ):
                 tool_result = cached_render.get("tool_result")
                 if tool_result is not None:
                     render_tools_computation_result(self, tool_result)

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from tina.main import VNAApp
 
 
-def compose_measurement_tab(app: "VNAApp") -> ComposeResult:
+def compose_measurement_tab(app: VNAApp) -> ComposeResult:
     """Compose the Measurement tab UI.
 
     Parameters:

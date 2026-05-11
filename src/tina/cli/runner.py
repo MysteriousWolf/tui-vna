@@ -54,12 +54,16 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
             rendered_folder = render_template(
                 settings.output_folder, context=export_context, allowed_tags=allowed
             )
-            settings.output_folder = rendered_folder.rendered.strip() or settings.output_folder
+            settings.output_folder = (
+                rendered_folder.rendered.strip() or settings.output_folder
+            )
         if settings.filename_prefix:
             rendered_prefix = render_template(
                 settings.filename_prefix, context=export_context, allowed_tags=allowed
             )
-            settings.filename_prefix = rendered_prefix.rendered.strip() or settings.filename_prefix
+            settings.filename_prefix = (
+                rendered_prefix.rendered.strip() or settings.filename_prefix
+            )
 
         # Validate required settings
         if not settings.last_host:

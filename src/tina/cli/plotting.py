@@ -60,7 +60,9 @@ def export_plots_cli(
             return False
 
     results = [
-        _export_one("magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png")),
+        _export_one(
+            "magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png")
+        ),
         _export_one("phase", os.path.join(output_path, f"{base_filename}_phase.png")),
     ]
     if not all(results):

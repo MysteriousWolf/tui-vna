@@ -1257,7 +1257,13 @@ class MeasurementWorker:
             report("Tools plot: reusing cached computation...", 50)
         else:
             tool_result = self._compute_tools_result_payload(
-                freqs, sparams, active_tool, trace, plot_type, cursor1_hz, cursor2_hz,
+                freqs,
+                sparams,
+                active_tool,
+                trace,
+                plot_type,
+                cursor1_hz,
+                cursor2_hz,
             )
         report("Tools plot: rendering image...", 65)
         result = _render_tools_plot_snapshot(
@@ -1347,12 +1353,24 @@ class MeasurementWorker:
         if active_tool == "cursor":
             report("Tools: measuring cursor values...", 55)
             tool_result = self._compute_tools_result_payload(
-                freqs, sparams, active_tool, trace, plot_type, cursor1_hz, cursor2_hz,
+                freqs,
+                sparams,
+                active_tool,
+                trace,
+                plot_type,
+                cursor1_hz,
+                cursor2_hz,
             )
         elif active_tool == "distortion":
             report("Tools: fitting distortion model...", 45)
             tool_result = self._compute_tools_result_payload(
-                freqs, sparams, active_tool, trace, plot_type, cursor1_hz, cursor2_hz,
+                freqs,
+                sparams,
+                active_tool,
+                trace,
+                plot_type,
+                cursor1_hz,
+                cursor2_hz,
             )
             report("Tools: packaging distortion results...", 85)
         else:

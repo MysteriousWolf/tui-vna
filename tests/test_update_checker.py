@@ -74,8 +74,11 @@ def test_update_modal_falls_back_when_release_url_missing() -> None:
         # Version present → tag URL regardless of html_url
         ("1.2.3", "", f"{DEFAULT_GITHUB_RELEASES_URL}/tag/v1.2.3"),
         # Version absent, html_url present → html_url used as fallback
-        ("", "https://github.com/MysteriousWolf/tui-vna/releases/tag/v0.9.0",
-         "https://github.com/MysteriousWolf/tui-vna/releases/tag/v0.9.0"),
+        (
+            "",
+            "https://github.com/MysteriousWolf/tui-vna/releases/tag/v0.9.0",
+            "https://github.com/MysteriousWolf/tui-vna/releases/tag/v0.9.0",
+        ),
     ],
 )
 def test_update_modal_fallback_isolates_missing_field(

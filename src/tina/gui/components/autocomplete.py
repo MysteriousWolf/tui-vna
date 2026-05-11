@@ -34,7 +34,9 @@ class _TemplateRefreshApp(Protocol):
 _KIND_SEP = "\x00"
 
 
-def _build_dropdown_item(choice: AutocompleteChoice, *, key: str | None = None) -> DropdownItem:
+def _build_dropdown_item(
+    choice: AutocompleteChoice, *, key: str | None = None
+) -> DropdownItem:
     """Build a dropdown item whose emitted value is *key* (defaults to choice.value)."""
     prefix_parts: list[str] = []
     if choice.prefix:
@@ -125,7 +127,11 @@ class TemplateAutoComplete(AutoComplete):
         if _KIND_SEP in value:
             kind, actual_value = value.split(_KIND_SEP, 1)
             choice = next(
-                (c for c in self._get_choices() if c.kind == kind and c.value == actual_value),
+                (
+                    c
+                    for c in self._get_choices()
+                    if c.kind == kind and c.value == actual_value
+                ),
                 None,
             )
         else:
