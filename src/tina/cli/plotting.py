@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config.settings import AppSettings
-from ..gui.plotting import create_matplotlib_plot, get_plot_colors
+from ..utils.plotting import create_matplotlib_plot, get_plot_colors
 
 
 def export_plots_cli(

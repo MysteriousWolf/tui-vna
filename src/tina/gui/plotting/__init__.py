@@ -1,5 +1,9 @@
 """Plotting helpers for the TINA GUI."""
 
+from tina.utils.plotting import (  # noqa: F401
+    create_matplotlib_plot,
+    get_terminal_font,
+)
 from tina.utils.signal import calculate_plot_range_with_outlier_filtering, unwrap_phase
 
 from .colors import (
@@ -12,7 +16,7 @@ from .colors import (
     get_plot_colors,
     hex_to_rgb,
 )
-from .renderers import create_matplotlib_plot, create_smith_chart, get_terminal_font
+from .renderers import create_smith_chart
 from .utils import truncate_path_intelligently
 
 __all__ = [
