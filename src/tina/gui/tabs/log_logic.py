@@ -7,6 +7,13 @@ from datetime import datetime
 from rich.markup import escape as rich_escape
 from textual.widgets import Checkbox, RichLog
 
+from tina.config.constants import (
+    THEME_ACCENT,
+    THEME_ERROR,
+    THEME_SECONDARY,
+    THEME_SUCCESS,
+)
+
 MAX_LOG_HISTORY = 2000
 
 LOG_FILTER_IDS: dict[str, str] = {
@@ -24,10 +31,10 @@ LOG_FILTER_IDS: dict[str, str] = {
 def build_style_map(app) -> dict[str, tuple[str, str]]:
     """Build the level→(icon, style) map from current Textual theme variables."""
     variables = app.get_css_variables()
-    color_tx = variables.get("accent", "#00c8b8")
-    color_rx = variables.get("secondary", "#3278b5")
-    color_success = variables.get("success", "#4ac48a")
-    color_error = variables.get("error", "#e05555")
+    color_tx = variables.get("accent", THEME_ACCENT)
+    color_rx = variables.get("secondary", THEME_SECONDARY)
+    color_success = variables.get("success", THEME_SUCCESS)
+    color_error = variables.get("error", THEME_ERROR)
     return {
         "tx": ("↑", color_tx),
         "rx": ("↓", color_rx),

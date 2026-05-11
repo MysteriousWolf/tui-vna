@@ -2,47 +2,58 @@
 
 from textual.theme import Theme
 
-_PRIMARY = "#4a9eda"
-_BACKGROUND = "#121212"
+from tina.config.constants import (
+    THEME_ACCENT,
+    THEME_BACKGROUND,
+    THEME_BOOST,
+    THEME_ERROR,
+    THEME_FOREGROUND,
+    THEME_PANEL,
+    THEME_PRIMARY,
+    THEME_SECONDARY,
+    THEME_SUCCESS,
+    THEME_SURFACE,
+    THEME_WARNING,
+)
 
 TINA_THEME = Theme(
     name="tina",
     dark=True,
     # --- Primary palette ---
     # Instrument blue: buttons, tab highlights, S21 traces
-    primary=_PRIMARY,
+    primary=THEME_PRIMARY,
     # Deeper blue for secondary chrome
-    secondary="#3278b5",
+    secondary=THEME_SECONDARY,
     # Teal: distinct from blue, used for S12 traces and accent highlights
-    accent="#00c8b8",
+    accent=THEME_ACCENT,
     # --- Backgrounds (darkest → lightest: bg → surface → panel → boost) ---
     # Pure neutral grays — no color cast
-    background=_BACKGROUND,
-    surface="#1b1b1b",
-    panel="#252525",
-    boost="#2f2f2f",
+    background=THEME_BACKGROUND,
+    surface=THEME_SURFACE,
+    panel=THEME_PANEL,
+    boost=THEME_BOOST,
     # --- Text ---
-    foreground="#c8d3e0",
+    foreground=THEME_FOREGROUND,
     # --- Status / S-param trace colors ---
     # S11 traces and error states
-    error="#e05555",
+    error=THEME_ERROR,
     # Cursors and warnings
-    warning="#d4923a",
+    warning=THEME_WARNING,
     # S22 traces and success states
-    success="#4ac48a",
+    success=THEME_SUCCESS,
     # --- Shade spread: default 0.15, keep it to preserve legibility ---
     luminosity_spread=0.15,
     # --- Fine-grained widget overrides ---
     variables={
         # Input cursor: use primary blue on dark background, no text decoration
-        "input-cursor-background": _PRIMARY,
-        "input-cursor-foreground": _BACKGROUND,
+        "input-cursor-background": THEME_PRIMARY,
+        "input-cursor-foreground": THEME_BACKGROUND,
         "input-cursor-text-style": "none",
         # Footer key hints match primary
-        "footer-key-foreground": _PRIMARY,
+        "footer-key-foreground": THEME_PRIMARY,
         # Text selection: semi-transparent primary (35% opacity = 0x59 alpha)
-        "input-selection-background": f"{_PRIMARY}59",
+        "input-selection-background": f"{THEME_PRIMARY}59",
         # Button labels on primary-colored buttons read dark
-        "button-foreground": _BACKGROUND,
+        "button-foreground": THEME_BACKGROUND,
     },
 )

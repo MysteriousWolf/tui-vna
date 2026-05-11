@@ -19,38 +19,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import rc_context
 
+from tina.config.constants import (
+    DEFAULT_BACKGROUND_COLOR,
+    DEFAULT_FOREGROUND_COLOR,
+    DEFAULT_GRID_COLOR,
+    DISTORTION_OVERLAY_COLORS,
+    SPARAM_FALLBACK_COLORS,
+    SPARAM_THEME_KEYS,
+    THEME_PRIMARY,
+    THEME_WARNING,
+    TRACE_COLOR_DEFAULT,
+)
 from tina.utils.signal import calculate_plot_range_with_outlier_filtering, unwrap_phase
 
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Color constants
+# Distortion overlay metadata (non-color attributes stay here)
 # ---------------------------------------------------------------------------
 
-SPARAM_THEME_KEYS = {
-    "S11": "error",
-    "S21": "primary",
-    "S12": "accent",
-    "S22": "success",
-}
-
-SPARAM_FALLBACK_COLORS = {
-    "S11": "#ff6b6b",
-    "S21": "#4ecdc4",
-    "S12": "#ffe66d",
-    "S22": "#c77dff",
-}
-
-TRACE_COLOR_DEFAULT = "#ffffff"
-
-DISTORTION_OVERLAY_COLORS: list[str] = [
-    "#888888",  # n=0 constant  (~0° sat, neutral gray)
-    "#cc8800",  # n=1 linear    (~45°,  amber)
-    "#22aa44",  # n=2 parabolic (~135°, green)
-    "#cc2233",  # n=3 cubic     (~350°, red)
-    "#00aacc",  # n=4 quartic   (~190°, cyan)
-    "#7733cc",  # n=5 quintic   (~275°, violet)
-]
 DISTORTION_OVERLAY_STYLES: list = [
     "-",
     "--",
@@ -113,16 +100,20 @@ def get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
         for param, key in SPARAM_THEME_KEYS.items():
             hex_val = theme_vars.get(key)
             traces[param] = hex_val if hex_val else SPARAM_FALLBACK_COLORS[param]
-        fg = theme_vars.get("foreground", theme_vars.get("text", "#e6e1dc"))
-        bg = theme_vars.get("background", "#0e1419")
+        fg = theme_vars.get(
+            "foreground", theme_vars.get("text", DEFAULT_FOREGROUND_COLOR)
+        )
+        bg = theme_vars.get("background", DEFAULT_BACKGROUND_COLOR)
         surface = theme_vars.get("surface", bg)
-        grid = theme_vars.get("panel", theme_vars.get("surface-darken-1", "#2d3640"))
+        grid = theme_vars.get(
+            "panel", theme_vars.get("surface-darken-1", DEFAULT_GRID_COLOR)
+        )
     else:
         traces = dict(SPARAM_FALLBACK_COLORS)
-        fg = "#e6e1dc"
-        bg = "#0e1419"
+        fg = DEFAULT_FOREGROUND_COLOR
+        bg = DEFAULT_BACKGROUND_COLOR
         surface = bg
-        grid = "#2d3640"
+        grid = DEFAULT_GRID_COLOR
 
     traces_rgb = {}
     for param, hex_val in traces.items():
@@ -147,11 +138,12 @@ def get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
     distortion_overlays = list(DISTORTION_OVERLAY_COLORS)
     distortion_overlays_rgb = [hex_to_rgb(h) for h in DISTORTION_OVERLAY_COLORS]
 
-    cursor1_hex, cursor1_rgb = _resolve_color(
-        theme_vars.get("warning") if theme_vars else None, "#ffa500"
+    warning_hex, warning_rgb = _resolve_color(
+        theme_vars.get("warning") if theme_vars else None, THEME_WARNING
     )
+    cursor1_hex, cursor1_rgb = warning_hex, warning_rgb
     cursor2_hex, cursor2_rgb = _resolve_color(
-        theme_vars.get("primary") if theme_vars else None, "#00d7ff"
+        theme_vars.get("primary") if theme_vars else None, THEME_PRIMARY
     )
 
     return {
@@ -162,6 +154,8 @@ def get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
         "surface": surface,
         "grid": grid,
         "default_trace": TRACE_COLOR_DEFAULT,
+        "warning": warning_hex,
+        "warning_rgb": warning_rgb,
         "distortion_overlays": distortion_overlays,
         "distortion_overlays_rgb": distortion_overlays_rgb,
         "cursor1": cursor1_hex,

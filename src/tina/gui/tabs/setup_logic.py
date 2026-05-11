@@ -136,7 +136,7 @@ def update_template_preview(
     rendered_markup = []
     for segment in rendered.segments:
         if segment.source in ("tag", "time_format"):
-            rendered_markup.append(f"[bold $accent]{rich_escape(segment.text)}[/]")
+            rendered_markup.append(f"[bold $primary]{rich_escape(segment.text)}[/]")
         elif segment.source == "unknown":
             rendered_markup.append(f"[italic $warning]{rich_escape(segment.text)}[/]")
         else:

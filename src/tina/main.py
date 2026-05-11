@@ -63,6 +63,7 @@ from .gui.modals.help import (
     ImageWidget,
 )
 from .gui.plotting import (
+    TRACE_COLOR_DEFAULT,
     calculate_plot_range_with_outlier_filtering,
     create_matplotlib_plot,
     create_smith_chart,
@@ -1194,7 +1195,7 @@ class VNAApp(App):
                     "fg": get_plot_colors(self.get_css_variables())["fg"],
                     "grid": get_plot_colors(self.get_css_variables())["grid"],
                     "trace": get_plot_colors(self.get_css_variables())["traces"].get(
-                        trace, "#ffffff"
+                        trace, TRACE_COLOR_DEFAULT
                     ),
                     "cursor1": get_plot_colors(self.get_css_variables())["cursor1"],
                     "cursor2": get_plot_colors(self.get_css_variables())["cursor2"],

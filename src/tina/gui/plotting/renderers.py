@@ -123,7 +123,7 @@ def create_smith_chart(
             [0.0],
             marker="*",
             s=100,
-            color="gold",
+            color=colors.get("warning", fg_color),
             edgecolor=fg_color,
             linewidth=1.5,
             zorder=10,

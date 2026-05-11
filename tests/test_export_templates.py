@@ -446,10 +446,10 @@ class TestSetupTemplateBindings:
             default_template="measurement_{date}_{time}",
         )
 
-        assert "[bold $accent]1[/]" in preview.updated_text
-        assert "[bold $accent]1100[/]" in preview.updated_text
-        assert "[bold $accent]601[/]" in preview.updated_text
-        assert "[bold $accent]16[/]" in preview.updated_text
+        assert "[bold $primary]1[/]" in preview.updated_text
+        assert "[bold $primary]1100[/]" in preview.updated_text
+        assert "[bold $primary]601[/]" in preview.updated_text
+        assert "[bold $primary]16[/]" in preview.updated_text
         assert preview.classes["preview-border-round"] is True
 
     def test_manual_template_not_in_history_should_clear_history_select(self):

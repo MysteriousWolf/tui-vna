@@ -13,6 +13,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Markdown
 
+from tina.config.constants import THEME_FOREGROUND, THEME_SURFACE
+
 try:
     from pylatexenc.latex2text import LatexNodes2Text as _LatexNodes2Text
 
@@ -175,8 +177,8 @@ class HelpScreen(ModalScreen):
             from PIL import ImageColor
 
             v = self.app.get_css_variables()
-            bg_hex = v.get("surface", "#1b1b1b")
-            fg_hex = v.get("foreground", "#c8d3e0")
+            bg_hex = v.get("surface", THEME_SURFACE)
+            fg_hex = v.get("foreground", THEME_FOREGROUND)
 
             expr = self._prep_for_mathtext(latex_expr.strip())
 
