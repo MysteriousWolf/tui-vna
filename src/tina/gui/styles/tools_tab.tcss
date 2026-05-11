@@ -140,28 +140,11 @@
     align: left middle;
 }
 
-#tools_params_container .tools-frequency-label {
-    /* Slightly narrower label and reduced right padding for tighter alignment */
-    width: 8;
-    min-width: 8;
-    max-width: 8;
-    height: 3;
-    min-height: 3;
-    max-height: 3;
-    padding: 0 0 0 0;
-    content-align: left middle;
-}
-
-/* Restore cursor-specific label coloring (match the cursor color classes added
-   to the FrequencyEntry instances in compose). These selectors ensure the
-   label text inherits the intended cursor color. Target both the legacy
-   label class and the component's internal label class. */
-#tools_params_container .tools-cursor-1 .freq-label,
-#tools_params_container .tools-cursor-1 .tools-frequency-label {
+/* Cursor-specific label coloring for the two FrequencyEntry rows. */
+#tools_params_container .tools-cursor-1 .freq-label {
     color: $warning;
 }
-#tools_params_container .tools-cursor-2 .freq-label,
-#tools_params_container .tools-cursor-2 .tools-frequency-label {
+#tools_params_container .tools-cursor-2 .freq-label {
     color: $primary;
 }
 

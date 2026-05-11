@@ -25,9 +25,9 @@ FrequencyEntry > .freq-entry-row {
 }
 
 FrequencyEntry .freq-label {
-    width: 8;
-    min-width: 8;
-    max-width: 8;
+    width: 9;
+    min-width: 9;
+    max-width: 9;
     height: 3;
     content-align: left middle;
 }
