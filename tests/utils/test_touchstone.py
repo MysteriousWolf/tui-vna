@@ -624,6 +624,55 @@ class TestTouchstoneImport:
         assert metadata.metadata_version is None
 
 
+class TestTouchstoneNotesMarkerCollision:
+    """Regression tests: notes containing reserved block markers must round-trip."""
+
+    @pytest.fixture
+    def minimal_sparams(self):
+        freqs = np.linspace(10e6, 100e6, 3)
+        mag = np.full(3, -10.0)
+        phase = np.zeros(3)
+        sp = {p: (mag.copy(), phase.copy()) for p in ("S11", "S21", "S12", "S22")}
+        return freqs, sp
+
+    def _export_import_notes(self, notes: str, tmp_path, minimal_sparams) -> str:
+        freqs, sp = minimal_sparams
+        exporter = TouchstoneExporter()
+        path = exporter.export(freqs, sp, str(tmp_path), notes_markdown=notes)
+        result = TouchstoneExporter.import_with_metadata(path)
+        return result.metadata.notes_markdown
+
+    @pytest.mark.unit
+    def test_notes_end_marker_round_trips(self, minimal_sparams, tmp_path):
+        """A note line equal to 'TINA NOTES END' must survive export/import unchanged."""
+        notes = "before\nTINA NOTES END\nafter"
+        assert self._export_import_notes(notes, tmp_path, minimal_sparams) == notes
+
+    @pytest.mark.unit
+    def test_metadata_end_marker_round_trips(self, minimal_sparams, tmp_path):
+        """A note line equal to 'TINA METADATA END' must survive export/import unchanged."""
+        notes = "TINA METADATA END"
+        assert self._export_import_notes(notes, tmp_path, minimal_sparams) == notes
+
+    @pytest.mark.unit
+    def test_notes_begin_marker_round_trips(self, minimal_sparams, tmp_path):
+        """A note line equal to 'TINA NOTES BEGIN' must survive export/import unchanged."""
+        notes = "TINA NOTES BEGIN"
+        assert self._export_import_notes(notes, tmp_path, minimal_sparams) == notes
+
+    @pytest.mark.unit
+    def test_backslash_prefixed_line_round_trips(self, minimal_sparams, tmp_path):
+        """Lines starting with backslash (the escape character) must round-trip correctly."""
+        notes = "\\normal backslash line"
+        assert self._export_import_notes(notes, tmp_path, minimal_sparams) == notes
+
+    @pytest.mark.unit
+    def test_backslash_escaped_marker_round_trips(self, minimal_sparams, tmp_path):
+        """A line '\\TINA NOTES END' (literal backslash + marker) must round-trip correctly."""
+        notes = "\\TINA NOTES END"
+        assert self._export_import_notes(notes, tmp_path, minimal_sparams) == notes
+
+
 class TestTouchstoneFormat:
     """Test Touchstone file format compliance."""
 

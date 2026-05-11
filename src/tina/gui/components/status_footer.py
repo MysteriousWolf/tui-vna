@@ -200,7 +200,8 @@ class StatusFooter(Footer):
         else:
             text, css_class = self._debug_chip_state
             if css_class == "--stale":
-                self._debug_chip_state = (text, "--state-ok")
+                resolved = "--state-ok" if text == "ERR OK" else "--state-off"
+                self._debug_chip_state = (text, resolved)
         self._apply_debug_chip()
 
     def update_last_error(self, command: str, raw_error: str) -> None:

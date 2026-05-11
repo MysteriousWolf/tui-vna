@@ -37,6 +37,7 @@ def export_plots_cli(
     plot_colors = get_plot_colors(None)
 
     def _export_one(plot_type: str, file_path: str) -> bool:
+        """Attempt one plot export; print success or stderr warning. Returns True on success."""
         try:
             create_matplotlib_plot(
                 frequencies,

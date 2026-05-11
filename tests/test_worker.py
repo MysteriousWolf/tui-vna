@@ -322,22 +322,23 @@ class TestWorkerProgressUpdates:
 
         # Collect messages until we receive CONNECTED
         connected_received = False
-        for _ in range(10):
-            try:
-                msg = worker.get_response(timeout=0.5)
+        try:
+            for _ in range(10):
+                try:
+                    msg = worker.get_response(timeout=0.5)
 
-                if msg.type == MessageType.PROGRESS:
-                    pass  # Progress updates are optional and timing-dependent
-                elif msg.type == MessageType.CONNECTED:
-                    connected_received = True
-                    break
+                    if msg.type == MessageType.PROGRESS:
+                        pass  # Progress updates are optional and timing-dependent
+                    elif msg.type == MessageType.CONNECTED:
+                        connected_received = True
+                        break
 
-            except queue.Empty:
-                continue
+                except queue.Empty:
+                    continue
 
-        assert connected_received is True
-
-        worker.stop()
+            assert connected_received is True
+        finally:
+            worker.stop()
 
     @pytest.mark.integration
     def test_import_touchstone_emits_progress_and_complete(self, tmp_path: Path):

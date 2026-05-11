@@ -206,7 +206,7 @@ class FrequencyEntry(Static):
                 return None
             mult = _UNIT_MULTIPLIERS.get(self.freq_unit, 1e6)
             return float(s) * mult
-        except Exception:
+        except ValueError:
             return None
 
     def _update_toggle_visual(self, btn_id: str, active: bool) -> None:

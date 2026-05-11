@@ -416,6 +416,39 @@ class TestHPE5071BTriggerState:
         vna.disconnect()
 
 
+class TestHPE5071BDataValidation:
+    """Unit tests for get_sparam_data response validation."""
+
+    @pytest.fixture
+    def connected_vna(self, vna_config):
+        """Create a connected VNA with a mocked instrument."""
+        vna = HPE5071B(vna_config)
+        mock_inst = MagicMock()
+        vna.inst = mock_inst
+        vna._connected = True
+        return vna, mock_inst
+
+    @pytest.mark.unit
+    def test_get_sparam_data_empty_response_raises(self, connected_vna):
+        """get_sparam_data should raise ValueError when CMD_GET_SDATA returns empty list."""
+        vna, mock_inst = connected_vna
+        mock_inst.query_ascii_values.return_value = []
+        mock_inst.write = MagicMock()
+
+        with pytest.raises(ValueError, match="unexpected number of values"):
+            vna.get_sparam_data(1)
+
+    @pytest.mark.unit
+    def test_get_sparam_data_odd_length_raises(self, connected_vna):
+        """get_sparam_data should raise ValueError when CMD_GET_SDATA returns odd count."""
+        vna, mock_inst = connected_vna
+        mock_inst.query_ascii_values.return_value = [0.5, -0.5, 0.7]
+        mock_inst.write = MagicMock()
+
+        with pytest.raises(ValueError, match="unexpected number of values"):
+            vna.get_sparam_data(1)
+
+
 class TestHPE5071BErrorHandling:
     """Test HP E5071B error handling and edge cases."""
 

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import pyvisa
 
 from tina.drivers.keysight_p5007a import KeysightP5007A
 
@@ -573,3 +574,92 @@ class TestKeysightP5007AHelpers:
         result = vna._query("SENS1:FREQ:STAR?")
         assert result == "OK\n"
         mock_inst.query.assert_called_with("SENS1:FREQ:STAR?")
+
+
+class TestKeysightP5007AConnectFailureCleanup:
+    """Tests that _idn is cleared on every failed connect path."""
+
+    @pytest.mark.unit
+    def test_idn_cleared_after_host_unreachable(self, vna_config):
+        """_idn must be empty after a host-unreachable failure."""
+        vna = KeysightP5007A(vna_config)
+        vna._idn = "stale"
+        with patch.object(vna, "_check_host_reachable", return_value=False):
+            with pytest.raises(ConnectionError):
+                vna.connect()
+        assert vna._idn == ""
+
+    @pytest.mark.unit
+    def test_idn_cleared_after_idn_mismatch(self, vna_config):
+        """_idn must be empty after an IDN-mismatch failure."""
+        vna = KeysightP5007A(vna_config)
+        mock_inst = MagicMock()
+        mock_inst.timeout = None
+        mock_inst.query.return_value = "Keysight Technologies,N9913A,MY12345678,A.01.00"
+
+        with patch.object(vna, "_check_host_reachable", return_value=True):
+            with patch("pyvisa.ResourceManager") as mock_rm_class:
+                mock_rm = MagicMock()
+                mock_rm.open_resource.return_value = mock_inst
+                mock_rm_class.return_value = mock_rm
+
+                with pytest.raises(ConnectionError):
+                    vna.connect()
+
+        assert vna._idn == ""
+
+    @pytest.mark.unit
+    def test_idn_cleared_after_open_resource_failure(self, vna_config):
+        """_idn must be empty when open_resource raises."""
+        vna = KeysightP5007A(vna_config)
+        vna._idn = "stale"
+
+        with patch.object(vna, "_check_host_reachable", return_value=True):
+            with patch("pyvisa.ResourceManager") as mock_rm_class:
+                mock_rm = MagicMock()
+                mock_rm.open_resource.side_effect = Exception("VISA error")
+                mock_rm_class.return_value = mock_rm
+
+                with pytest.raises(Exception):
+                    vna.connect()
+
+        assert vna._idn == ""
+
+
+_VI_ERROR_TMO = -1073807339  # pyvisa.constants.VI_ERROR_TMO
+_VI_ERROR_OTHER = -1073807346  # pyvisa.constants.VI_ERROR_RSRC_NFOUND
+
+
+class TestKeysightP5007AWaitForOperationComplete:
+    """Tests for _wait_for_operation_complete error handling."""
+
+    @pytest.fixture
+    def connected_vna(self, vna_config):
+        vna = KeysightP5007A(vna_config)
+        mock_inst = MagicMock()
+        mock_inst.timeout = 5000
+        vna.inst = mock_inst
+        vna._connected = True
+        return vna, mock_inst
+
+    @pytest.mark.unit
+    def test_timeout_visa_error_raises_timeout_error(self, connected_vna):
+        """VI_ERROR_TMO from VISA should be translated to TimeoutError."""
+        vna, mock_inst = connected_vna
+        tmo_error = pyvisa.errors.VisaIOError(_VI_ERROR_TMO)
+        mock_inst.query.side_effect = tmo_error
+
+        with pytest.raises(TimeoutError):
+            vna._wait_for_operation_complete(timeout_seconds=1.0)
+
+    @pytest.mark.unit
+    def test_non_timeout_visa_error_propagates(self, connected_vna):
+        """Non-timeout VisaIOErrors must propagate unchanged, not become TimeoutError."""
+        vna, mock_inst = connected_vna
+        io_error = pyvisa.errors.VisaIOError(_VI_ERROR_OTHER)
+        mock_inst.query.side_effect = io_error
+
+        with pytest.raises(pyvisa.errors.VisaIOError) as exc_info:
+            vna._wait_for_operation_complete(timeout_seconds=1.0)
+
+        assert exc_info.value is io_error

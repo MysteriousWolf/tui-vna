@@ -87,11 +87,12 @@ def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
         RGB components as integers (red, green, blue).
     """
     h = hex_color.lstrip("#")
-    if len(h) == 3:
+    original_len = len(h)
+    if original_len == 3:
         h = "".join(c * 2 for c in h)
     if len(h) != 6:
         raise ValueError(
-            f"Invalid hex color {hex_color!r}: expected 3 or 6 hex digits, got {len(hex_color.lstrip('#'))}"
+            f"Invalid hex color {hex_color!r}: expected 3 or 6 hex digits, got {original_len}"
         )
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
@@ -316,9 +317,6 @@ def get_terminal_font() -> tuple[str, float | None]:
                                     font_size = float(size)
                                 break
 
-        if not font_name and "ghostty" in term:
-            _parse_ghostty_config()
-
     except Exception as exc:
         _log.debug("Terminal font detection failed: %s", exc, exc_info=True)
 
@@ -366,6 +364,7 @@ def create_matplotlib_plot(
     y_max: float | None = None,
     font_family: str | None = None,
     font_size: float | None = None,
+    plot_data: dict[str, np.ndarray] | None = None,
 ) -> None:
     """Create a plot using matplotlib with dark theme matching terminal UI."""
     if font_family is None or font_size is None:
@@ -408,7 +407,9 @@ def create_matplotlib_plot(
 
         all_y_data = []
         for param in plot_params:
-            if plot_type == "magnitude":
+            if plot_data is not None and param in plot_data:
+                data = plot_data[param]
+            elif plot_type == "magnitude":
                 data = sparams[param][0]
             elif plot_type == "phase":
                 data = unwrap_phase(sparams[param][1])

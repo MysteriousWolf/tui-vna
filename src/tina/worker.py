@@ -213,6 +213,7 @@ def _render_plot_image_snapshot(
             colors=colors,
             y_min=y_min,
             y_max=y_max,
+            plot_data=plot_data,
         )
 
 
@@ -1058,7 +1059,9 @@ class MeasurementWorker:
                         },
                         str(data["output_folder"]),
                         str(raw_filename) if raw_filename is not None else None,
-                        str(data.get("output_name") or "measurement"),
+                        # output_name is always str at call sites; absent/None both
+                    # mean "use default prefix", matching the exporter's default.
+                    str(data.get("output_name") or "measurement"),
                         notes_markdown=str(data.get("notes_markdown", "")),
                         metadata=data.get("metadata"),
                     )

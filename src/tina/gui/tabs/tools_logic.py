@@ -979,6 +979,9 @@ async def refresh_tools_plot(app, *, tool_result: dict | None = None) -> None:
                 "distortion",
             ):
                 y1 = float(np.interp(cursor1_hz, freqs, data))
+                # plotext scatter only accepts its own named marker tokens (e.g.
+                # "x", "dot", "braille"), not the Unicode symbols stored in
+                # app.settings.cursor_marker_style ("▼", "✕", "○").
                 plt_term.scatter([x1], [y1], color=cursor1_rgb, marker="x")
         if cursor2_hz is not None:
             x2 = cursor2_hz / multiplier

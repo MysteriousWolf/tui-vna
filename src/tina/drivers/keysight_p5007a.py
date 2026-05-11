@@ -102,6 +102,7 @@ class KeysightP5007A(VNABase):
         report("Checking host...", 10)
         if not self._check_host_reachable(self.config.host):
             self._connected = False
+            self._idn = ""
             raise ConnectionError(f"Host {self.config.host} not reachable")
 
         report("Initializing VISA...", 25)
@@ -139,6 +140,7 @@ class KeysightP5007A(VNABase):
                 pass
             self.inst = None
         self._connected = False
+        self._idn = ""
 
     def disconnect(self) -> None:
         """Disconnect from the Keysight P5007A."""
@@ -352,9 +354,11 @@ class KeysightP5007A(VNABase):
                     return
                 raise RuntimeError(f"Unexpected response from *OPC?: {response!r}")
             except pyvisa.errors.VisaIOError as exc:
-                raise TimeoutError(
-                    f"Operation did not complete within {timeout_seconds} seconds"
-                ) from exc
+                if exc.error_code == pyvisa.constants.VI_ERROR_TMO:
+                    raise TimeoutError(
+                        f"Operation did not complete within {timeout_seconds} seconds"
+                    ) from exc
+                raise
         finally:
             resource.timeout = original_timeout
 
