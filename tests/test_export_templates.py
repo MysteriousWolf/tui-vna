@@ -1,7 +1,6 @@
 """Tests for export template rendering and validation."""
 
 from datetime import datetime
-from inspect import getsource
 from types import SimpleNamespace
 
 import pytest
@@ -345,14 +344,47 @@ class TestSetupTemplateBindings:
             """Record class toggles applied by the preview helper."""
             self.classes[class_name] = enabled
 
-    def test_compose_setup_tab_seeds_template_inputs_from_template_fields(self):
-        """Setup tab inputs should reflect filename/folder template settings."""
-        source = getsource(compose_setup_tab)
+    @pytest.mark.asyncio
+    async def test_compose_setup_tab_seeds_template_inputs_from_template_fields(self):
+        """Setup tab inputs should reflect filename/folder template settings at runtime."""
+        from textual.app import App, ComposeResult
+        from textual.widgets import Input
 
-        assert "value=app.settings.filename_template" in source
-        assert "value=app.settings.folder_template" in source
-        assert "value=app.settings.filename_prefix" not in source
-        assert "value=app.settings.output_folder" not in source
+        mock_settings = SimpleNamespace(
+            last_host="",
+            last_port=5025,
+            status_poll_interval=0,
+            freq_unit="MHz",
+            start_freq_mhz=1.0,
+            stop_freq_mhz=1000.0,
+            set_freq_range=False,
+            sweep_points=201,
+            set_sweep_points=False,
+            averaging_count=16,
+            enable_averaging=False,
+            set_averaging_count=False,
+            filename_template="run_{date}_{host}",
+            folder_template="exports/{model}",
+            export_s11=True,
+            export_s21=True,
+            export_s12=False,
+            export_s22=False,
+            export_bundle_s2p=True,
+            export_bundle_csv=False,
+            export_bundle_png=False,
+            export_bundle_svg=False,
+        )
+        mock_app = SimpleNamespace(settings=mock_settings)
+
+        class _SetupTestApp(App):
+            def compose(self) -> ComposeResult:
+                yield from compose_setup_tab(mock_app)  # type: ignore[arg-type]
+
+        async with _SetupTestApp().run_test() as pilot:
+            fname = pilot.app.query_one("#input_filename_template", Input)
+            folder = pilot.app.query_one("#input_folder_template", Input)
+            assert fname.value == mock_settings.filename_template
+            assert folder.value == mock_settings.folder_template
 
     def test_handle_export_template_change_persists_template_fields(self):
         """Template input changes should update the template settings source of truth."""
