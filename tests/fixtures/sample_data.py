@@ -104,6 +104,10 @@ def generate_sample_frequencies(
     if sweep_type == "linear":
         return np.linspace(start_hz, stop_hz, points)
     if sweep_type == "logarithmic":
+        if start_hz <= 0 or stop_hz <= 0:
+            raise ValueError(
+                "start_hz and stop_hz must be positive for logarithmic sweep"
+            )
         return np.logspace(np.log10(start_hz), np.log10(stop_hz), points)
     raise ValueError(f"Unknown sweep type: {sweep_type}")
 

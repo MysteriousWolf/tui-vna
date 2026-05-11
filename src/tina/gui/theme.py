@@ -33,17 +33,15 @@ TINA_THEME = Theme(
     luminosity_spread=0.15,
     # --- Fine-grained widget overrides ---
     variables={
-        # Block cursor: use primary blue on dark background, no text decoration
-        "block-cursor-background": _PRIMARY,
-        "block-cursor-foreground": "#121212",
-        "block-cursor-text-style": "none",
+        # Input cursor: use primary blue on dark background, no text decoration
+        "input-cursor-background": _PRIMARY,
+        "input-cursor-foreground": "#121212",
+        "input-cursor-text-style": "none",
         # Footer key hints match primary
         "footer-key-foreground": _PRIMARY,
         # Text selection: semi-transparent primary
-        "input-selection-background": f"{_PRIMARY} 35%",
+        "input-selection-background": f"color-mix(in srgb, {_PRIMARY} 35%, transparent)",
         # Button labels on primary-colored buttons read dark
-        "button-color-foreground": "#121212",
-        # No extra text style on focused buttons (underline looks noisy)
-        "button-focus-text-style": "none",
+        "button-foreground": "#121212",
     },
 )

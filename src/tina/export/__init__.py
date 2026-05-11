@@ -25,12 +25,8 @@ DEFAULT_TEMPLATE_TAGS = SUPPORTED_SHORT_TAGS
 TemplateRenderContext = dict[str, object]
 TemplateValidationResult = TemplateValidation
 RenderedTemplateResult = RenderedTemplate
-render_export_template = render_template
-validate_export_template = validate_template
-CSVExporter = CsvExporter
 
 __all__ = [
-    "CSVExporter",
     "CsvExporter",
     "CsvExportResult",
     "DEFAULT_TEMPLATE_TAGS",
@@ -50,8 +46,6 @@ __all__ = [
     "embed_svg_metadata",
     "read_png_metadata",
     "read_svg_metadata",
-    "render_export_template",
     "render_template",
-    "validate_export_template",
     "validate_template",
 ]

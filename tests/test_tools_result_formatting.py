@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tina.gui.tabs import tools_logic
 
 
+@pytest.mark.unit
 def test_measure_result_format_helper_preserves_output() -> None:
     """Measure helper output should keep the existing table layout unchanged."""
     measure_result = tools_logic.ToolResult(
@@ -48,6 +51,7 @@ def test_measure_result_format_helper_preserves_output() -> None:
     )
 
 
+@pytest.mark.unit
 def test_distortion_result_format_helper_preserves_output() -> None:
     """Distortion helper output should keep the existing table layout unchanged."""
     distortion_result = tools_logic.ToolResult(

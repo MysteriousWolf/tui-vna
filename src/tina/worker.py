@@ -227,6 +227,7 @@ def _write_touchstone_save_back(
     with open(resolved, encoding="utf-8") as handle:
         original_text = handle.read()
 
+    # Early validation: fail fast on malformed Touchstone files before modifying them.
     TouchstoneExporter.import_with_metadata(resolved)
 
     lines = original_text.splitlines()

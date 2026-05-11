@@ -200,7 +200,7 @@ def _extract_svg_comment_block(
 ) -> str:
     """Extract one SVG metadata comment block by marker name."""
     pattern = re.compile(
-        rf"<!--\s*{re.escape(begin_marker)}\n(.*?)\n{re.escape(end_marker)}\s*-->",
+        rf"<!--\s*{re.escape(begin_marker)}(?:\r\n?|\n)(.*?)(?:\r\n?|\n){re.escape(end_marker)}\s*-->",
         re.DOTALL,
     )
     match = pattern.search(svg_text)
@@ -256,7 +256,7 @@ def _strip_svg_comment_block(
 ) -> str:
     """Remove one TINA SVG metadata block if present."""
     pattern = re.compile(
-        rf"\n?<!--\s*{re.escape(begin_marker)}\n.*?\n{re.escape(end_marker)}\s*-->\n?",
+        rf"(?:\r\n?|\n)?<!--\s*{re.escape(begin_marker)}(?:\r\n?|\n).*?(?:\r\n?|\n){re.escape(end_marker)}\s*-->(?:\r\n?|\n)?",
         re.DOTALL,
     )
     return pattern.sub("\n", svg_text)

@@ -210,12 +210,12 @@ class FrequencyEntry(Static):
             return None
 
     def _update_toggle_visual(self, btn_id: str, active: bool) -> None:
-        """Update toggle labels only — do not change button variants or add active classes.
+        """Update toggle label and the ``--active`` CSS class; never mutates variant.
 
-        We use the button icon (triangle / sine / no-sine) to indicate the logical
-        state; visual color identity is provided by the static button variant set
-        at compose time (and by app-level theming). Avoid changing variant or
-        classes here so toggling does not alter color/size unexpectedly.
+        Sets the button icon (triangle/sine/no-sine) to reflect ``active`` and
+        toggles the ``--active`` semantic class so CSS selectors can style the
+        state. The Button.variant is intentionally left unchanged to preserve
+        color/size set at compose time.
         """
         try:
             btn = self.query_one(f"#{btn_id}", Button)

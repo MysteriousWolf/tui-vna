@@ -335,3 +335,21 @@ class TestOnScpiError:
         wrapper.debug = True
         stub._send_command("*RST")  # must not raise
         assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Callable-guard
+# ---------------------------------------------------------------------------
+
+
+class TestCallableGuard:
+    """LoggingVNAWrapper must raise TypeError when any SCPI primitive is non-callable."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("attr", ["_send_command", "_query", "_query_ascii_values"])
+    def test_raises_type_error_when_primitive_is_not_callable(self, attr):
+        """Constructing with a non-callable SCPI primitive raises TypeError."""
+        stub = _StubDriver()
+        setattr(stub, attr, None)
+        with pytest.raises(TypeError, match=attr):
+            LoggingVNAWrapper(stub, lambda msg, level: None)

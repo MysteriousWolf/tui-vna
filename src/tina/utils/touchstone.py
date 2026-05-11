@@ -33,7 +33,7 @@ _METADATA_END = "TINA METADATA END"
 
 def _create_yaml() -> YAML:
     """Return a fresh YAML serializer/parser with stable Touchstone settings."""
-    yaml = YAML()
+    yaml = YAML(typ="safe")
     yaml.default_flow_style = False
     yaml.width = 4096
     return yaml

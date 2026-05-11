@@ -13,6 +13,7 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import numpy as np
 import skrf as rf
+from matplotlib import rc_context
 
 from tina.utils.signal import calculate_plot_range_with_outlier_filtering, unwrap_phase
 
@@ -213,8 +214,6 @@ def create_matplotlib_plot(
         detected_family, detected_size = get_terminal_font()
         font_family = font_family or detected_family
         font_size = font_size or detected_size
-    plt.rcParams["font.family"] = font_family
-    base_size = (font_size if font_size else 10.0) / render_scale
 
     if colors is None:
         colors = get_plot_colors()
@@ -228,85 +227,88 @@ def create_matplotlib_plot(
         fig_width = 10
         fig_height = 5
 
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.patch.set_alpha(0.0 if transparent else 1.0)
-    if not transparent:
-        fig.patch.set_facecolor(colors["bg"])
-    ax.set_facecolor("none" if transparent else colors["bg"])
+    with rc_context({"font.family": font_family}):
+        base_size = (font_size if font_size else 10.0) / render_scale
 
-    freq_mhz = freqs / 1e6
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        fig.patch.set_alpha(0.0 if transparent else 1.0)
+        if not transparent:
+            fig.patch.set_facecolor(colors["bg"])
+        ax.set_facecolor("none" if transparent else colors["bg"])
 
-    if plot_type == "magnitude":
-        ylabel = "Magnitude (dB)"
-        title = "S-Parameter Magnitude"
-    elif plot_type == "phase":
-        ylabel = "Phase (degrees)"
-        title = "S-Parameter Phase (Unwrapped)"
-    else:
-        ylabel = "Phase (degrees)"
-        title = "S-Parameter Phase (Raw)"
+        freq_mhz = freqs / 1e6
 
-    all_y_data = []
-    for param in plot_params:
         if plot_type == "magnitude":
-            data = sparams[param][0]
+            ylabel = "Magnitude (dB)"
+            title = "S-Parameter Magnitude"
         elif plot_type == "phase":
-            data = unwrap_phase(sparams[param][1])
+            ylabel = "Phase (degrees)"
+            title = "S-Parameter Phase (Unwrapped)"
         else:
-            data = sparams[param][1]
+            ylabel = "Phase (degrees)"
+            title = "S-Parameter Phase (Raw)"
 
-        all_y_data.append(data)
-        ax.plot(
-            freq_mhz,
-            data,
-            label=param,
-            color=colors["traces"].get(param, colors["default_trace"]),
-            linewidth=1.5,
-        )
+        all_y_data = []
+        for param in plot_params:
+            if plot_type == "magnitude":
+                data = sparams[param][0]
+            elif plot_type == "phase":
+                data = unwrap_phase(sparams[param][1])
+            else:
+                data = sparams[param][1]
 
-    if all_y_data:
-        combined_data = np.concatenate(all_y_data)
-        if y_min is None or y_max is None:
-            auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
-                combined_data, outlier_percentile=1.0, safety_margin=0.05
+            all_y_data.append(data)
+            ax.plot(
+                freq_mhz,
+                data,
+                label=param,
+                color=colors["traces"].get(param, colors["default_trace"]),
+                linewidth=1.5,
             )
-            final_y_min = y_min if y_min is not None else auto_y_min
-            final_y_max = y_max if y_max is not None else auto_y_max
+
+        if all_y_data:
+            combined_data = np.concatenate(all_y_data)
+            if y_min is None or y_max is None:
+                auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
+                    combined_data, outlier_percentile=1.0, safety_margin=0.05
+                )
+                final_y_min = y_min if y_min is not None else auto_y_min
+                final_y_max = y_max if y_max is not None else auto_y_max
+            else:
+                final_y_min = y_min
+                final_y_max = y_max
+            ax.set_ylim(final_y_min, final_y_max)
+
+        ax.set_xlabel("Frequency (MHz)", color=fg_color, fontsize=base_size)
+        ax.set_ylabel(ylabel, color=fg_color, fontsize=base_size)
+        ax.set_title(title, color=fg_color, fontsize=base_size * 1.2, pad=15)
+        ax.tick_params(colors=fg_color, labelsize=base_size * 0.85)
+        ax.grid(True, alpha=0.2, color=grid_color, linestyle="-", linewidth=0.5)
+        legend = ax.legend(
+            edgecolor=grid_color,
+            labelcolor=fg_color,
+            fontsize=base_size * 0.9,
+        )
+        legend.get_frame().set_alpha(0.5 if transparent else 1.0)
+        if not transparent:
+            legend.get_frame().set_facecolor(colors["bg"])
         else:
-            final_y_min = y_min
-            final_y_max = y_max
-        ax.set_ylim(final_y_min, final_y_max)
+            legend.get_frame().set_facecolor("none")
 
-    ax.set_xlabel("Frequency (MHz)", color=fg_color, fontsize=base_size)
-    ax.set_ylabel(ylabel, color=fg_color, fontsize=base_size)
-    ax.set_title(title, color=fg_color, fontsize=base_size * 1.2, pad=15)
-    ax.tick_params(colors=fg_color, labelsize=base_size * 0.85)
-    ax.grid(True, alpha=0.2, color=grid_color, linestyle="-", linewidth=0.5)
-    legend = ax.legend(
-        edgecolor=grid_color,
-        labelcolor=fg_color,
-        fontsize=base_size * 0.9,
-    )
-    legend.get_frame().set_alpha(0.5 if transparent else 1.0)
-    if not transparent:
-        legend.get_frame().set_facecolor(colors["bg"])
-    else:
-        legend.get_frame().set_facecolor("none")
+        for spine in ax.spines.values():
+            spine.set_edgecolor(grid_color)
+            spine.set_linewidth(1)
 
-    for spine in ax.spines.values():
-        spine.set_edgecolor(grid_color)
-        spine.set_linewidth(1)
-
-    plt.tight_layout()
-    plt.savefig(
-        output_path,
-        dpi=dpi,
-        facecolor=fig.get_facecolor(),
-        edgecolor="none",
-        bbox_inches="tight",
-        transparent=transparent,
-    )
-    plt.close(fig)
+        plt.tight_layout()
+        plt.savefig(
+            output_path,
+            dpi=dpi,
+            facecolor=fig.get_facecolor(),
+            edgecolor="none",
+            bbox_inches="tight",
+            transparent=transparent,
+        )
+        plt.close(fig)
 
 
 def create_smith_chart(

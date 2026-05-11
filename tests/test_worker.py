@@ -295,7 +295,7 @@ class TestWorkerProgressUpdates:
 
     @pytest.mark.integration
     @patch("tina.worker.detect_vna_driver")
-    @patch("tina.drivers.hp_e5071b.HPE5071B")
+    @patch("tina.drivers.HPE5071B")
     @patch("socket.socket")
     def test_progress_updates_during_connect(
         self, mock_socket, mock_vna_class, mock_detect, vna_config
@@ -311,7 +311,7 @@ class TestWorkerProgressUpdates:
         mock_vna.driver_name = "HP E5071B"
         mock_vna.is_connected.return_value = True
         mock_vna_class.return_value = mock_vna
-        mock_detect.return_value = mock_vna_class
+        mock_detect.return_value = None  # no specific driver; worker uses temp_vna directly
 
         worker = MeasurementWorker()
         worker.start()
@@ -319,6 +319,7 @@ class TestWorkerProgressUpdates:
         worker.send_command(MessageType.CONNECT, vna_config)
 
         # Collect messages until we receive CONNECTED
+        connected_received = False
         for _ in range(10):
             try:
                 msg = worker.get_response(timeout=0.5)
@@ -326,13 +327,13 @@ class TestWorkerProgressUpdates:
                 if msg.type == MessageType.PROGRESS:
                     pass  # Progress updates are optional and timing-dependent
                 elif msg.type == MessageType.CONNECTED:
+                    connected_received = True
                     break
 
             except queue.Empty:
                 continue
 
-        # Progress updates are optional (timing-dependent)
-        # But CONNECTED should always arrive
+        assert connected_received is True
 
         worker.stop()
 
@@ -867,7 +868,7 @@ class TestWorkerLogging:
 
     @pytest.mark.integration
     @patch("tina.worker.detect_vna_driver")
-    @patch("tina.drivers.hp_e5071b.HPE5071B")
+    @patch("tina.drivers.HPE5071B")
     @patch("socket.socket")
     def test_log_messages_sent(
         self, mock_socket, mock_vna_class, mock_detect, vna_config
@@ -883,7 +884,7 @@ class TestWorkerLogging:
         mock_vna.driver_name = "HP E5071B"
         mock_vna.is_connected.return_value = True
         mock_vna_class.return_value = mock_vna
-        mock_detect.return_value = mock_vna_class
+        mock_detect.return_value = None  # no specific driver; worker uses temp_vna directly
 
         worker = MeasurementWorker()
         worker.start()
@@ -907,7 +908,7 @@ class TestWorkerLogging:
                 continue
 
         # Log messages are expected during connection
-        assert log_received or True  # Make optional since timing-dependent
+        assert log_received is True
 
         worker.stop()
 

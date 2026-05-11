@@ -185,11 +185,12 @@ class TestTouchstoneExporter:
         """Test that exporting with no frequency points raises error."""
         exporter = TouchstoneExporter()
         empty_freqs = np.array([], dtype=float)
+        empty_pair = (np.array([], dtype=float), np.array([], dtype=float))
         sparams = {
-            "S11": (
-                np.array([], dtype=float),
-                np.array([], dtype=float),
-            )
+            "S11": empty_pair,
+            "S21": empty_pair,
+            "S12": empty_pair,
+            "S22": empty_pair,
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:

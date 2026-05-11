@@ -53,7 +53,15 @@ class MeasureTool(BaseTool):
                 `delta_value` (`cursor2 - cursor1` or `None` if either value is
                 `None`).
         """
-        unit_label = "dB" if plot_type == "magnitude" else "°"
+        if plot_type == "magnitude":
+            unit_label = "dB"
+        elif plot_type in {"phase", "phase_raw"}:
+            unit_label = "°"
+        else:
+            raise ValueError(
+                f"Unsupported plot_type: {plot_type!r}. "
+                "Valid options: 'magnitude', 'phase', 'phase_raw'"
+            )
 
         if trace not in sparams:
             return ToolResult(tool_name="measure", unit_label=unit_label)
@@ -63,13 +71,8 @@ class MeasureTool(BaseTool):
             data = mag
         elif plot_type == "phase":
             data = unwrap_phase(phase)
-        elif plot_type == "phase_raw":
-            data = phase
         else:
-            raise ValueError(
-                f"Unsupported plot_type: {plot_type!r}. "
-                "Valid options: 'magnitude', 'phase', 'phase_raw'"
-            )
+            data = phase
 
         def _interp(freq_hz: float) -> float:
             """

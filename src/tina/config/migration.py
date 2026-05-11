@@ -103,12 +103,15 @@ def migrate_legacy_config() -> str | None:
     # leave old_dir intact until the user resolves the partial migration.
     try:
         (new_dir / _PARTIAL_SENTINEL).touch()
+        return (
+            f"Partially migrated settings from {old_dir} to {new_dir}; "
+            "legacy directory was preserved"
+        )
     except OSError:
-        pass
-    return (
-        f"Partially migrated settings from {old_dir} to {new_dir}; "
-        "legacy directory was preserved"
-    )
+        return (
+            f"Partially migrated settings from {old_dir} to {new_dir}; "
+            "sentinel creation failed"
+        )
 
 
 def _try_remove(path: Path) -> None:

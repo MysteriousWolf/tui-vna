@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -107,7 +108,7 @@ def validate_template(
     template: str,
     *,
     allowed_tags: set[str],
-    invalid_path_chars: set[str] | None = None,
+    invalid_path_chars: AbstractSet[str] | None = None,
 ) -> TemplateValidation:
     """Validate template string for unknown tags and invalid path chars.
 
@@ -139,7 +140,7 @@ def render_template(
     context: Mapping[str, object],
     now: datetime | None = None,
     allowed_tags: set[str] | None = None,
-    invalid_path_chars: set[str] | None = None,
+    invalid_path_chars: AbstractSet[str] | None = None,
 ) -> RenderedTemplate:
     """Render a template string using context and timestamp formatting.
 

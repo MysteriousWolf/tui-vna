@@ -7,6 +7,8 @@ from datetime import datetime
 from rich.markup import escape as rich_escape
 from textual.widgets import Checkbox, RichLog
 
+MAX_LOG_HISTORY = 2000
+
 LOG_FILTER_IDS: dict[str, str] = {
     "tx": "#check_log_tx",
     "rx": "#check_log_rx",
@@ -94,6 +96,8 @@ def log_message(app, message: str, level: str = "info") -> None:
         "message": message,
     }
     app.log_messages.append(log_entry)
+    if len(app.log_messages) > MAX_LOG_HISTORY:
+        del app.log_messages[: len(app.log_messages) - MAX_LOG_HISTORY]
 
     if should_show_log(app, level):
         try:

@@ -5,6 +5,7 @@ Implements the VNABase interface for the Keysight P5007A 2-port PNA-family VNA.
 
 from __future__ import annotations
 
+import logging
 import socket
 import time
 from typing import Any, Protocol, cast
@@ -107,8 +108,6 @@ class KeysightP5007A(VNABase):
         try:
             resource_manager = pyvisa.ResourceManager("@py")
         except Exception as exc:
-            import logging
-
             logging.getLogger(__name__).debug(
                 "pyvisa-py backend unavailable, falling back to default: %s", exc
             )
@@ -348,8 +347,10 @@ class KeysightP5007A(VNABase):
         resource.timeout = int(timeout_seconds * 1000)
         try:
             try:
-                if self._query("*OPC?").strip() in {"1", "+1"}:
+                response = self._query("*OPC?").strip()
+                if response in {"1", "+1"}:
                     return
+                raise RuntimeError(f"Unexpected response from *OPC?: {response!r}")
             except pyvisa.errors.VisaIOError as exc:
                 raise TimeoutError(
                     f"Operation did not complete within {timeout_seconds} seconds"

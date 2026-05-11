@@ -131,6 +131,8 @@ class TestMigrateLegacyConfig:
 
     def test_partial_migration_reports_preserved_legacy_directory(self, tmp_path):
         """Corrupt update state should yield a partial migration message and keep the old dir."""
+        from tina.config.migration import _PARTIAL_SENTINEL
+
         old_dir = tmp_path / _OLD_APP_NAME
         old_dir.mkdir()
         (old_dir / "settings.json").write_text('{"last_host": "192.168.1.50"}')
@@ -154,6 +156,7 @@ class TestMigrateLegacyConfig:
         assert result is not None
         assert result.startswith("Partially migrated settings")
         assert old_dir.exists()
+        assert (new_dir / _PARTIAL_SENTINEL).exists()
 
     def test_partial_migration_sentinel_prevents_deletion_on_next_startup(
         self, tmp_path

@@ -91,6 +91,17 @@ def compose_tools_tab(app: VNAApp) -> ComposeResult:
                     )
 
                     def _compose_cursor_row(index: int, color_class: str):
+                        """Compose a Horizontal row containing a FrequencyEntry for one cursor.
+
+                        Args:
+                            index: Cursor number (1 or 2); used to build stable widget IDs.
+                            color_class: CSS class applied to the FrequencyEntry for coloring.
+
+                        Yields:
+                            A FrequencyEntry widget with input, prev/next, and toggle IDs
+                            derived from ``index``, using ``freq_unit`` from
+                            ``app.last_measurement`` (defaults to ``"MHz"``).
+                        """
                         freq_unit = (
                             app.last_measurement.get("freq_unit", "MHz")
                             if app.last_measurement
