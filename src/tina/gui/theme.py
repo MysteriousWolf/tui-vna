@@ -39,8 +39,8 @@ TINA_THEME = Theme(
         "input-cursor-text-style": "none",
         # Footer key hints match primary
         "footer-key-foreground": _PRIMARY,
-        # Text selection: semi-transparent primary
-        "input-selection-background": f"color-mix(in srgb, {_PRIMARY} 35%, transparent)",
+        # Text selection: semi-transparent primary (35% opacity = 0x59 alpha)
+        "input-selection-background": "#4a9eda59",
         # Button labels on primary-colored buttons read dark
         "button-foreground": "#121212",
     },
