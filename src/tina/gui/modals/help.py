@@ -175,8 +175,8 @@ class HelpScreen(ModalScreen):
             from PIL import ImageColor
 
             v = self.app.get_css_variables()
-            bg_hex = v.get("surface", "#1a1a1a")
-            fg_hex = v.get("foreground", "#ffffff")
+            bg_hex = v.get("surface", "#1b1b1b")
+            fg_hex = v.get("foreground", "#c8d3e0")
 
             expr = self._prep_for_mathtext(latex_expr.strip())
 

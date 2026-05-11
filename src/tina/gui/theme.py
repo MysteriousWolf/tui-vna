@@ -3,6 +3,7 @@
 from textual.theme import Theme
 
 _PRIMARY = "#4a9eda"
+_BACKGROUND = "#121212"
 
 TINA_THEME = Theme(
     name="tina",
@@ -16,7 +17,7 @@ TINA_THEME = Theme(
     accent="#00c8b8",
     # --- Backgrounds (darkest → lightest: bg → surface → panel → boost) ---
     # Pure neutral grays — no color cast
-    background="#121212",
+    background=_BACKGROUND,
     surface="#1b1b1b",
     panel="#252525",
     boost="#2f2f2f",
@@ -35,13 +36,13 @@ TINA_THEME = Theme(
     variables={
         # Input cursor: use primary blue on dark background, no text decoration
         "input-cursor-background": _PRIMARY,
-        "input-cursor-foreground": "#121212",
+        "input-cursor-foreground": _BACKGROUND,
         "input-cursor-text-style": "none",
         # Footer key hints match primary
         "footer-key-foreground": _PRIMARY,
         # Text selection: semi-transparent primary (35% opacity = 0x59 alpha)
-        "input-selection-background": "#4a9eda59",
+        "input-selection-background": f"{_PRIMARY}59",
         # Button labels on primary-colored buttons read dark
-        "button-foreground": "#121212",
+        "button-foreground": _BACKGROUND,
     },
 )

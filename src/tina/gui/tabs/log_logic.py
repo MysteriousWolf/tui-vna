@@ -24,10 +24,10 @@ LOG_FILTER_IDS: dict[str, str] = {
 def build_style_map(app) -> dict[str, tuple[str, str]]:
     """Build the level→(icon, style) map from current Textual theme variables."""
     variables = app.get_css_variables()
-    color_tx = variables.get("accent", "#ffa62b")
-    color_rx = variables.get("secondary", "#0178D4")
-    color_success = variables.get("success", "#4EBF71")
-    color_error = variables.get("error", "#ba3c5b")
+    color_tx = variables.get("accent", "#00c8b8")
+    color_rx = variables.get("secondary", "#3278b5")
+    color_success = variables.get("success", "#4ac48a")
+    color_error = variables.get("error", "#e05555")
     return {
         "tx": ("↑", color_tx),
         "rx": ("↓", color_rx),

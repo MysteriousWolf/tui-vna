@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Button, Checkbox, Input, Label, Select, Static
+from textual.widgets import Checkbox, Input, Label, Select, Static
 
 if TYPE_CHECKING:
     from tina.main import VNAApp
@@ -127,16 +127,11 @@ def compose_setup_tab(app: VNAApp) -> ComposeResult:
                 )
 
         # Output Settings
-        with Container(classes="panel") as panel:
-            panel.border_title = "Output"
-            with Horizontal(classes="param-row panel-header-row"):
-                yield Static("", classes="spacer")
-                yield Button(
-                    "?",
-                    id="btn_output_help",
-                    classes="help-button",
-                    flat=True,
-                )
+        with Container(classes="panel", id="output_settings_panel") as panel:
+            panel.border_title = (
+                "Output "
+                "[@click='app.show_output_help'][$background on $primary] ? [/][/]"
+            )
 
             with Horizontal(classes="param-row"):
                 yield Label("Filename:", classes="col-label")

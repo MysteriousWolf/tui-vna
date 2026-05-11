@@ -2943,11 +2943,6 @@ class VNAApp(App):
             self.last_measurement["output_path"],
         )
 
-    @on(Button.Pressed, "#btn_output_help")
-    def handle_output_help(self) -> None:
-        """Show the output settings help modal."""
-        self.action_show_output_help()
-
     @on(Button.Pressed, "#btn_open_output")
     def handle_open_output(self) -> None:
         """Open the output file location in file explorer."""
