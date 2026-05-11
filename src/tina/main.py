@@ -3700,16 +3700,6 @@ class VNAApp(App):
     # explicit prev/next and mode toggles (fallback for unreliable modifier keys).
     from .gui.components.frequency_entry import FrequencyEntry
 
-    @on(Button.Pressed, "#btn_tool_help")
-    def handle_tool_help_pressed(self) -> None:
-        """Show help for the currently active tool."""
-        self.action_show_tool_help()
-
-    @on(Button.Pressed, "#btn_tools_copy_results")
-    def handle_tools_copy_results_pressed(self) -> None:
-        """Copy the current tool results to the clipboard."""
-        self.action_copy_tool_results()
-
     @on(Button.Pressed, "#btn_tool_measure")
     def handle_tool_measure_pressed(self) -> None:
         """Activate or deactivate the cursor tool."""
