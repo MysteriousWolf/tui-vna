@@ -164,13 +164,15 @@ class TouchstoneExporter:
         if not notes:
             return []
 
-        _RESERVED = frozenset({_NOTES_BEGIN, _NOTES_END, _METADATA_BEGIN, _METADATA_END})
+        _reserved = frozenset(
+            {_NOTES_BEGIN, _NOTES_END, _METADATA_BEGIN, _METADATA_END}
+        )
         lines = [
             f"! {_NOTES_BEGIN}",
             "! Raw markdown notes below. You may edit these manually.",
         ]
         for line in notes.splitlines():
-            if line.startswith("\\") or line.strip() in _RESERVED:
+            if line.startswith("\\") or line.strip() in _reserved:
                 line = "\\" + line
             lines.append(f"! {line}" if line else "!")
         lines.append(f"! {_NOTES_END}")

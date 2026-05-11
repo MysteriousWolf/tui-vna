@@ -40,7 +40,6 @@ class TestCreateSmithChart:
     @pytest.mark.unit
     def test_empty_freqs_raises_value_error(self, tmp_path):
         """create_smith_chart raises ValueError when freqs array is empty."""
-        n = 0
         freqs = np.array([])
         sparams = {"S11": (np.array([]), np.array([]))}
 
