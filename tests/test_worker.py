@@ -311,7 +311,9 @@ class TestWorkerProgressUpdates:
         mock_vna.driver_name = "HP E5071B"
         mock_vna.is_connected.return_value = True
         mock_vna_class.return_value = mock_vna
-        mock_detect.return_value = None  # no specific driver; worker uses temp_vna directly
+        mock_detect.return_value = (
+            None  # no specific driver; worker uses temp_vna directly
+        )
 
         worker = MeasurementWorker()
         worker.start()
@@ -884,7 +886,9 @@ class TestWorkerLogging:
         mock_vna.driver_name = "HP E5071B"
         mock_vna.is_connected.return_value = True
         mock_vna_class.return_value = mock_vna
-        mock_detect.return_value = None  # no specific driver; worker uses temp_vna directly
+        mock_detect.return_value = (
+            None  # no specific driver; worker uses temp_vna directly
+        )
 
         worker = MeasurementWorker()
         worker.start()

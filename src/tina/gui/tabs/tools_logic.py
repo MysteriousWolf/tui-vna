@@ -9,6 +9,7 @@ import numpy as np
 from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+from ...gui.components.frequency_entry import FrequencyEntry
 from ...gui.modals.help import TEXTUAL_IMAGE_AVAILABLE, ImageWidget
 from ...gui.plotting import (
     calculate_plot_range_with_outlier_filtering,
@@ -216,59 +217,17 @@ async def rebuild_tools_params(app) -> None:
         "debug",
     )
 
-    unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-
-    def _fmt(hz_val):
-        try:
-            if hz_val is None:
-                return ""
-            mult = unit_multipliers.get(freq_unit, 1e6)
-            return f"{hz_val / mult:.6f}".rstrip("0").rstrip(".")
-        except Exception:
-            return ""
-
     try:
-        try:
-            inp1 = app.query_one("#input_tools_cursor1", Input)
-            inp1.value = _fmt(getattr(app, "_tools_cursor1_hz", None))
-        except Exception:
-            pass
-
-        try:
-            inp2 = app.query_one("#input_tools_cursor2", Input)
-            inp2.value = _fmt(getattr(app, "_tools_cursor2_hz", None))
-        except Exception:
-            pass
-
-        try:
-            btn_min1 = app.query_one("#btn_freq1_toggle_min", Button)
-            btn_min1.label = (
-                "▼" if getattr(app, "_tools_cursor1_minima", False) else "▲"
-            )
-        except Exception:
-            pass
-        try:
-            btn_smooth1 = app.query_one("#btn_freq1_toggle_smooth", Button)
-            btn_smooth1.label = (
-                "∿" if getattr(app, "_tools_cursor1_smoothing", False) else "⎍"
-            )
-        except Exception:
-            pass
-
-        try:
-            btn_min2 = app.query_one("#btn_freq2_toggle_min", Button)
-            btn_min2.label = (
-                "▼" if getattr(app, "_tools_cursor2_minima", False) else "▲"
-            )
-        except Exception:
-            pass
-        try:
-            btn_smooth2 = app.query_one("#btn_freq2_toggle_smooth", Button)
-            btn_smooth2.label = (
-                "∿" if getattr(app, "_tools_cursor2_smoothing", False) else "⎍"
-            )
-        except Exception:
-            pass
+        for n in (1, 2):
+            try:
+                fe = app.query_one(f"FrequencyEntry.tools-cursor-{n}", FrequencyEntry)
+                fe.set_frequency_hz(getattr(app, f"_tools_cursor{n}_hz", None))
+                fe.set_minima_mode(getattr(app, f"_tools_cursor{n}_minima", False))
+                fe.set_smoothing_mode(
+                    getattr(app, f"_tools_cursor{n}_smoothing", False)
+                )
+            except Exception:
+                pass
 
         app.log_message("Updated static FrequencyEntry widgets from app state", "debug")
     except Exception as exc_update:
