@@ -250,6 +250,9 @@ class _FakeApp:
         self._tools_plot_cache_key = None
         self._tools_plot_display_key = None
         self._run_tools_render_job = AsyncMock()
+        self._run_tools_compute_job = AsyncMock()
+        self._latest_tools_compute_result = None
+        self._latest_tools_compute_cache_key = None
         self._get_distortion_comp_enabled = cast(
             Any, lambda: list(self._tools_distortion_comp_enabled)
         )
@@ -2906,33 +2909,36 @@ class TestToolsRenderResultCaching:
                 "#tools_radio_s22": _FakeCheckbox(False),
             }[selector],
         )
+        # Both render and compute caches are stale.
         app._latest_tools_render_result = {
             "tool_result": {"tool_name": "measure", "unit_label": "dB"}
         }
         app._latest_tools_render_cache_key = ("stale",)
-        fresh_result = {
-            "tool_result": {
-                "tool_name": "measure",
-                "cursor1_freq_hz": 1.0e6,
-                "cursor2_freq_hz": 2.0e6,
-                "cursor1_value": -1.0,
-                "cursor2_value": -2.0,
-                "delta_value": -1.0,
-                "unit_label": "dB",
-                "extra": {},
-            },
-            "render_cache_key": tools_logic.get_tools_plot_cache_key(cast(Any, app)),
+        current_key = tools_logic.get_tools_plot_cache_key(cast(Any, app))
+        fresh_tool_result = {
+            "tool_name": "measure",
+            "cursor1_freq_hz": 1.0e6,
+            "cursor2_freq_hz": 2.0e6,
+            "cursor1_value": -1.0,
+            "cursor2_value": -2.0,
+            "delta_value": -1.0,
+            "unit_label": "dB",
+            "extra": {},
+        }
+        fresh_compute_result = {
+            "tool_result": fresh_tool_result,
+            "compute_cache_key": current_key,
         }
 
         with patch("src.tina.main.render_tools_computation_result") as mock_render:
-            app._run_tools_render_job = AsyncMock(return_value=fresh_result)
+            app._run_tools_compute_job = AsyncMock(return_value=fresh_compute_result)
 
             await VNAApp._run_tools_computation_async(cast(Any, app))
 
-        app._run_tools_render_job.assert_awaited_once()
-        mock_render.assert_called_once_with(cast(Any, app), fresh_result["tool_result"])
-        assert app._latest_tools_render_result == fresh_result
-        assert app._latest_tools_render_cache_key == fresh_result["render_cache_key"]
+        app._run_tools_compute_job.assert_awaited_once()
+        mock_render.assert_called_once_with(cast(Any, app), fresh_tool_result)
+        assert app._latest_tools_compute_result == fresh_compute_result
+        assert app._latest_tools_compute_cache_key == current_key
 
     def test_apply_import_result_clears_stale_tools_render_cache(
         self, sample_measurement: dict[str, Any], tmp_path: Path

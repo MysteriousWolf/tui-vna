@@ -884,8 +884,15 @@ async def apply_tools_render_result(
         msg_widget.update(msg)
 
 
-async def refresh_tools_plot(app) -> None:
-    """Render the Tools tab plot for the currently selected trace."""
+async def refresh_tools_plot(app, *, tool_result: dict | None = None) -> None:
+    """Render the Tools tab plot for the currently selected trace.
+
+    Parameters:
+        app: The running VNAApp instance.
+        tool_result: Pre-computed tool result dict (from TOOLS_COMPUTE); when
+            provided the terminal backend draws cursor markers and distortion
+            overlays in addition to the base trace and cursor vlines.
+    """
     if app.last_measurement is None:
         return
 
@@ -967,9 +974,40 @@ async def refresh_tools_plot(app) -> None:
         if cursor1_hz is not None:
             x1 = cursor1_hz / multiplier
             plt_term.vline(x1, color=cursor1_rgb)
+            if tool_result is not None and app.settings.tools_active_tool in ("cursor", "distortion"):
+                y1 = float(np.interp(cursor1_hz, freqs, data))
+                plt_term.scatter([x1], [y1], color=cursor1_rgb, marker="x")
         if cursor2_hz is not None:
             x2 = cursor2_hz / multiplier
             plt_term.vline(x2, color=cursor2_rgb)
+            if tool_result is not None and app.settings.tools_active_tool in ("cursor", "distortion"):
+                y2 = float(np.interp(cursor2_hz, freqs, data))
+                plt_term.scatter([x2], [y2], color=cursor2_rgb, marker="x")
+
+        # Distortion overlay curves
+        if (
+            tool_result is not None
+            and app.settings.tools_active_tool == "distortion"
+            and cursor1_hz is not None
+            and cursor2_hz is not None
+            and cursor1_hz != cursor2_hz
+        ):
+            extra = tool_result.get("extra") or {}
+            coeffs = extra.get("coeffs")
+            x_norm = extra.get("x_norm")
+            f_band_hz = extra.get("f_band_hz")
+            if isinstance(coeffs, list) and isinstance(x_norm, list) and isinstance(f_band_hz, list):
+                distortion_components = get_distortion_comp_enabled(app)
+                overlay_colors_rgb = plot_colors.get("distortion_overlays_rgb", [])
+                band_axis = (np.array(f_band_hz, dtype=float) / multiplier).tolist()
+                x_values = np.array(x_norm, dtype=float)
+                for idx in range(min(6, len(coeffs), len(distortion_components))):
+                    if not distortion_components[idx]:
+                        continue
+                    cumulative = np.array(coeffs[: idx + 1], dtype=float)
+                    curve_y = np.polynomial.legendre.legval(x_values, cumulative).tolist()
+                    color = overlay_colors_rgb[idx] if idx < len(overlay_colors_rgb) else trace_color_rgb
+                    plt_term.plot(band_axis, curve_y, color=color)
 
         plot_widget.refresh()
 

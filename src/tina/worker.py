@@ -1250,15 +1250,15 @@ class MeasurementWorker:
         cursor2_hz = (
             float(data["cursor2_hz"]) if data.get("cursor2_hz") is not None else None
         )
-        tool_result = self._compute_tools_result_payload(
-            freqs,
-            sparams,
-            active_tool,
-            trace,
-            plot_type,
-            cursor1_hz,
-            cursor2_hz,
-        )
+        # Reuse a pre-computed result when the caller already holds a fresh one
+        # (e.g. from a preceding TOOLS_COMPUTE job) to avoid duplicate work.
+        if data.get("tool_result") is not None:
+            tool_result = dict(data["tool_result"])
+            report("Tools plot: reusing cached computation...", 50)
+        else:
+            tool_result = self._compute_tools_result_payload(
+                freqs, sparams, active_tool, trace, plot_type, cursor1_hz, cursor2_hz,
+            )
         report("Tools plot: rendering image...", 65)
         result = _render_tools_plot_snapshot(
             freqs,
@@ -1346,32 +1346,23 @@ class MeasurementWorker:
 
         if active_tool == "cursor":
             report("Tools: measuring cursor values...", 55)
-            return self._compute_tools_result_payload(
-                freqs,
-                sparams,
-                active_tool,
-                trace,
-                plot_type,
-                cursor1_hz,
-                cursor2_hz,
+            tool_result = self._compute_tools_result_payload(
+                freqs, sparams, active_tool, trace, plot_type, cursor1_hz, cursor2_hz,
             )
-
-        if active_tool == "distortion":
+        elif active_tool == "distortion":
             report("Tools: fitting distortion model...", 45)
-            result = self._compute_tools_result_payload(
-                freqs,
-                sparams,
-                active_tool,
-                trace,
-                plot_type,
-                cursor1_hz,
-                cursor2_hz,
+            tool_result = self._compute_tools_result_payload(
+                freqs, sparams, active_tool, trace, plot_type, cursor1_hz, cursor2_hz,
             )
             report("Tools: packaging distortion results...", 85)
-            return result
+        else:
+            report("Tools: no active tool selected", 90)
+            tool_result = {"tool_name": "", "unit_label": "dB", "extra": {}}
 
-        report("Tools: no active tool selected", 90)
-        return {"tool_name": "", "unit_label": "dB", "extra": {}}
+        return {
+            "tool_result": tool_result,
+            "compute_cache_key": data.get("compute_cache_key"),
+        }
 
     def _handle_measure(self, config: VNAConfig) -> None:
         """Handle measurement command using driver abstraction."""

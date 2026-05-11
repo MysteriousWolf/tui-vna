@@ -272,6 +272,8 @@ class VNAApp(App):
         self._tools_plot_display_key = None
         self._latest_tools_render_result: dict[str, object] | None = None
         self._latest_tools_render_cache_key: tuple[object, ...] | None = None
+        self._latest_tools_compute_result: dict[str, object] | None = None
+        self._latest_tools_compute_cache_key: tuple[object, ...] | None = None
         self._tools_distortion_cache = {}
         self._tools_distortion_cache_last_data_key = None
         self._template_input_timer = None
@@ -1120,6 +1122,38 @@ class VNAApp(App):
         )
         return dict(result)
 
+    async def _run_tools_compute_job(self) -> dict[str, object]:
+        """Compute Tools tab results via the worker (no image rendering)."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement loaded")
+
+        self._cancel_background_jobs_by_operation("Tools compute")
+        compute_cache_key = tools_logic.get_tools_plot_cache_key(self)
+        trace = self._get_tools_trace()
+        plot_type_value = self.query_one("#select_tools_plot_type", Select).value
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.TOOLS_COMPUTE,
+            operation="Tools compute",
+            payload={
+                "freqs": self.last_measurement["freqs"].tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in self.last_measurement["sparams"].items()
+                },
+                "trace": trace,
+                "plot_type": plot_type,
+                "freq_unit": str(self.last_measurement.get("freq_unit", "MHz")),
+                "cursor1_hz": self._tools_cursor1_hz,
+                "cursor2_hz": self._tools_cursor2_hz,
+                "active_tool": self.settings.tools_active_tool,
+                "compute_cache_key": compute_cache_key,
+            },
+        )
+        return dict(result)
+
     async def _run_tools_render_job(self) -> dict[str, object]:
         """Render the Tools tab image plot via the worker job system."""
         if self.last_measurement is None:
@@ -1131,6 +1165,14 @@ class VNAApp(App):
         plot_type_value = self.query_one("#select_tools_plot_type", Select).value
         plot_type = (
             str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
+        # Pass a pre-computed result when the compute cache is warm so the
+        # worker can skip recomputation and go straight to rendering.
+        cached_compute = (
+            dict(self._latest_tools_compute_result)
+            if isinstance(self._latest_tools_compute_result, dict)
+            and self._latest_tools_compute_cache_key == render_cache_key
+            else None
         )
         result = await self._run_background_worker_job(
             msg_type=MessageType.TOOLS_RENDER,
@@ -1163,14 +1205,17 @@ class VNAApp(App):
                 "distortion_components": self._get_distortion_comp_enabled(),
                 "render_cache_key": render_cache_key,
                 "output_path": str(self.plot_temp_dir / "tools_plot.png"),
+                "tool_result": cached_compute.get("tool_result") if cached_compute else None,
             },
         )
         return dict(result)
 
     def _invalidate_tools_render_result_cache(self) -> None:
-        """Drop any cached worker-side Tools render result payload."""
+        """Drop all cached worker-side Tools result payloads (compute and render)."""
         self._latest_tools_render_result = None
         self._latest_tools_render_cache_key = None
+        self._latest_tools_compute_result = None
+        self._latest_tools_compute_cache_key = None
 
     def _current_tools_render_cache_key(self) -> tuple[object, ...] | None:
         """Return the current tools-state key used for render/result reuse."""
@@ -1551,11 +1596,21 @@ class VNAApp(App):
                 self._latest_tools_render_result = dict(job.result)
                 self._latest_tools_render_cache_key = current_cache_key
                 tool_result = job.result.get("tool_result")
+                # Keep compute cache in sync with fresh render results.
+                if isinstance(tool_result, dict):
+                    self._latest_tools_compute_result = {"tool_result": tool_result}
+                    self._latest_tools_compute_cache_key = current_cache_key
             else:
                 self._invalidate_tools_render_result_cache()
                 tool_result = None
             if tool_result is not None:
                 render_tools_computation_result(self, tool_result)
+        elif job.operation == "Tools compute" and isinstance(job.result, dict):
+            result_cache_key = job.result.get("compute_cache_key")
+            current_cache_key = self._current_tools_render_cache_key()
+            if result_cache_key == current_cache_key:
+                self._latest_tools_compute_result = dict(job.result)
+                self._latest_tools_compute_cache_key = current_cache_key
         self.set_progress(f"{job.operation} complete", job.progress)
 
     @on(Select.Changed, "#sb_poll_interval")
@@ -3390,8 +3445,26 @@ class VNAApp(App):
             return
 
         if self.settings.plot_backend == "terminal":
-            self._invalidate_tools_render_result_cache()
-            await refresh_tools_plot(self)
+            # Ensure the compute cache is warm so the terminal renderer can
+            # draw cursor markers and distortion overlays just like the image backend.
+            compute_cache_key = tools_logic.get_tools_plot_cache_key(self)
+            if (
+                self._latest_tools_compute_cache_key != compute_cache_key
+                or self._latest_tools_compute_result is None
+            ):
+                try:
+                    result = await self._run_tools_compute_job()
+                    if result.get("compute_cache_key") == compute_cache_key:
+                        self._latest_tools_compute_result = dict(result)
+                        self._latest_tools_compute_cache_key = compute_cache_key
+                except Exception:
+                    pass
+            tool_result = (
+                dict(self._latest_tools_compute_result.get("tool_result") or {})
+                if isinstance(self._latest_tools_compute_result, dict)
+                else None
+            )
+            await refresh_tools_plot(self, tool_result=tool_result)
             return
 
         cache_key = tools_logic.get_tools_plot_cache_key(self)
@@ -3441,23 +3514,25 @@ class VNAApp(App):
             return
         try:
             current_cache_key = self._current_tools_render_cache_key()
-            cached_result = self._latest_tools_render_result
-            if isinstance(cached_result, dict):
-                tool_result = cached_result.get("tool_result")
-                if (
-                    tool_result is not None
-                    and self._latest_tools_render_cache_key == current_cache_key
-                ):
+            # Prefer the dedicated compute cache; fall back to any tool_result
+            # embedded in the last render result if that's still current.
+            cached_compute = self._latest_tools_compute_result
+            if isinstance(cached_compute, dict) and self._latest_tools_compute_cache_key == current_cache_key:
+                render_tools_computation_result(self, cached_compute.get("tool_result"))
+                return
+            cached_render = self._latest_tools_render_result
+            if isinstance(cached_render, dict) and self._latest_tools_render_cache_key == current_cache_key:
+                tool_result = cached_render.get("tool_result")
+                if tool_result is not None:
                     render_tools_computation_result(self, tool_result)
                     return
-            self._invalidate_tools_render_result_cache()
-            self.set_progress("Tools plot: queued", 0)
-            result = await self._run_tools_render_job()
-            result_cache_key = result.get("render_cache_key")
+            self.set_progress("Tools: computing...", 0)
+            result = await self._run_tools_compute_job()
+            result_cache_key = result.get("compute_cache_key")
             if result_cache_key == current_cache_key:
-                self._latest_tools_render_result = dict(result)
-                self._latest_tools_render_cache_key = current_cache_key
-                render_tools_computation_result(self, result.get("tool_result"))
+                self._latest_tools_compute_result = dict(result)
+                self._latest_tools_compute_cache_key = current_cache_key
+            render_tools_computation_result(self, result.get("tool_result"))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
