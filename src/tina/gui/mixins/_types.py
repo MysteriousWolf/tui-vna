@@ -1,4 +1,10 @@
-"""Shared type helpers for GUI mixins and :mod:`tina.gui.app`."""
+"""Shared type helpers for GUI mixins and :mod:`tina.gui.app`.
+
+The sibling modules ``background_jobs``, ``import_export``, ``notes``,
+``results_plot``, ``setup_state``, ``tools_tab``, and ``worker_messages``
+each contain a single thin subclass of :class:`GUIAppTypingMixin` that exists
+solely to preserve legacy import paths.  All real type declarations live here.
+"""
 
 from __future__ import annotations
 

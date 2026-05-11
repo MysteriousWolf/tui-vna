@@ -31,15 +31,18 @@ class _TemplateRefreshApp(Protocol):
     ) -> bool: ...
 
 
-def _build_dropdown_item(choice: AutocompleteChoice) -> DropdownItem:
-    """Build a dropdown item whose emitted value stays canonical."""
+_KIND_SEP = "\x00"
+
+
+def _build_dropdown_item(choice: AutocompleteChoice, *, key: str | None = None) -> DropdownItem:
+    """Build a dropdown item whose emitted value is *key* (defaults to choice.value)."""
     prefix_parts: list[str] = []
     if choice.prefix:
         prefix_parts.append(choice.prefix)
     if choice.label != choice.value:
         prefix_parts.append(f"{choice.label} ")
     prefix = "".join(prefix_parts) or None
-    return DropdownItem(choice.value, prefix=prefix)
+    return DropdownItem(key if key is not None else choice.value, prefix=prefix)
 
 
 class HistoryReplaceAutoComplete(AutoComplete):
@@ -93,14 +96,17 @@ class TemplateAutoComplete(AutoComplete):
         seen: set[tuple[str, str]] = set()
         items: list[DropdownItem] = []
         for choice in self._get_choices():
-            key = (choice.kind, choice.value)
-            if key in seen:
+            dedup_key = (choice.kind, choice.value)
+            if dedup_key in seen:
                 continue
-            seen.add(key)
+            seen.add(dedup_key)
             haystack = f"{choice.label} {choice.value}".lower()
             if search and search not in haystack:
                 continue
-            items.append(_build_dropdown_item(choice))
+            # Encode kind into the emitted key so apply_completion can uniquely
+            # resolve a choice even when a "history" and a "tag" share the same value.
+            emitted_key = f"{choice.kind}{_KIND_SEP}{choice.value}"
+            items.append(_build_dropdown_item(choice, key=emitted_key))
         return items
 
     def get_search_string(self, target_state: TargetState) -> str:
@@ -114,17 +120,27 @@ class TemplateAutoComplete(AutoComplete):
     def apply_completion(self, value: str, state: TargetState) -> None:
         """Apply either a whole-template replacement or a tag insertion."""
         target = self.target
-        choice = next(
-            (choice for choice in self._get_choices() if choice.value == value), None
-        )
+        # Decode the kind-encoded key emitted by get_candidates to pick the
+        # correct choice when a history and a tag share the same value string.
+        if _KIND_SEP in value:
+            kind, actual_value = value.split(_KIND_SEP, 1)
+            choice = next(
+                (c for c in self._get_choices() if c.kind == kind and c.value == actual_value),
+                None,
+            )
+        else:
+            actual_value = value
+            choice = next(
+                (c for c in self._get_choices() if c.value == actual_value), None
+            )
         if choice is None:
-            super().apply_completion(value, state)
+            super().apply_completion(actual_value, state)
             target.cursor_position = len(target.value)
             return
 
         if choice.kind == "history":
-            target.value = value
-            target.cursor_position = len(value)
+            target.value = actual_value
+            target.cursor_position = len(actual_value)
         else:
             cursor = state.cursor_position
             before = state.text[:cursor]
@@ -139,8 +155,8 @@ class TemplateAutoComplete(AutoComplete):
             if after.startswith("}"):
                 token_end = 1
 
-            target.value = before[:token_start] + value + after[token_end:]
-            target.cursor_position = token_start + len(value)
+            target.value = before[:token_start] + actual_value + after[token_end:]
+            target.cursor_position = token_start + len(actual_value)
 
         new_target_state = self._get_target_state()
         self.rebuild_options(new_target_state)

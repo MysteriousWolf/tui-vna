@@ -68,6 +68,34 @@ def test_update_modal_falls_back_when_release_url_missing() -> None:
     open_browser.assert_called_once_with(DEFAULT_GITHUB_RELEASE_URL)
 
 
+@pytest.mark.parametrize(
+    "version,html_url,expected",
+    [
+        # Version present → tag URL regardless of html_url
+        ("1.2.3", "", f"{DEFAULT_GITHUB_RELEASES_URL}/tag/v1.2.3"),
+        # Version absent, html_url present → html_url used as fallback
+        ("", "https://github.com/MysteriousWolf/tui-vna/releases/tag/v0.9.0",
+         "https://github.com/MysteriousWolf/tui-vna/releases/tag/v0.9.0"),
+    ],
+)
+def test_update_modal_fallback_isolates_missing_field(
+    version: str, html_url: str, expected: str
+) -> None:
+    """open_github_release should use version tag URL or html_url individually."""
+    release = ReleaseInfo(
+        version=version,
+        is_prerelease=False,
+        changelog="Bug fixes.",
+        html_url=html_url,
+    )
+    screen = build_update_screen(release)
+
+    with patch("tina.gui.modals.update_notification.webbrowser.open") as open_browser:
+        screen.open_github_release()
+
+    open_browser.assert_called_once_with(expected)
+
+
 @pytest.mark.parametrize("version", ["1.2.3", "v1.2.3"])
 def test_update_modal_title_uses_single_leading_v(version: str) -> None:
     """Update titles should normalize plain and prefixed versions to one leading v."""

@@ -140,12 +140,17 @@ class PlotBackendProvider(Provider):
         app._update_plot_type_options()
         app.settings_manager.save(app.settings)
         if app.last_measurement is not None:
-            self.app.call_after_refresh(
-                app._update_results,
-                app.last_measurement["freqs"],
-                app.last_measurement["sparams"],
-                app.last_measurement["output_path"],
-            )
+            # Defer reads from last_measurement to execution time so the callback
+            # always sees the current arrays rather than those captured at schedule time.
+            def _refresh_results() -> None:
+                if app.last_measurement is not None:
+                    app._update_results(
+                        app.last_measurement["freqs"],
+                        app.last_measurement["sparams"],
+                        app.last_measurement["output_path"],
+                    )
+
+            self.app.call_after_refresh(_refresh_results)
             self.app.call_after_refresh(app._refresh_tools_plot)
 
 

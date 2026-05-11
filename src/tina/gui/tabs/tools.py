@@ -137,11 +137,20 @@ def compose_tools_tab(app: VNAApp) -> ComposeResult:
 
                 # Results frame
                 with Container(id="tools_results_container", classes="panel") as panel:
-                    # Add a copy affordance next to the help button similar to Log tab
-                    panel.border_title = (
-                        "Tool Results [@click='app.show_tool_help'][#121212 on $primary] ? [/]"
-                        " [@click='app.copy_tool_results'][#121212 on $primary] ⎘ [/]"
-                    )
+                    panel.border_title = "Tool Results"
+                    with Horizontal(classes="panel-toolbar"):
+                        yield Button(
+                            "?",
+                            id="btn_tool_help",
+                            variant="primary",
+                            classes="panel-toolbar-btn",
+                        )
+                        yield Button(
+                            "⎘",
+                            id="btn_tools_copy_results",
+                            variant="primary",
+                            classes="panel-toolbar-btn",
+                        )
                     yield Static(
                         "[dim]No tool active.[/dim]",
                         id="tools_results_display",

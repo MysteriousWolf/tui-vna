@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import (
@@ -16,9 +18,30 @@ from textual.widgets import (
     TextArea,
 )
 
+if TYPE_CHECKING:
+    from tina.main import VNAApp
 
-def compose_measurement_tab(app) -> ComposeResult:
-    """Compose the Measurement tab UI."""
+
+def compose_measurement_tab(app: "VNAApp") -> ComposeResult:
+    """Compose the Measurement tab UI.
+
+    Parameters:
+        app: The running VNAApp instance.  The function reads
+            ``app.settings`` (plot_type, plot_s11/s21/s12/s22, output_folder,
+            filename_prefix, export_s11/s21/s12/s22, etc.) to seed initial
+            widget values, and yields widgets that call back into ``app``
+            methods such as ``app.action_show_output_help`` and
+            ``app.action_open_output_folder``.
+
+    Returns:
+        A Textual ``ComposeResult`` that yields the full Measurement tab
+        widget tree.  Key widget IDs exposed for runtime use:
+        - ``#output_file_label`` – current output file path label
+        - ``#btn_open_output`` – opens the output folder in the file manager
+        - ``#select_plot_type``, ``#select_export_s_params`` – plot/export selectors
+        - ``#notes_area`` – freeform notes TextArea
+        - ``#plot_container`` – container for the live plot widget
+    """
     with Container(id="output_file_container", classes="panel") as panel:
         panel.border_title = "Output"
         with Horizontal(classes="plot-controls"):

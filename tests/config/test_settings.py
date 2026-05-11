@@ -439,6 +439,64 @@ class TestSettingsManager:
         assert settings_manager.settings.folder_template_history[0] == selected_value
         assert current_value in settings_manager.settings.folder_template_history
 
+    def test_touch_setup_restore_history_deduplicates_and_trims(self, settings_manager):
+        """touch_setup_restore_history should deduplicate, move to front, and trim to max."""
+        settings_manager.settings.setup_restore_history = ["/a", "/b", "/c"]
+        settings_manager.touch_setup_restore_history("/b")
+        assert settings_manager.settings.setup_restore_history == ["/b", "/a", "/c"]
+
+    def test_touch_setup_restore_history_ignores_empty(self, settings_manager):
+        """touch_setup_restore_history should ignore blank values."""
+        settings_manager.settings.setup_restore_history = ["/a"]
+        settings_manager.touch_setup_restore_history("   ")
+        assert settings_manager.settings.setup_restore_history == ["/a"]
+
+    def test_touch_setup_restore_history_save_load(self, settings_manager):
+        """setup_restore_history should survive a save/load round-trip."""
+        settings_manager.touch_setup_restore_history("/runs/sweep1")
+        settings_manager.save()
+        loaded = settings_manager.load()
+        assert "/runs/sweep1" in loaded.setup_restore_history
+
+    def test_add_recent_exported_measurement_deduplicates(self, settings_manager):
+        """add_recent_exported_measurement should move duplicates to front."""
+        settings_manager.settings.recent_exported_measurements = ["/a.s2p", "/b.s2p"]
+        settings_manager.add_recent_exported_measurement("/b.s2p")
+        assert settings_manager.settings.recent_exported_measurements == ["/b.s2p", "/a.s2p"]
+
+    def test_add_recent_exported_measurement_ignores_empty(self, settings_manager):
+        """add_recent_exported_measurement should ignore blank paths."""
+        settings_manager.settings.recent_exported_measurements = ["/a.s2p"]
+        settings_manager.add_recent_exported_measurement("")
+        settings_manager.add_recent_exported_measurement("  ")
+        assert settings_manager.settings.recent_exported_measurements == ["/a.s2p"]
+
+    def test_add_recent_exported_measurement_save_load(self, settings_manager):
+        """recent_exported_measurements should survive a save/load round-trip."""
+        settings_manager.add_recent_exported_measurement("/out/run1.s2p")
+        settings_manager.save()
+        loaded = settings_manager.load()
+        assert "/out/run1.s2p" in loaded.recent_exported_measurements
+
+    def test_add_recent_imported_measurement_deduplicates(self, settings_manager):
+        """add_recent_imported_measurement should move duplicates to front."""
+        settings_manager.settings.recent_imported_measurements = ["/x.s2p", "/y.s2p"]
+        settings_manager.add_recent_imported_measurement("/y.s2p")
+        assert settings_manager.settings.recent_imported_measurements == ["/y.s2p", "/x.s2p"]
+
+    def test_add_recent_imported_measurement_ignores_empty(self, settings_manager):
+        """add_recent_imported_measurement should ignore blank paths."""
+        settings_manager.settings.recent_imported_measurements = ["/x.s2p"]
+        settings_manager.add_recent_imported_measurement("")
+        assert settings_manager.settings.recent_imported_measurements == ["/x.s2p"]
+
+    def test_add_recent_imported_measurement_save_load(self, settings_manager):
+        """recent_imported_measurements should survive a save/load round-trip."""
+        settings_manager.add_recent_imported_measurement("/imports/run1.s2p")
+        settings_manager.save()
+        loaded = settings_manager.load()
+        assert "/imports/run1.s2p" in loaded.recent_imported_measurements
+
     def test_plot_settings_persistence(self, settings_manager):
         """Test plot settings are persisted."""
         settings_manager.settings.plot_type = "phase"

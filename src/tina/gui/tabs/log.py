@@ -8,7 +8,18 @@ from textual.widgets import Checkbox, RichLog, Static
 
 
 def compose_log_tab() -> ComposeResult:
-    """Compose the Log tab UI."""
+    """Compose the Log tab UI.
+
+    Yields a filter panel followed by the main log display.
+
+    Key widget IDs:
+    - ``#check_log_tx``, ``#check_log_rx``, ``#check_log_info``,
+      ``#check_log_progress``, ``#check_log_success``, ``#check_log_error`` –
+      primary filter checkboxes (``Checkbox``); toggling any triggers log re-filter.
+    - ``#check_log_debug``, ``#check_log_poll`` – secondary filter checkboxes.
+    - ``#log_content`` – the ``RichLog`` widget that holds rendered log lines;
+      callers write to it via ``log_logic`` helpers and read from it when copying.
+    """
     with Container(classes="panel") as panel:
         panel.border_title = "Filter"
         with Horizontal(classes="filter-row"):

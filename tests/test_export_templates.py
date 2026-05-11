@@ -291,39 +291,6 @@ class TestRenderTemplate:
         assert rendered.used_tags == ()
         assert rendered.used_time_formats == ()
 
-    def test_manual_template_not_in_history_should_clear_history_select(self):
-        """Templates outside history should require clearing the history selector."""
-        history_options = [("measurement_{date}_{time}", "measurement_{date}_{time}")]
-        current_filename = "both_frontends_tuned"
-
-        assert (
-            setup_logic.should_clear_history_selector(current_filename, history_options)
-            is True
-        )
-
-    def test_manual_folder_template_not_in_history_should_clear_history_select(self):
-        """Folder templates outside history should also require clearing the selector."""
-        history_options = [("measurement", "measurement")]
-        current_folder = "exports/custom_run"
-
-        assert (
-            setup_logic.should_clear_history_selector(current_folder, history_options)
-            is True
-        )
-
-    def test_known_history_template_should_not_clear_history_select(self):
-        """Templates already in history should remain selected rather than cleared."""
-        history_options = [
-            ("measurement_{date}_{time}", "measurement_{date}_{time}"),
-            ("both_frontends_tuned", "both_frontends_tuned"),
-        ]
-        current_filename = "both_frontends_tuned"
-
-        assert (
-            setup_logic.should_clear_history_selector(current_filename, history_options)
-            is False
-        )
-
 
 @pytest.mark.unit
 class TestSetupTemplateBindings:
@@ -484,3 +451,36 @@ class TestSetupTemplateBindings:
         assert "[bold $accent]601[/]" in preview.updated_text
         assert "[bold $accent]16[/]" in preview.updated_text
         assert preview.classes["preview-border-round"] is True
+
+    def test_manual_template_not_in_history_should_clear_history_select(self):
+        """Templates outside history should require clearing the history selector."""
+        history_options = [("measurement_{date}_{time}", "measurement_{date}_{time}")]
+        current_filename = "both_frontends_tuned"
+
+        assert (
+            setup_logic.should_clear_history_selector(current_filename, history_options)
+            is True
+        )
+
+    def test_manual_folder_template_not_in_history_should_clear_history_select(self):
+        """Folder templates outside history should also require clearing the selector."""
+        history_options = [("measurement", "measurement")]
+        current_folder = "exports/custom_run"
+
+        assert (
+            setup_logic.should_clear_history_selector(current_folder, history_options)
+            is True
+        )
+
+    def test_known_history_template_should_not_clear_history_select(self):
+        """Templates already in history should remain selected rather than cleared."""
+        history_options = [
+            ("measurement_{date}_{time}", "measurement_{date}_{time}"),
+            ("both_frontends_tuned", "both_frontends_tuned"),
+        ]
+        current_filename = "both_frontends_tuned"
+
+        assert (
+            setup_logic.should_clear_history_selector(current_filename, history_options)
+            is False
+        )

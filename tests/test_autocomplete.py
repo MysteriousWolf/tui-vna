@@ -199,8 +199,8 @@ class TestTemplateAutoComplete:
         )
 
         assert [item.value for item in candidates] == [
-            "measurement_{date}_{time}",
-            "{date}",
+            "history\x00measurement_{date}_{time}",
+            "tag\x00{date}",
         ]
 
     @pytest.mark.unit
@@ -315,7 +315,10 @@ class TestTemplateAutoComplete:
             cast(TargetState, _FakeState("{da", 3))
         )
 
-        assert [item.value for item in candidates] == ["{date}", "measurement_{date}"]
+        assert [item.value for item in candidates] == [
+            "tag\x00{date}",
+            "history\x00measurement_{date}",
+        ]
 
     @pytest.mark.unit
     def test_tag_completion_uses_canonical_value_when_label_differs(self):
