@@ -2,8 +2,8 @@
 
 import pytest
 
-from tina.gui.mixins.background_jobs import BackgroundJobsMixin
 from tina.gui.mixins._types import GUIAppTypingMixin
+from tina.gui.mixins.background_jobs import BackgroundJobsMixin
 
 
 class TestBackgroundJobsMixin:

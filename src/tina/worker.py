@@ -1060,8 +1060,8 @@ class MeasurementWorker:
                         str(data["output_folder"]),
                         str(raw_filename) if raw_filename is not None else None,
                         # output_name is always str at call sites; absent/None both
-                    # mean "use default prefix", matching the exporter's default.
-                    str(data.get("output_name") or "measurement"),
+                        # mean "use default prefix", matching the exporter's default.
+                        str(data.get("output_name") or "measurement"),
                         notes_markdown=str(data.get("notes_markdown", "")),
                         metadata=data.get("metadata"),
                     )
