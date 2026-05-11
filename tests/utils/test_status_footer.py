@@ -36,3 +36,9 @@ class TestScpiMnemonic:
     def test_single_node_with_channel(self):
         """Single-node commands with channel prefixes should strip the prefix."""
         assert _scpi_mnemonic("SENS1:BWID?") == "BWID"
+
+    def test_leading_colon_stripped(self):
+        """Optional leading ':' should be ignored before channel-prefix stripping."""
+        assert _scpi_mnemonic(":SENS1:CORR:STAT?") == "CORR:STAT"
+        assert _scpi_mnemonic(":SENS1:BWID?") == "BWID"
+        assert _scpi_mnemonic(":CALC1:SMO:APER?") == "SMO:APER"

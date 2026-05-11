@@ -8,6 +8,8 @@ from ..config.migration import migrate_legacy_config
 from ..config.settings import AppSettings, SettingsManager
 from ..drivers import HPE5071B as VNA
 from ..drivers import VNAConfig
+from ..export import DEFAULT_TEMPLATE_TAGS
+from ..export.templates import build_export_template_context, render_template
 from ..utils import TouchstoneExporter
 from .parser import apply_cli_settings
 from .plotting import export_plots_cli
@@ -43,6 +45,21 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
 
         # Apply CLI arguments to settings
         settings = apply_cli_settings(args, settings)
+
+        # Expand {date}/{time} templates in output paths so CLI behaviour
+        # matches the GUI (e.g. --output-folder ./data/{date} is rendered).
+        export_context = build_export_template_context()
+        allowed = set(DEFAULT_TEMPLATE_TAGS)
+        if settings.output_folder:
+            rendered_folder = render_template(
+                settings.output_folder, context=export_context, allowed_tags=allowed
+            )
+            settings.output_folder = rendered_folder.rendered.strip() or settings.output_folder
+        if settings.filename_prefix:
+            rendered_prefix = render_template(
+                settings.filename_prefix, context=export_context, allowed_tags=allowed
+            )
+            settings.filename_prefix = rendered_prefix.rendered.strip() or settings.filename_prefix
 
         # Validate required settings
         if not settings.last_host:

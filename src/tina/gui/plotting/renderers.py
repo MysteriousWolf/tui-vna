@@ -64,6 +64,17 @@ def create_smith_chart(
             fig.patch.set_facecolor(colors["bg"])
         ax.set_facecolor("none" if transparent else colors["bg"])
         ax.set_aspect("equal")
+
+        if len(freqs) == 0:
+            raise ValueError("Empty sweep data")
+        for param in plot_params:
+            mag_db, phase_deg = sparams[param]
+            if len(mag_db) != len(freqs) or len(phase_deg) != len(freqs):
+                raise ValueError(
+                    f"Mismatched sweep array lengths for {param}: "
+                    f"freqs={len(freqs)}, mag_db={len(mag_db)}, phase_deg={len(phase_deg)}"
+                )
+
         freq_start_mhz = freqs[0] / 1e6
         freq_end_mhz = freqs[-1] / 1e6
         label_box_style = {

@@ -399,7 +399,14 @@ class TestSettingsManager:
             "measurement_{date}_{time}",
             "run_{host}",
         ]
-        assert selected_value in settings_manager.settings.filename_template_history
+
+        settings_manager.touch_template_history(
+            "filename_template_history",
+            selected_value,
+        )
+
+        assert settings_manager.settings.filename_template_history[0] == selected_value
+        assert current_value in settings_manager.settings.filename_template_history
 
     def test_touch_folder_template_history_preserves_current_before_selection(
         self, settings_manager
@@ -423,7 +430,14 @@ class TestSettingsManager:
             "measurement",
             "exports/{vend}_{model}",
         ]
-        assert selected_value in settings_manager.settings.folder_template_history
+
+        settings_manager.touch_template_history(
+            "folder_template_history",
+            selected_value,
+        )
+
+        assert settings_manager.settings.folder_template_history[0] == selected_value
+        assert current_value in settings_manager.settings.folder_template_history
 
     def test_plot_settings_persistence(self, settings_manager):
         """Test plot settings are persisted."""

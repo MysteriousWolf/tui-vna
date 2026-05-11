@@ -20,7 +20,7 @@ class _StatusFooterWrongType(StatusFooter):
     """Status footer test double that always raises WrongType."""
 
     def query_one(self, *args, **kwargs):
-        raise WrongType("#sb_cal", object, object)
+        raise WrongType("#sb_cal")
 
 
 class _StatusFooterRuntimeError(StatusFooter):
@@ -41,7 +41,7 @@ class _FrequencyEntryWrongType(FrequencyEntry):
     """FrequencyEntry test double that always raises WrongType."""
 
     def query_one(self, *args, **kwargs):
-        raise WrongType("#btn_freq_minima", object, object)
+        raise WrongType("#btn_freq_minima")
 
 
 class _FrequencyEntryRuntimeError(FrequencyEntry):

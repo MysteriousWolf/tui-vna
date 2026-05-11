@@ -93,9 +93,11 @@ def test_loader_skips_progress_bar_for_help_flag():
 
     with patch.object(sys, "argv", ["tina", "--help"]):
         with patch("tina.main.main", fake_main):
-            loader.main()
+            with patch("rich.progress.Progress") as mock_progress:
+                loader.main()
 
     fake_main.assert_called_once_with()
+    mock_progress.assert_not_called()
 
 
 @pytest.mark.unit
@@ -106,9 +108,11 @@ def test_loader_skips_progress_bar_for_now_flag():
 
     with patch.object(sys, "argv", ["tina", "--now"]):
         with patch("tina.main.main", fake_main):
-            loader.main()
+            with patch("rich.progress.Progress") as mock_progress:
+                loader.main()
 
     fake_main.assert_called_once_with()
+    mock_progress.assert_not_called()
 
 
 @pytest.mark.unit

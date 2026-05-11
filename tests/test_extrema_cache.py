@@ -85,6 +85,7 @@ class TestExtremaCache:
     def test_repeated_request_with_same_params_hits_cache(
         self, monkeypatch: pytest.MonkeyPatch, extrema_fixture
     ) -> None:
+        """Cache hit when called twice with identical data object and parameters."""
         freqs, data = extrema_fixture
         app = _FakeApp(freqs, data)
         detector_calls: list[tuple[int, bool, bool, int, float]] = []
@@ -133,6 +134,7 @@ class TestExtremaCache:
     def test_different_data_object_invalidates_cache(
         self, monkeypatch: pytest.MonkeyPatch, extrema_fixture
     ) -> None:
+        """Cache is invalidated and detector re-runs when the data object identity changes."""
         freqs, data = extrema_fixture
         app = _FakeApp(freqs, data)
         detector_calls: list[int] = []
@@ -178,6 +180,7 @@ class TestExtremaCache:
     def test_different_smoothing_mode_creates_cache_miss(
         self, monkeypatch: pytest.MonkeyPatch, extrema_fixture
     ) -> None:
+        """Cache miss occurs when the smoothing mode differs from the cached call."""
         freqs, data = extrema_fixture
         app = _FakeApp(freqs, data)
         detector_calls: list[tuple[bool, bool]] = []

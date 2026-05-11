@@ -255,34 +255,32 @@ class HPE5071B(VNABase):
 
         params = {}
 
-        _visa_exc = _VISA_EXC
-
         try:
             params["start_freq_hz"] = float(self._query(CMD_GET_FREQ_START).strip())
-        except _visa_exc:
+        except _VISA_EXC:
             params["start_freq_hz"] = None
 
         try:
             params["stop_freq_hz"] = float(self._query(CMD_GET_FREQ_STOP).strip())
-        except _visa_exc:
+        except _VISA_EXC:
             params["stop_freq_hz"] = None
 
         try:
             params["sweep_points"] = int(self._query(CMD_GET_SWEEP_POINTS).strip())
-        except _visa_exc:
+        except _VISA_EXC:
             params["sweep_points"] = None
 
         try:
             avg_state = self._query(CMD_GET_AVERAGING_STATE).strip()
             params["averaging_enabled"] = avg_state in ("1", "ON")
-        except _visa_exc:
+        except _VISA_EXC:
             params["averaging_enabled"] = None
 
         try:
             params["averaging_count"] = int(
                 self._query(CMD_GET_AVERAGING_COUNT).strip()
             )
-        except _visa_exc:
+        except _VISA_EXC:
             params["averaging_count"] = None
 
         return params

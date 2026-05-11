@@ -99,7 +99,7 @@ class TestSampleData:
             )
 
             measured_slope = self._measured_rolloff_db_per_decade(freqs, magnitude_db)
-            assert measured_slope == pytest.approx(requested_slope, abs=0.8)
+            assert measured_slope == pytest.approx(requested_slope, abs=0.3)
 
     @pytest.mark.unit
     def test_logarithmic_sweep_generates_geometrically_spaced_frequencies(self):

@@ -144,8 +144,15 @@ def embed_png_metadata(
         )
 
         image.load()
+        dpi = image.info.get("dpi")
+        icc_profile = image.info.get("icc_profile")
         with tempfile.SpooledTemporaryFile() as buffer:
-            image.save(buffer, format="PNG", pnginfo=png_info)
+            save_kwargs: dict = {"format": "PNG", "pnginfo": png_info}
+            if dpi is not None:
+                save_kwargs["dpi"] = dpi
+            if icc_profile is not None:
+                save_kwargs["icc_profile"] = icc_profile
+            image.save(buffer, **save_kwargs)
             buffer.seek(0)
             _atomic_write_bytes(path, buffer.read())
 
@@ -162,8 +169,12 @@ def _escape_svg_comment(text: str) -> str:
 
 def _unescape_svg_comment(text: str) -> str:
     """Reverse _escape_svg_comment, also handling the legacy '--&gt;' encoding."""
+    original = text
     text = text.replace("‐‐", "--")
-    text = text.replace("--&gt;", "-->")  # backward compat with old exports
+    # Only apply the legacy entity replacement on old-format content that never
+    # used unicode-hyphen escaping, to avoid corrupting new-format round-trips.
+    if "‐‐" not in original:
+        text = text.replace("--&gt;", "-->")
     return text
 
 

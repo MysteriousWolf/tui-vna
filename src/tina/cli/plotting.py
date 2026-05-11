@@ -36,7 +36,7 @@ def export_plots_cli(
     dpi = 150 * render_scale
     plot_colors = get_plot_colors(None)
 
-    def _export_one(plot_type: str, file_path: str) -> None:
+    def _export_one(plot_type: str, file_path: str) -> bool:
         try:
             create_matplotlib_plot(
                 frequencies,
@@ -54,10 +54,14 @@ def export_plots_cli(
                 y_max=None,
             )
             print(f"{plot_type.capitalize()} plot saved: {file_path}")
+            return True
         except Exception as exc:
             print(f"Warning: failed to save {plot_type} plot: {exc}", file=sys.stderr)
+            return False
 
-    _export_one(
-        "magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png")
-    )
-    _export_one("phase", os.path.join(output_path, f"{base_filename}_phase.png"))
+    results = [
+        _export_one("magnitude", os.path.join(output_path, f"{base_filename}_magnitude.png")),
+        _export_one("phase", os.path.join(output_path, f"{base_filename}_phase.png")),
+    ]
+    if not all(results):
+        raise RuntimeError("One or more plot exports failed")

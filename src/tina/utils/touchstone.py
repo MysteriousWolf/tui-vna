@@ -429,7 +429,7 @@ class TouchstoneExporter:
         metadata = cls.parse_metadata_from_text(text)
 
         for raw_line in text.splitlines():
-            line = raw_line.strip()
+            line = raw_line.split("!", 1)[0].strip()
 
             if not line:
                 continue
