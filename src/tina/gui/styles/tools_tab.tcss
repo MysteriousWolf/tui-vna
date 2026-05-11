@@ -70,6 +70,8 @@
 #tools_results_container {
     width: 2fr;
     align: center top;
+    link-background-hover: $primary-lighten-2;
+    link-style-hover: bold;
 }
 
 #tools_middle_row > Container {

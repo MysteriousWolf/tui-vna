@@ -1,6 +1,8 @@
 #log_content {
     height: 1fr;
     margin: 1 0 0 0;
+    link-background-hover: $primary-lighten-2;
+    link-style-hover: bold;
 }
 
 .filter-row {
