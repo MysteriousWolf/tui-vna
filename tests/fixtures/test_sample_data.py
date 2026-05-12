@@ -119,6 +119,36 @@ class TestSampleData:
         np.testing.assert_allclose(ratios, ratios[0], rtol=1e-10)
 
     @pytest.mark.unit
+    def test_generate_sample_sparameters_rejects_unsupported_kwargs(self, monkeypatch):
+        """Unsupported generator kwargs should raise ValueError."""
+        freqs = sample_data.generate_sample_frequencies(points=11)
+
+        def _stub(frequencies: np.ndarray, **kwargs: object):
+            return np.zeros(len(frequencies)), np.zeros(len(frequencies))
+
+        monkeypatch.setattr(sample_data, "generate_realistic_s11", _stub)
+        monkeypatch.setattr(sample_data, "generate_realistic_s21", _stub)
+        monkeypatch.setattr(sample_data, "generate_realistic_s12", _stub)
+        monkeypatch.setattr(sample_data, "generate_realistic_s22", _stub)
+
+        with pytest.raises(
+            ValueError, match="unsupported generator kwargs|Unknown sample generator"
+        ):
+            sample_data.generate_sample_sparameters(freqs, unexpected_kw=99)
+
+    @pytest.mark.unit
+    def test_generate_sample_frequencies_rejects_non_positive_log_bounds(self):
+        """Logarithmic sweep with non-positive bounds should raise ValueError."""
+        with pytest.raises(ValueError):
+            sample_data.generate_sample_frequencies(
+                start_hz=0, stop_hz=1e9, sweep_type="logarithmic"
+            )
+        with pytest.raises(ValueError):
+            sample_data.generate_sample_frequencies(
+                start_hz=1e6, stop_hz=0, sweep_type="logarithmic"
+            )
+
+    @pytest.mark.unit
     def test_termination_helpers_accept_shared_frequency_axis(self):
         """Termination fixtures should size outputs from a provided frequency axis."""
         freqs = sample_data.generate_sample_frequencies(points=17)

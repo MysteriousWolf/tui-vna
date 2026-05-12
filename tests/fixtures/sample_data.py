@@ -204,7 +204,7 @@ def generate_realistic_s21(
     )
 
     s = 1j * 2 * np.pi * frequencies
-    s0 = 1j * 2 * np.pi * resolved_cutoff_freq
+    s0 = 2 * np.pi * resolved_cutoff_freq
     h = (1 / (1 + s / s0)) * rolloff_shape
 
     magnitude_db = 20 * np.log10(np.abs(h)) + insertion_loss_db
