@@ -251,7 +251,7 @@ async def rebuild_tools_params(app) -> None:
                     classes="distortion-comp-check",
                 )
             )
-    else:
+    elif active in (None, "none"):
         await container.mount(
             Static(
                 "[dim]Activate a tool below to see options.[/dim]",
