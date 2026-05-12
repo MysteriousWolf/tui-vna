@@ -306,6 +306,16 @@ def generate_realistic_s22(
         return_loss_db=return_loss_db,
         seed=seed,
     )
+
+    rng = _create_rng(
+        "S22",
+        frequencies,
+        seed,
+        resolved_resonance_freq,
+        q_factor,
+        return_loss_db,
+    )
+    mag += rng.normal(0, 0.15, len(frequencies))
     phase -= 10
     return mag, phase
 

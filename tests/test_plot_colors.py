@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tina.config.constants import THEME_WARNING
 from tina.gui.plotting.colors import (
     DISTORTION_OVERLAY_COLORS,
     SPARAM_FALLBACK_COLORS,
@@ -145,3 +146,17 @@ class TestGetPlotColors:
         result = get_plot_colors(None)
         for param, hex_val in result["traces"].items():
             assert result["traces_rgb"][param] == hex_to_rgb(hex_val)
+
+    @pytest.mark.unit
+    def test_cursor1_is_alias_for_warning(self):
+        """cursor1 color must equal the warning color (they share the same resolved value)."""
+        result = get_plot_colors(None)
+        assert result["cursor1"] == result["warning"]
+        assert result["cursor1_rgb"] == result["warning_rgb"]
+
+    @pytest.mark.unit
+    def test_invalid_warning_in_theme_vars_falls_back_to_theme_warning(self):
+        """An invalid warning hex in theme_vars should fall back to THEME_WARNING for cursor1."""
+        theme = {"warning": "not-a-color"}
+        result = get_plot_colors(theme)
+        assert result["cursor1_rgb"] == hex_to_rgb(THEME_WARNING)

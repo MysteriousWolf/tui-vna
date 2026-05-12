@@ -445,6 +445,14 @@ class TestSettingsManager:
         settings_manager.touch_setup_restore_history("/b")
         assert settings_manager.settings.setup_restore_history == ["/b", "/a", "/c"]
 
+        max_items = settings_manager.MAX_COMMAND_HISTORY
+        overflow = [f"/path{i}" for i in range(max_items + 2)]
+        settings_manager.settings.setup_restore_history = overflow[:]
+        settings_manager.touch_setup_restore_history("/new")
+        result = settings_manager.settings.setup_restore_history
+        assert len(result) == max_items
+        assert result[0] == "/new"
+
     def test_touch_setup_restore_history_ignores_empty(self, settings_manager):
         """touch_setup_restore_history should ignore blank values."""
         settings_manager.settings.setup_restore_history = ["/a"]

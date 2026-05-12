@@ -6,6 +6,7 @@ from unittest.mock import patch
 from tina.config.migration import (
     _NEW_APP_NAME,
     _OLD_APP_NAME,
+    _PARTIAL_SENTINEL,
     _try_remove,
     migrate_legacy_config,
 )
@@ -131,8 +132,6 @@ class TestMigrateLegacyConfig:
 
     def test_partial_migration_reports_preserved_legacy_directory(self, tmp_path):
         """Corrupt update state should yield a partial migration message and keep the old dir."""
-        from tina.config.migration import _PARTIAL_SENTINEL
-
         old_dir = tmp_path / _OLD_APP_NAME
         old_dir.mkdir()
         (old_dir / "settings.json").write_text('{"last_host": "192.168.1.50"}')
@@ -162,8 +161,6 @@ class TestMigrateLegacyConfig:
         self, tmp_path
     ):
         """Sentinel written after partial migration must survive the next startup cycle."""
-        from tina.config.migration import _PARTIAL_SENTINEL
-
         old_dir = tmp_path / _OLD_APP_NAME
         old_dir.mkdir()
 

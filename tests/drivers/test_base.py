@@ -7,7 +7,7 @@ import inspect
 
 import pytest
 
-from src.tina.drivers.base import (
+from tina.drivers.base import (
     IDNInfo,
     VNABase,
     VNAConfig,
@@ -379,7 +379,7 @@ class TestDriverDiscovery:
     @pytest.mark.unit
     def test_detect_vna_driver_hp_e5071b(self):
         """Test detecting HP E5071B from IDN string directly."""
-        from src.tina.drivers.hp_e5071b import HPE5071B
+        from tina.drivers.hp_e5071b import HPE5071B
 
         idn = "HEWLETT-PACKARD,E5071B,MY12345678,A.01.02"
 

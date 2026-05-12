@@ -54,3 +54,26 @@ class TestCreateSmithChart:
 
         with pytest.raises(ValueError, match="[Mm]ismatched"):
             create_smith_chart(freqs, sparams, ["S11"], tmp_path / "out.png")
+
+    @pytest.mark.unit
+    def test_successful_render_multiple_traces_and_colors(self, tmp_path):
+        """create_smith_chart renders multi-trace non-transparent PNG."""
+        n = 51
+        freqs = np.linspace(10e6, 1000e6, n)
+        sparams = {
+            "S11": (np.full(n, -20.0), np.linspace(-90.0, 90.0, n)),
+            "S21": (np.full(n, -3.0), np.linspace(-45.0, 45.0, n)),
+        }
+        output = tmp_path / "smith_multi.png"
+
+        create_smith_chart(
+            freqs,
+            sparams,
+            ["S11", "S21"],
+            output,
+            dpi=72,
+            transparent=False,
+        )
+
+        assert output.exists()
+        assert output.stat().st_size > 0

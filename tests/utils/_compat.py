@@ -9,5 +9,5 @@ def resolve_main_compat_attr(name: str, default: object) -> object:
         import tina.main as main_module
 
         return getattr(main_module, name, default)
-    except (ImportError, AttributeError):
+    except ImportError:
         return default

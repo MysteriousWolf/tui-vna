@@ -445,10 +445,10 @@ class TestWorkerProgressUpdates:
             ImportRequest(file_path=str(export_path), restore_measurement=True),
         )
 
-        completed = consume_worker_messages_until(
-            worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
-        )
         try:
+            completed = consume_worker_messages_until(
+                worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
+            )
             assert completed is not None
             assert completed.type == MessageType.IMPORT_COMPLETE
             result = completed.data
@@ -487,10 +487,10 @@ class TestWorkerProgressUpdates:
             ImportRequest(file_path=str(export_path), restore_measurement=False),
         )
 
-        completed = consume_worker_messages_until(
-            worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
-        )
         try:
+            completed = consume_worker_messages_until(
+                worker, MessageType.IMPORT_COMPLETE, timeout=1.0, max_messages=12
+            )
             assert completed is not None
             assert completed.type == MessageType.IMPORT_COMPLETE
             result = completed.data
@@ -893,29 +893,27 @@ class TestWorkerLogging:
 
         worker = MeasurementWorker()
         worker.start()
-
         worker.send_command(MessageType.CONNECT, vna_config)
 
-        # Collect messages - look for LOG type
-        log_received = False
+        try:
+            log_received = False
 
-        for _ in range(15):
-            try:
-                msg = worker.get_response(timeout=0.5)
+            for _ in range(15):
+                try:
+                    msg = worker.get_response(timeout=0.5)
 
-                if msg.type == MessageType.LOG:
-                    log_received = True
-                    assert isinstance(msg.data, LogMessage)
-                elif msg.type == MessageType.CONNECTED:
-                    break
+                    if msg.type == MessageType.LOG:
+                        log_received = True
+                        assert isinstance(msg.data, LogMessage)
+                    elif msg.type == MessageType.CONNECTED:
+                        break
 
-            except queue.Empty:
-                continue
+                except queue.Empty:
+                    continue
 
-        # Log messages are expected during connection
-        assert log_received is True
-
-        worker.stop()
+            assert log_received is True
+        finally:
+            worker.stop()
 
 
 class TestWorkerCancellation:

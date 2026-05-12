@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from src.tina.drivers.base import VNABase, VNAConfig
+from tina.drivers.base import VNABase, VNAConfig
 from tests.fixtures.mock_visa import MockVisaResource
 
 
