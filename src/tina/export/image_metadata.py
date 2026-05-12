@@ -1,0 +1,316 @@
+"""Helpers for embedding and reading TINA export metadata in PNG and SVG files."""
+
+from __future__ import annotations
+
+import re
+import tempfile
+from dataclasses import dataclass
+from io import StringIO
+from pathlib import Path
+from typing import Any
+
+from PIL import Image, PngImagePlugin
+from ruamel.yaml import YAML
+
+_IMAGE_METADATA_VERSION = 1
+_PNG_METADATA_KEY = "tina_metadata_yaml"
+_PNG_NOTES_KEY = "tina_notes_markdown"
+_SVG_NOTES_BEGIN = "TINA NOTES BEGIN"
+_SVG_NOTES_END = "TINA NOTES END"
+_SVG_METADATA_BEGIN = "TINA METADATA BEGIN"
+_SVG_METADATA_END = "TINA METADATA END"
+_SVG_OPEN_TAG_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE | re.DOTALL)
+
+_yaml = YAML()
+_yaml.default_flow_style = False
+_yaml.width = 4096
+
+
+@dataclass(slots=True, frozen=True)
+class ImageExportMetadata:
+    """Structured metadata payload for PNG and SVG exports."""
+
+    notes_markdown: str
+    machine_settings: dict[str, Any]
+
+
+def _dump_yaml(data: dict[str, Any]) -> str:
+    """Serialize a metadata dictionary to stable YAML text."""
+    buffer = StringIO()
+    _yaml.dump(data, buffer)
+    return buffer.getvalue().rstrip("\n")
+
+
+def _load_yaml(text: str) -> dict[str, Any]:
+    """Parse YAML text into a dictionary, returning an empty mapping on failure."""
+    try:
+        parsed = _yaml.load(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_machine_settings(
+    machine_settings: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Ensure image metadata always contains a schema version."""
+    payload: dict[str, Any] = {"metadata_version": _IMAGE_METADATA_VERSION}
+    if machine_settings:
+        payload.update(machine_settings)
+        payload["metadata_version"] = machine_settings.get(
+            "metadata_version", _IMAGE_METADATA_VERSION
+        )
+    return payload
+
+
+def build_image_export_metadata(
+    *,
+    notes_markdown: str = "",
+    machine_settings: dict[str, Any] | None = None,
+) -> ImageExportMetadata:
+    """Build a normalized metadata payload for image exports."""
+    return ImageExportMetadata(
+        notes_markdown=notes_markdown,
+        machine_settings=_normalize_machine_settings(machine_settings),
+    )
+
+
+def read_png_metadata(image_path: str | Path) -> ImageExportMetadata:
+    """Read TINA notes and YAML metadata from a PNG file."""
+    path = Path(image_path)
+    with Image.open(path) as image:
+        notes_markdown = str(image.info.get(_PNG_NOTES_KEY, ""))
+        yaml_text = str(image.info.get(_PNG_METADATA_KEY, ""))
+    parsed = _load_yaml(yaml_text)
+    return ImageExportMetadata(
+        notes_markdown=notes_markdown,
+        machine_settings=_normalize_machine_settings(parsed or {}),
+    )
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write bytes to a sibling temp file and atomically replace the target."""
+    fd, tmp_name = tempfile.mkstemp(
+        suffix=f"{path.suffix}.tmp",
+        prefix=f"{path.stem}_",
+        dir=path.parent,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with open(fd, "wb", closefd=True) as handle:
+            handle.write(data)
+        tmp_path.replace(path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write UTF-8 text to a sibling temp file and atomically replace the target."""
+    _atomic_write_bytes(path, text.encode("utf-8"))
+
+
+def embed_png_metadata(
+    image_path: str | Path,
+    *,
+    notes_markdown: str = "",
+    machine_settings: dict[str, Any] | None = None,
+) -> None:
+    """Embed TINA notes and YAML metadata into a PNG file."""
+    path = Path(image_path)
+    metadata = build_image_export_metadata(
+        notes_markdown=notes_markdown,
+        machine_settings=machine_settings,
+    )
+
+    with Image.open(path) as image:
+        png_info = PngImagePlugin.PngInfo()
+
+        for key, value in image.info.items():
+            if key in {_PNG_NOTES_KEY, _PNG_METADATA_KEY}:
+                continue
+            if isinstance(key, (str, bytes)) and isinstance(value, str):
+                png_info.add_text(key, value)
+
+        if metadata.notes_markdown.strip():
+            png_info.add_text(_PNG_NOTES_KEY, metadata.notes_markdown)
+
+        png_info.add_text(
+            _PNG_METADATA_KEY,
+            _dump_yaml(metadata.machine_settings),
+        )
+
+        image.load()
+        dpi = image.info.get("dpi")
+        icc_profile = image.info.get("icc_profile")
+        exif = image.info.get("exif")
+        with tempfile.SpooledTemporaryFile() as buffer:
+            save_kwargs: dict = {"format": "PNG", "pnginfo": png_info}
+            if dpi is not None:
+                save_kwargs["dpi"] = dpi
+            if icc_profile is not None:
+                save_kwargs["icc_profile"] = icc_profile
+            if exif is not None:
+                save_kwargs["exif"] = exif
+            image.save(buffer, **save_kwargs)
+            buffer.seek(0)
+            _atomic_write_bytes(path, buffer.read())
+
+
+def _escape_svg_comment(text: str) -> str:
+    """Escape '--' sequences that are forbidden anywhere in an XML comment.
+
+    XML comments must not contain '--' (two consecutive hyphens). We replace
+    each ASCII '--' with two Unicode HYPHEN characters (U+2010) which are
+    visually identical but do not trigger the XML comment rule.
+    """
+    return text.replace("--", "‐‐")
+
+
+def _unescape_svg_comment(text: str) -> str:
+    """Reverse _escape_svg_comment, also handling the legacy '--&gt;' encoding."""
+    original = text
+    text = text.replace("‐‐", "--")
+    # Only apply the legacy entity replacement on old-format content that never
+    # used unicode-hyphen escaping, to avoid corrupting new-format round-trips.
+    if "‐‐" not in original:
+        text = text.replace("--&gt;", "-->")
+    return text
+
+
+def _build_svg_comment_block(
+    *,
+    notes_markdown: str,
+    machine_settings: dict[str, Any],
+) -> str:
+    """Build the SVG comment block containing notes and YAML metadata."""
+    lines: list[str] = []
+
+    notes = notes_markdown.rstrip("\n")
+    if notes.strip():
+        lines.append(f"<!-- {_SVG_NOTES_BEGIN}")
+        lines.append("Raw markdown notes below. You may edit these manually.")
+        lines.extend(_escape_svg_comment(notes).splitlines())
+        lines.append(f"{_SVG_NOTES_END} -->")
+
+    lines.append(f"<!-- {_SVG_METADATA_BEGIN}")
+    lines.append("Machine-readable settings for TINA import/recovery.")
+    lines.append("You may edit the markdown notes block manually, but avoid changing")
+    lines.append("this machine settings block if reliable re-import is desired.")
+    lines.extend(_escape_svg_comment(_dump_yaml(machine_settings)).splitlines())
+    lines.append(f"{_SVG_METADATA_END} -->")
+
+    return "\n".join(lines) + "\n"
+
+
+def _extract_svg_comment_block(
+    svg_text: str,
+    *,
+    begin_marker: str,
+    end_marker: str,
+) -> str:
+    """Extract one SVG metadata comment block by marker name."""
+    pattern = re.compile(
+        rf"<!--\s*{re.escape(begin_marker)}(?:\r\n?|\n)(.*?)(?:\r\n?|\n){re.escape(end_marker)}\s*-->",
+        re.DOTALL,
+    )
+    match = pattern.search(svg_text)
+    return _unescape_svg_comment(match.group(1)) if match else ""
+
+
+def read_svg_metadata(image_path: str | Path) -> ImageExportMetadata:
+    """Read TINA notes and YAML metadata from an SVG file."""
+    path = Path(image_path)
+    svg_text = path.read_text(encoding="utf-8")
+
+    notes_block = _extract_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_NOTES_BEGIN,
+        end_marker=_SVG_NOTES_END,
+    )
+    metadata_block = _extract_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_METADATA_BEGIN,
+        end_marker=_SVG_METADATA_END,
+    )
+
+    notes_lines = notes_block.splitlines()
+    if (
+        notes_lines
+        and notes_lines[0] == "Raw markdown notes below. You may edit these manually."
+    ):
+        notes_lines = notes_lines[1:]
+
+    metadata_lines = [
+        line
+        for line in metadata_block.splitlines()
+        if line
+        not in {
+            "Machine-readable settings for TINA import/recovery.",
+            "You may edit the markdown notes block manually, but avoid changing",
+            "this machine settings block if reliable re-import is desired.",
+        }
+    ]
+
+    parsed = _load_yaml("\n".join(metadata_lines))
+    return ImageExportMetadata(
+        notes_markdown="\n".join(notes_lines).rstrip(),
+        machine_settings=_normalize_machine_settings(parsed or {}),
+    )
+
+
+def _strip_svg_comment_block(
+    svg_text: str,
+    *,
+    begin_marker: str,
+    end_marker: str,
+) -> str:
+    """Remove one TINA SVG metadata block if present."""
+    pattern = re.compile(
+        rf"(?:\r\n?|\n)?<!--\s*{re.escape(begin_marker)}(?:\r\n?|\n).*?(?:\r\n?|\n){re.escape(end_marker)}\s*-->(?:\r\n?|\n)?",
+        re.DOTALL,
+    )
+    return pattern.sub("\n", svg_text)
+
+
+def embed_svg_metadata(
+    image_path: str | Path,
+    *,
+    notes_markdown: str = "",
+    machine_settings: dict[str, Any] | None = None,
+) -> None:
+    """Embed TINA notes and YAML metadata into an SVG file."""
+    path = Path(image_path)
+    metadata = build_image_export_metadata(
+        notes_markdown=notes_markdown,
+        machine_settings=machine_settings,
+    )
+
+    svg_text = path.read_text(encoding="utf-8")
+    svg_open_match = _SVG_OPEN_TAG_RE.search(svg_text)
+    if svg_open_match is None:
+        raise ValueError("SVG file does not contain an <svg> root element")
+
+    svg_text = _strip_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_NOTES_BEGIN,
+        end_marker=_SVG_NOTES_END,
+    )
+    svg_text = _strip_svg_comment_block(
+        svg_text,
+        begin_marker=_SVG_METADATA_BEGIN,
+        end_marker=_SVG_METADATA_END,
+    )
+
+    comment_block = _build_svg_comment_block(
+        notes_markdown=metadata.notes_markdown,
+        machine_settings=metadata.machine_settings,
+    )
+
+    insert_at = svg_open_match.end()
+
+    updated_svg = svg_text[:insert_at] + "\n" + comment_block + svg_text[insert_at:]
+    _atomic_write_text(path, updated_svg)

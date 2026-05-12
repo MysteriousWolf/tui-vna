@@ -65,7 +65,7 @@ For systems without Python/uv, download standalone executables from [GitHub Rele
 - **Linux**: `tina-quick-v{VERSION}-linux-x86_64`
 - **macOS**: `tina-quick-v{VERSION}-macos-x86_64`
 
-Replace `v{VERSION}` with the release tag (e.g. `v0.2.1`). Pick the asset matching your platform from the Releases page.
+Replace `v{VERSION}` with the release tag (e.g. `v0.3.0`). Pick the asset matching your platform from the Releases page.
 
 Quick variants are optimized for scripting and automation. Run the full version at least once to configure connection settings, then use quick version for fast measurements without parameters.
 
@@ -86,12 +86,14 @@ tina --now          # CLI quick measurement
 
 ## Project Structure
 
-```
+```text
 src/tina/            # Main application package
 ├── config/          # Settings and constants
 ├── drivers/         # VNA drivers (auto-discovered!)
+├── tools/           # Tool computations (cursor, measure, distortion)
 ├── utils/           # Helper modules (colors, terminal, paths, touchstone)
 ├── gui/             # TUI resources
+├── _loader.py       # CLI loader / preload entry point
 ├── main.py          # Application entry point
 └── worker.py        # Threaded measurement worker
 scripts/             # Build configurations (PyInstaller)
@@ -162,12 +164,15 @@ with HPE5071B(config) as vna:
 
 ## Development
 
-**Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, Matplotlib
+**Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, SciPy, Matplotlib, scikit-rf
+
+**Note:** Importing measurements does not auto-switch tabs; the current tab stays active until you change it manually.
 
 **Structure:**
 
 - `config/` - Constants and settings
 - `drivers/` - VNA drivers with auto-discovery
+- `tools/` - Tool computations (cursor, measure, distortion)
 - `utils/` - Colors, terminal, paths, touchstone
 - `gui/` - TUI resources (CSS in `.tcss`)
 

@@ -5,9 +5,26 @@ Automatically logs all SCPI commands sent to the VNA for debugging and monitorin
 """
 
 from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 from ..config.constants import SCPI_RESPONSE_TRUNCATE_LENGTH
-from ..drivers.base import VNABase
+
+
+@runtime_checkable
+class ScpiDriver(Protocol):
+    """Structural protocol for any VNA object that can be wrapped."""
+
+    def _send_command(self, command: str) -> Any:
+        """Send a SCPI command without expecting a response."""
+        ...
+
+    def _query(self, command: str) -> str:
+        """Send a SCPI query and return the raw textual response."""
+        ...
+
+    def _query_ascii_values(self, command: str) -> list[float]:
+        """Send a SCPI query and return ASCII-decoded float values."""
+        ...
 
 
 class LoggingVNAWrapper:
@@ -33,7 +50,7 @@ class LoggingVNAWrapper:
 
     def __init__(
         self,
-        vna: VNABase,
+        vna: ScpiDriver,
         log_callback: Callable[[str, str], None],
         on_scpi_error: Callable[[str, str], None] | None = None,
     ):
@@ -64,6 +81,13 @@ class LoggingVNAWrapper:
         original_send = self._vna._send_command
         original_query = self._vna._query
         original_query_ascii = self._vna._query_ascii_values
+        for name, fn in (
+            ("_send_command", original_send),
+            ("_query", original_query),
+            ("_query_ascii_values", original_query_ascii),
+        ):
+            if not callable(fn):
+                raise TypeError(f"vna.{name} is not callable: {type(fn)}")
 
         # Must not route SYST:ERR? back through the patched _query — that would
         # trigger another debug check, causing infinite recursion.
@@ -130,9 +154,9 @@ class LoggingVNAWrapper:
             _check_error(command)
             return result
 
-        self._vna._send_command = logged_send_command
-        self._vna._query = logged_query
-        self._vna._query_ascii_values = logged_query_ascii
+        setattr(self._vna, "_send_command", logged_send_command)
+        setattr(self._vna, "_query", logged_query)
+        setattr(self._vna, "_query_ascii_values", logged_query_ascii)
 
     def __getattr__(self, name):
         """Delegate all attribute lookups not found on the wrapper to the driver."""

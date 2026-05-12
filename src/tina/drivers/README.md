@@ -135,6 +135,7 @@ if driver_class:
 
 ## Current Drivers
 
+- **Keysight P5007A** - Keysight P5007A 2-port VNA (PNA family)
 - **HP E5071B** - HP/Agilent/Keysight E5071 series (A/B/C variants)
 
 ## Troubleshooting

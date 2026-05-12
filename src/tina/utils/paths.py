@@ -18,14 +18,20 @@ def truncate_path_intelligently(path_str: str, max_width: int) -> str:
     4. Try showing only filename (no folders)
     5. Truncate filename with ellipsis
 
+    Returns an empty string immediately when ``max_width`` is 0, 1, or 2
+    (i.e., ``max_width <= 2``), before any truncation strategies are attempted.
+
     Args:
         path_str: The full path string
         max_width: Maximum character width
 
     Returns:
-        Truncated path string
+        Truncated path string, or ``""`` when ``max_width <= 2``.
     """
     # Account for the 📁 emoji (2 chars) + space in the UI
+    if max_width <= 2:
+        return ""
+
     effective_width = max_width - 2
 
     if len(path_str) <= effective_width:

@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -118,6 +119,30 @@ class VNAConfig:
         if not self.host:
             raise ValueError("Host IP address must be configured before connecting")
         return f"{self.protocol}::{self.host}::{self.port}::{self.suffix}"
+
+
+class TriggerStateDriver(Protocol):
+    """Protocol for drivers that support saving and restoring trigger state."""
+
+    def save_trigger_state(self) -> tuple[str, bool]:
+        """Capture the current trigger source and continuous sweep mode."""
+        ...
+
+    def restore_trigger_state(self, state: tuple[str, bool]) -> None:
+        """Restore a previously captured trigger source and sweep mode."""
+        ...
+
+
+class StatusCapableDriver(Protocol):
+    """Protocol for drivers that can query current parameters and status."""
+
+    def get_current_parameters(self) -> dict[str, Any]:
+        """Return the current instrument configuration values."""
+        ...
+
+    def get_status(self) -> dict[str, Any]:
+        """Return the live instrument status values used by the UI."""
+        ...
 
 
 class VNABase(ABC):
@@ -323,7 +348,7 @@ def discover_drivers() -> dict[str, type[VNABase]]:
         module_name = f".{driver_file.stem}"
         try:
             # Import the driver module
-            module = importlib.import_module(module_name, package="tina.drivers")
+            module = importlib.import_module(module_name, package=__package__)
 
             # Find all VNABase subclasses in the module
             for name, obj in inspect.getmembers(module, inspect.isclass):

@@ -1,6 +1,9 @@
 """Tests for CLI runner."""
 
-from tina.cli.runner import create_vna_config
+import argparse
+from unittest.mock import MagicMock
+
+from tina.cli.runner import create_vna_config, run_cli_measurement
 from tina.config.settings import AppSettings
 from tina.drivers import VNAConfig
 
@@ -100,3 +103,30 @@ class TestCreateVNAConfig:
             config = create_vna_config(settings)
 
             assert config.sweep_points == points
+
+
+class TestRunCliMeasurement:
+    """Test CLI measurement cleanup behavior."""
+
+    def test_disconnects_vna_when_measurement_fails(self, monkeypatch):
+        """A post-connect failure should still disconnect the instrument."""
+        settings = AppSettings(last_host="192.168.1.100")
+        vna = MagicMock()
+        vna.idn = "HEWLETT-PACKARD,E5071B,MY12345678,A.01.02"
+        vna.perform_measurement.side_effect = RuntimeError("readout failed")
+
+        settings_manager = MagicMock()
+        settings_manager.load.return_value = settings
+
+        monkeypatch.setattr("tina.cli.runner.migrate_legacy_config", lambda: None)
+        monkeypatch.setattr("tina.cli.runner.SettingsManager", lambda: settings_manager)
+        monkeypatch.setattr(
+            "tina.cli.runner.apply_cli_settings", lambda args, loaded: loaded
+        )
+        monkeypatch.setattr("tina.cli.runner.VNA", lambda config: vna)
+
+        result = run_cli_measurement(argparse.Namespace(no_plots=True))
+
+        assert result == 1
+        vna.connect.assert_called_once()
+        vna.disconnect.assert_called_once()

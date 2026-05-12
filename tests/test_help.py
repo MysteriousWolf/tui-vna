@@ -7,7 +7,7 @@ Covers:
 - HelpScreen._prep_for_mathtext: LaTeX sanitisation for matplotlib
 - HelpScreen._render_math_image: PNG rendering + crop + temp-file tracking
 - HelpScreen cleanup: temp files removed on unmount
-- Help file presence and structure
+- Help file presence and structure, including output help
 """
 
 import os
@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from src.tina.main import (
+from tina.gui.modals.help import (
     HelpScreen,
     _pixel_graphics_available,
     _preprocess_inline_latex,
@@ -124,12 +124,17 @@ class TestPreprocessInlineLaTeX:
     @pytest.mark.unit
     def test_fallback_when_converter_unavailable(self, monkeypatch):
         """When _latex_converter is None the raw expression is kept in backticks."""
-        import src.tina.main as main_mod
+        import tina.gui.modals.help as help_mod
 
-        monkeypatch.setattr(main_mod, "_latex_converter", None)
+        monkeypatch.setattr(help_mod, "_latex_converter", None)
         result = _preprocess_inline_latex("Value $\\alpha$ here.")
         assert "`\\alpha`" in result
         assert "$" not in result
+
+
+# ---------------------------------------------------------------------------
+# Help file presence
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -143,17 +148,17 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_false_when_textual_image_unavailable(self, monkeypatch):
         """Returns False immediately if textual_image isn't installed."""
-        import src.tina.main as main_mod
+        import tina.gui.modals.help as help_mod
 
-        monkeypatch.setattr(main_mod, "TEXTUAL_IMAGE_AVAILABLE", False)
+        monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", False)
         assert _pixel_graphics_available() is False
 
     @pytest.mark.unit
     def test_returns_true_when_auto_is_sixel(self, monkeypatch):
         """Returns True when the auto-selected renderer is Sixel."""
-        import src.tina.main as main_mod
+        import tina.gui.modals.help as help_mod
 
-        monkeypatch.setattr(main_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
+        monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
         sentinel = object()
         with patch.dict(
@@ -169,9 +174,9 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_true_when_auto_is_tgp(self, monkeypatch):
         """Returns True when the auto-selected renderer is TGP (Kitty)."""
-        import src.tina.main as main_mod
+        import tina.gui.modals.help as help_mod
 
-        monkeypatch.setattr(main_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
+        monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
         sentinel = object()
         with patch.dict(
@@ -191,9 +196,9 @@ class TestPixelGraphicsAvailable:
 
         Simulates TEXTUAL_IMAGE_AVAILABLE and mock renderer modules, and asserts _pixel_graphics_available() returns False.
         """
-        import src.tina.main as main_mod
+        import tina.gui.modals.help as help_mod
 
-        monkeypatch.setattr(main_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
+        monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
         auto = object()
         with patch.dict(
@@ -209,9 +214,9 @@ class TestPixelGraphicsAvailable:
     @pytest.mark.unit
     def test_returns_false_on_import_error(self, monkeypatch):
         """Returns False gracefully if internal imports fail."""
-        import src.tina.main as main_mod
+        import tina.gui.modals.help as help_mod
 
-        monkeypatch.setattr(main_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
+        monkeypatch.setattr(help_mod, "TEXTUAL_IMAGE_AVAILABLE", True)
 
         with patch.dict(
             "sys.modules",
@@ -378,10 +383,10 @@ class TestRenderMathImage:
             assert not p.exists(), f"{p} was not deleted"
 
     @pytest.mark.unit
-    def test_cleanup_tolerates_missing_files(self):
+    def test_cleanup_tolerates_missing_files(self, tmp_path):
         """on_unmount does not raise if a temp file was already removed."""
         screen = _bare_screen()
-        screen._temp_files.append(Path("/tmp/__nonexistent_help_test__.png"))
+        screen._temp_files.append(tmp_path / "__nonexistent_help_test__.png")
         screen.on_unmount()  # should not raise
 
 
@@ -455,6 +460,12 @@ class TestHelpFiles:
     @pytest.mark.unit
     def test_distortion_md_exists(self):
         assert (self._help_dir / "distortion.md").exists()
+
+    @pytest.mark.unit
+    def test_output_md_exists(self):
+        help_file = self._help_dir / "output.md"
+        assert help_file.exists()
+        assert help_file.read_text(encoding="utf-8").strip()
 
     @pytest.mark.unit
     def test_cursor_md_contains_display_math(self):

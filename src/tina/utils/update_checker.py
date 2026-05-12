@@ -126,7 +126,20 @@ def _fetch_releases() -> list[dict]:
         },
     )
     with urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read().decode())
+        payload = json.loads(resp.read().decode())
+    return _validate_releases_payload(payload)
+
+
+def _validate_releases_payload(payload: object) -> list[dict]:
+    """Validate that the GitHub releases response payload is a JSON list of dicts."""
+    if not isinstance(payload, list):
+        raise ValueError("GitHub releases payload must be a list")
+    for i, entry in enumerate(payload):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"GitHub releases payload entry {i} is not a dict: {type(entry).__name__}"
+            )
+    return list(payload)
 
 
 def get_changelogs_since(since_version: str, up_to_version: str) -> str:

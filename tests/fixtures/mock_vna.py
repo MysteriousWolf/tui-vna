@@ -1,14 +1,15 @@
-"""
-Mock VNA drivers for testing without hardware.
+"""Mock VNA drivers for testing without hardware.
 
 Provides complete VNA implementations that can be used as drop-in replacements
 for real drivers in tests.
 """
 
+from typing import Any
+
 import numpy as np
 
-from src.tina.drivers.base import VNABase, VNAConfig
 from tests.fixtures.mock_visa import MockVisaResource
+from tina.drivers.base import VNABase, VNAConfig
 
 
 class MockVNA(VNABase):
@@ -143,7 +144,7 @@ class MockVNA(VNABase):
             sparams[name] = self.get_sparam_data(idx)
         return sparams
 
-    def get_current_parameters(self) -> dict[str, any]:
+    def get_current_parameters(self) -> dict[str, Any]:
         """Get current VNA settings."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")
@@ -300,7 +301,7 @@ class MockE5071B(MockVNA):
 
         return mag_db, phase_deg
 
-    def get_current_parameters(self) -> dict[str, any]:
+    def get_current_parameters(self) -> dict[str, Any]:
         """Get current settings with HP-specific commands."""
         if not self._connected or not self.inst:
             raise RuntimeError("Not connected to VNA")

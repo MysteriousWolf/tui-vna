@@ -51,7 +51,10 @@ def _make_wrapper(query_responses: dict[str, str] | None = None):
     """Return (stub_driver, wrapper, log_calls) for a fresh test setup."""
     log_calls: list[tuple[str, str]] = []
     stub = _StubDriver(query_responses)
-    wrapper = LoggingVNAWrapper(stub, lambda msg, level: log_calls.append((msg, level)))
+    wrapper = LoggingVNAWrapper(
+        stub,
+        lambda msg, level: log_calls.append((msg, level)),
+    )
     return stub, wrapper, log_calls
 
 
@@ -102,8 +105,11 @@ class TestBasicLogging:
         log_calls: list[tuple[str, str]] = []
         stub = _StubDriver()
         # Patch ascii query to return 20 values; wrapper must be created after patching
-        stub._query_ascii_values = lambda cmd: [float(i) for i in range(20)]
-        LoggingVNAWrapper(stub, lambda msg, level: log_calls.append((msg, level)))
+        stub._query_ascii_values = lambda command: [float(i) for i in range(20)]
+        LoggingVNAWrapper(
+            stub,
+            lambda msg, level: log_calls.append((msg, level)),
+        )
 
         stub._query_ascii_values("SENS:DATA?")
         rx_entries = _rx(log_calls)
@@ -211,7 +217,8 @@ class TestDebugMode:
         stub = _StubDriver()
         log_calls: list[tuple[str, str]] = []
         wrapper = LoggingVNAWrapper(
-            stub, lambda msg, level: log_calls.append((msg, level))
+            stub,
+            lambda msg, level: log_calls.append((msg, level)),
         )
         # Make the raw query raise
         wrapper._raw_query = lambda _: (_ for _ in ()).throw(OSError("broken"))
@@ -260,7 +267,8 @@ class TestRawQueryBypass:
         )
         log_calls: list[tuple[str, str]] = []
         wrapper = LoggingVNAWrapper(
-            stub, lambda msg, level: log_calls.append((msg, level))
+            stub,
+            lambda msg, level: log_calls.append((msg, level)),
         )
         wrapper.debug = True
 
@@ -330,36 +338,18 @@ class TestOnScpiError:
 
 
 # ---------------------------------------------------------------------------
-# _scpi_mnemonic helper
+# Callable-guard
 # ---------------------------------------------------------------------------
 
 
-class TestScpiMnemonic:
-    """Tests for the _scpi_mnemonic() display helper in main.py."""
+class TestCallableGuard:
+    """LoggingVNAWrapper must raise TypeError when any SCPI primitive is non-callable."""
 
-    @pytest.fixture(autouse=True)
-    def _import(self):
-        from src.tina.main import _scpi_mnemonic
-
-        self.mnem = _scpi_mnemonic
-
-    def test_strips_query_mark(self):
-        assert self.mnem("BWID?") == "BWID"
-
-    def test_strips_channel_prefix(self):
-        assert self.mnem("SENS1:CORR:STAT?") == "CORR:STAT"
-
-    def test_strips_channel_prefix_calc(self):
-        assert self.mnem("CALC1:SMO:APER?") == "SMO:APER"
-
-    def test_no_channel_prefix_left_intact(self):
-        assert self.mnem("TRIG:SOUR?") == "TRIG:SOUR"
-
-    def test_star_command(self):
-        assert self.mnem("*RST") == "*RST"
-
-    def test_strips_parameter_value(self):
-        assert self.mnem("SOUR1:POW -10") == "POW"
-
-    def test_single_node_with_channel(self):
-        assert self.mnem("SENS1:BWID?") == "BWID"
+    @pytest.mark.unit
+    @pytest.mark.parametrize("attr", ["_send_command", "_query", "_query_ascii_values"])
+    def test_raises_type_error_when_primitive_is_not_callable(self, attr):
+        """Constructing with a non-callable SCPI primitive raises TypeError."""
+        stub = _StubDriver()
+        setattr(stub, attr, None)
+        with pytest.raises(TypeError, match=attr):
+            LoggingVNAWrapper(stub, lambda msg, level: None)

@@ -34,6 +34,32 @@ DEFAULT_OUTLIER_PERCENTILE = 1.0  # Percentage of outliers to filter on each end
 DEFAULT_SAFETY_MARGIN = 0.05  # Safety margin beyond filtered range
 DEFAULT_TERMINAL_PLOT_HEIGHT = 25  # Lines
 
+# ---------------------------------------------------------------------------
+# TINA theme palette — single source of truth for all color hex values.
+# theme.py and every fallback path must import from here, never re-define.
+# ---------------------------------------------------------------------------
+THEME_PRIMARY = "#4a9eda"
+THEME_SECONDARY = "#3278b5"
+THEME_ACCENT = "#00c8b8"
+THEME_BACKGROUND = "#121212"
+THEME_SURFACE = "#1b1b1b"
+THEME_PANEL = "#252525"
+THEME_BOOST = "#2f2f2f"
+THEME_FOREGROUND = "#c8d3e0"
+THEME_ERROR = "#e05555"
+THEME_WARNING = "#d4923a"
+THEME_SUCCESS = "#4ac48a"
+
+# Distortion overlay colors — cycling palette for polynomial components (n=0…5).
+DISTORTION_OVERLAY_COLORS: list[str] = [
+    "#888888",  # n=0 constant  (~0° sat, neutral gray)
+    "#cc8800",  # n=1 linear    (~45°,  amber)
+    "#22aa44",  # n=2 parabolic (~135°, green)
+    "#cc2233",  # n=3 cubic     (~350°, red)
+    "#00aacc",  # n=4 quartic   (~190°, cyan)
+    "#7733cc",  # n=5 quintic   (~275°, violet)
+]
+
 # S-parameter theme color mapping
 # Maps S-parameters to Textual CSS theme variable names
 SPARAM_THEME_KEYS = {
@@ -43,21 +69,21 @@ SPARAM_THEME_KEYS = {
     "S22": "success",
 }
 
-# Fallback colors for S-parameters (hex strings)
+# Fallback colors for S-parameters — must match the theme palette above.
 SPARAM_FALLBACK_COLORS = {
-    "S11": "#ff6b6b",
-    "S21": "#4ecdc4",
-    "S12": "#ffe66d",
-    "S22": "#c77dff",
+    "S11": THEME_ERROR,
+    "S21": THEME_PRIMARY,
+    "S12": THEME_ACCENT,
+    "S22": THEME_SUCCESS,
 }
 
-# Default trace color
+# Default trace color (white = unknown/unthemed trace)
 TRACE_COLOR_DEFAULT = "#ffffff"
 
-# Default theme colors
-DEFAULT_FOREGROUND_COLOR = "#e6e1dc"
-DEFAULT_BACKGROUND_COLOR = "#0e1419"
-DEFAULT_GRID_COLOR = "#2d3640"
+# Default theme colors used when no live theme variables are available.
+DEFAULT_FOREGROUND_COLOR = THEME_FOREGROUND
+DEFAULT_BACKGROUND_COLOR = THEME_BACKGROUND
+DEFAULT_GRID_COLOR = THEME_PANEL
 
 # SCPI response truncation
 SCPI_RESPONSE_TRUNCATE_LENGTH = 200

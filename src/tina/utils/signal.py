@@ -26,7 +26,14 @@ def calculate_plot_range_with_outlier_filtering(
     """
     Compute a plotting range that ignores extreme low/high outliers and adds a safety margin.
 
-    Filters the input data by removing the lowest and highest `outlier_percentile` percentiles, uses those percentile values as the core min/max, and expands the range by `safety_margin` fraction of the filtered span. If `data` is empty, returns (0.0, 1.0). If the filtered span is zero, a nonzero span is derived from `min_val` (10% of |min_val|) or set to 1.0 when `min_val` is zero.
+    Filters the input data by removing the lowest and highest
+    `outlier_percentile` percentiles. It uses those percentile values as the
+    core min/max. The range is expanded by a `safety_margin` fraction of the
+    filtered span.
+
+    If `data` is empty, returns (0.0, 1.0). If the filtered span is zero, a
+    nonzero span is derived from `min_val` (10% of |min_val|) or set to 1.0
+    when `min_val` is zero.
 
     Parameters:
         data (np.ndarray): Values to compute the plot range from.
@@ -39,11 +46,29 @@ def calculate_plot_range_with_outlier_filtering(
     if len(data) == 0:
         return (0.0, 1.0)
 
+    if not np.isfinite(outlier_percentile):
+        outlier_percentile = 1.0
+    if not np.isfinite(safety_margin):
+        safety_margin = 0.05
+
+    outlier_percentile = float(outlier_percentile)
+    if outlier_percentile < 0.0 or outlier_percentile >= 50.0:
+        raise ValueError("outlier_percentile must be in [0, 50)")
+    safety_margin = float(np.clip(safety_margin, 0.0, 1.0))
+
+    data_arr = np.asarray(data, dtype=float)
+    finite_data = data_arr[np.isfinite(data_arr)]
+    if finite_data.size == 0:
+        return (0.0, 1.0)
+
     lower_percentile = outlier_percentile
     upper_percentile = 100.0 - outlier_percentile
 
-    min_val = np.percentile(data, lower_percentile)
-    max_val = np.percentile(data, upper_percentile)
+    min_val = np.percentile(finite_data, lower_percentile)
+    max_val = np.percentile(finite_data, upper_percentile)
+
+    if not (np.isfinite(min_val) and np.isfinite(max_val)):
+        return (0.0, 1.0)
 
     data_range = max_val - min_val
     if data_range == 0:

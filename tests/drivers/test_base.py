@@ -1,12 +1,14 @@
-"""
-Unit tests for VNA driver base classes and configuration.
+"""Unit tests for VNA driver base classes and configuration.
 
 Tests the base driver abstraction, driver discovery, and configuration.
 """
 
+import inspect
+
 import pytest
 
-from src.tina.drivers.base import (
+from tests.fixtures.mock_vna import MockVNA as DummyVNA
+from tina.drivers.base import (
     IDNInfo,
     VNABase,
     VNAConfig,
@@ -14,7 +16,6 @@ from src.tina.drivers.base import (
     discover_drivers,
     list_available_drivers,
 )
-from tests.fixtures.mock_vna import MockVNA as DummyVNA
 
 
 class TestIDNInfo:
@@ -295,9 +296,9 @@ class TestVNABase:
 
     @pytest.mark.unit
     def test_vna_base_is_abstract(self):
-        """Test that VNABase cannot be instantiated directly."""
-        with pytest.raises(TypeError):
-            VNABase()
+        """Test that VNABase is declared abstract."""
+        assert inspect.isabstract(VNABase)
+        assert VNABase.__abstractmethods__
 
     @pytest.mark.unit
     def test_dummy_vna_instantiation(self, vna_config):
@@ -378,7 +379,7 @@ class TestDriverDiscovery:
     @pytest.mark.unit
     def test_detect_vna_driver_hp_e5071b(self):
         """Test detecting HP E5071B from IDN string directly."""
-        from src.tina.drivers.hp_e5071b import HPE5071B
+        from tina.drivers.hp_e5071b import HPE5071B
 
         idn = "HEWLETT-PACKARD,E5071B,MY12345678,A.01.02"
 

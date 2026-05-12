@@ -6,7 +6,7 @@ Implements VNABase interface for HP/Agilent E5071B series VNAs.
 
 import socket
 import time
-from typing import Any
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pyvisa
@@ -23,6 +23,7 @@ from ..config.constants import (
 from .base import VNABase, VNAConfig
 from .scpi_commands import (
     CMD_ABORT,
+    CMD_BUS_TRIGGER,
     CMD_GET_FREQ_DATA,
     CMD_GET_INIT_CONTINUOUS,
     CMD_GET_SDATA,
@@ -45,6 +46,34 @@ from .scpi_commands import (
     cmd_set_sweep_points,
     cmd_set_trigger_source,
 )
+
+_VISA_EXC: tuple[type[Exception], ...] = (
+    ValueError,
+    OSError,
+    pyvisa.errors.VisaIOError,
+)
+
+
+class _VisaResourceProtocol(Protocol):
+    """Subset of VISA resource methods used by the HP driver."""
+
+    timeout: int
+
+    def close(self) -> None:
+        """Close the instrument resource."""
+        ...
+
+    def write(self, command: str) -> None:
+        """Send a SCPI command."""
+        ...
+
+    def query(self, command: str) -> str:
+        """Send a SCPI query and return the response."""
+        ...
+
+    def query_ascii_values(self, command: str) -> list[float]:
+        """Query a list of ASCII float values."""
+        ...
 
 
 class HPE5071B(VNABase):
@@ -153,7 +182,7 @@ class HPE5071B(VNABase):
             self.inst.timeout = COMMAND_TIMEOUT_MS
 
             report("Verifying connection...", 80)
-            self._idn = self.inst.query(CMD_IDN).strip()
+            self._idn = cast(_VisaResourceProtocol, self.inst).query(CMD_IDN).strip()
 
             report("Connected", 100)
             self._connected = True
@@ -192,17 +221,17 @@ class HPE5071B(VNABase):
     def _send_command(self, command: str) -> None:
         """Send SCPI command."""
         self._ensure_connected()
-        self.inst.write(command)
+        cast(_VisaResourceProtocol, self.inst).write(command)
 
     def _query(self, command: str) -> str:
         """Send SCPI query and return response."""
         self._ensure_connected()
-        return self.inst.query(command)
+        return cast(_VisaResourceProtocol, self.inst).query(command)
 
     def _query_ascii_values(self, command: str) -> list[float]:
         """Query ASCII values."""
         self._ensure_connected()
-        return self.inst.query_ascii_values(command)
+        return cast(_VisaResourceProtocol, self.inst).query_ascii_values(command)
 
     def get_current_parameters(self) -> dict[str, Any]:
         """
@@ -228,30 +257,30 @@ class HPE5071B(VNABase):
 
         try:
             params["start_freq_hz"] = float(self._query(CMD_GET_FREQ_START).strip())
-        except Exception:
+        except _VISA_EXC:
             params["start_freq_hz"] = None
 
         try:
             params["stop_freq_hz"] = float(self._query(CMD_GET_FREQ_STOP).strip())
-        except Exception:
+        except _VISA_EXC:
             params["stop_freq_hz"] = None
 
         try:
             params["sweep_points"] = int(self._query(CMD_GET_SWEEP_POINTS).strip())
-        except Exception:
+        except _VISA_EXC:
             params["sweep_points"] = None
 
         try:
             avg_state = self._query(CMD_GET_AVERAGING_STATE).strip()
             params["averaging_enabled"] = avg_state in ("1", "ON")
-        except Exception:
+        except _VISA_EXC:
             params["averaging_enabled"] = None
 
         try:
             params["averaging_count"] = int(
                 self._query(CMD_GET_AVERAGING_COUNT).strip()
             )
-        except Exception:
+        except _VISA_EXC:
             params["averaging_count"] = None
 
         return params
@@ -285,42 +314,42 @@ class HPE5071B(VNABase):
         try:
             raw = self._query(CMD_GET_CORRECTION_STATE).strip()
             status["cal_enabled"] = raw in ("1", "ON")
-        except Exception:
+        except _VISA_EXC:
             status["cal_enabled"] = None
 
         try:
             raw = self._query(CMD_GET_CORRECTION_TYPE).strip()
             # Response may contain extra comma-separated fields; take first token only
             status["cal_type"] = raw.split(",")[0].strip()
-        except Exception:
+        except _VISA_EXC:
             status["cal_type"] = None
 
         try:
             raw = self._query(CMD_GET_SMOOTHING_STATE).strip()
             status["smoothing_enabled"] = raw in ("1", "ON")
-        except Exception:
+        except _VISA_EXC:
             status["smoothing_enabled"] = None
 
         try:
             status["smoothing_aperture"] = float(
                 self._query(CMD_GET_SMOOTHING_APERTURE).strip()
             )
-        except Exception:
+        except _VISA_EXC:
             status["smoothing_aperture"] = None
 
         try:
             status["if_bandwidth_hz"] = float(self._query(CMD_GET_IF_BANDWIDTH).strip())
-        except Exception:
+        except _VISA_EXC:
             status["if_bandwidth_hz"] = None
 
         try:
             status["port_power_dbm"] = float(self._query(CMD_GET_PORT_POWER).strip())
-        except Exception:
+        except _VISA_EXC:
             status["port_power_dbm"] = None
 
         try:
             status["trigger_source"] = self._query(CMD_GET_TRIGGER_SOURCE).strip()
-        except Exception:
+        except _VISA_EXC:
             status["trigger_source"] = None
 
         return status
@@ -465,6 +494,8 @@ class HPE5071B(VNABase):
         # Trigger new measurement
         self._send_command(CMD_INIT)
         time.sleep(0.1)
+        self._send_command(CMD_BUS_TRIGGER)
+        time.sleep(0.1)
 
         # Wait for sweep completion
         self._wait_for_operation_complete(timeout_seconds=SWEEP_TIMEOUT_SEC)
@@ -495,9 +526,13 @@ class HPE5071B(VNABase):
         # Query complex data (real/imag pairs)
         data = self._query_ascii_values(CMD_GET_SDATA)
 
-        # Ensure even length
-        if len(data) % 2 != 0:
-            data = data[:-1]
+        # Validate response: must be a non-empty interleaved real/imag pair stream.
+        if not data or len(data) % 2 != 0:
+            raise ValueError(
+                f"{CMD_GET_SDATA} returned an unexpected number of values "
+                f"({len(data)}); expected a non-empty even count of "
+                "interleaved real/imaginary pairs"
+            )
 
         # Parse real and imaginary parts
         real = np.array(data[0::2])

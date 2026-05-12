@@ -5,14 +5,18 @@ Tests HP-specific functionality including connection, configuration,
 measurement sequences, and SCPI command generation.
 """
 
+import types
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import pyvisa
 
-from src.tina.drivers.base import VNAConfig
-from src.tina.drivers.hp_e5071b import HPE5071B
+from tests.fixtures.mock_visa import MockVisaResource
+from tina.drivers import base as driver_base
+from tina.drivers.base import VNAConfig
+from tina.drivers.hp_e5071b import HPE5071B
 
 
 class TestHPE5071BIdentification:
@@ -184,7 +188,7 @@ class TestHPE5071BConfiguration:
 
         # Verify commands were sent
         assert vna.inst is not None
-        commands = vna.inst.command_history
+        commands = cast(MockVisaResource, vna.inst).command_history
         assert any("FREQ:STAR" in cmd for cmd in commands)
         assert any("FREQ:STOP" in cmd for cmd in commands)
 
@@ -199,11 +203,13 @@ class TestHPE5071BConfiguration:
         vna.config.set_freq_range = False
         vna.connect()
 
-        initial_cmd_count = len(vna.inst.command_history)
+        initial_cmd_count = len(cast(MockVisaResource, vna.inst).command_history)
         vna.configure_frequency()
 
         # Should not send frequency commands
-        new_commands = vna.inst.command_history[initial_cmd_count:]
+        new_commands = cast(MockVisaResource, vna.inst).command_history[
+            initial_cmd_count:
+        ]
         assert not any("FREQ:STAR" in cmd for cmd in new_commands)
         assert not any("FREQ:STOP" in cmd for cmd in new_commands)
 
@@ -224,7 +230,7 @@ class TestHPE5071BConfiguration:
 
         vna.configure_measurements()
 
-        commands = vna.inst.command_history
+        commands = cast(MockVisaResource, vna.inst).command_history
         # Should set format, sweep type, points, averaging
         assert any("FORM" in cmd and "ASC" in cmd for cmd in commands)
         assert any("SWE" in cmd and "LIN" in cmd for cmd in commands)
@@ -247,7 +253,7 @@ class TestHPE5071BMeasurement:
 
         vna.setup_s_parameters()
 
-        commands = vna.inst.command_history
+        commands = cast(MockVisaResource, vna.inst).command_history
         # Should configure 4 parameters
         assert any("PAR:COUN" in cmd and "4" in cmd for cmd in commands)
         # Should define all S-parameters
@@ -268,14 +274,15 @@ class TestHPE5071BMeasurement:
 
         vna.trigger_sweep()
 
-        commands = vna.inst.command_history
-        queries = vna.inst.query_history
+        commands = cast(MockVisaResource, vna.inst).command_history
+        queries = cast(MockVisaResource, vna.inst).query_history
 
         # Should abort, set single mode, set BUS trigger, init
         assert any("ABOR" in cmd for cmd in commands)
         assert any("INIT1:CONT" in cmd and "OFF" in cmd for cmd in commands)
         assert any("TRIG:SOUR" in cmd and "BUS" in cmd for cmd in commands)
         assert any("INIT" in cmd for cmd in commands)
+        assert any(cmd == "*TRG" for cmd in commands)
         assert "*OPC?" in queries
 
         vna.disconnect()
@@ -409,6 +416,39 @@ class TestHPE5071BTriggerState:
         vna.disconnect()
 
 
+class TestHPE5071BDataValidation:
+    """Unit tests for get_sparam_data response validation."""
+
+    @pytest.fixture
+    def connected_vna(self, vna_config):
+        """Create a connected VNA with a mocked instrument."""
+        vna = HPE5071B(vna_config)
+        mock_inst = MagicMock()
+        vna.inst = mock_inst
+        vna._connected = True
+        return vna, mock_inst
+
+    @pytest.mark.unit
+    def test_get_sparam_data_empty_response_raises(self, connected_vna):
+        """get_sparam_data should raise ValueError when CMD_GET_SDATA returns empty list."""
+        vna, mock_inst = connected_vna
+        mock_inst.query_ascii_values.return_value = []
+        mock_inst.write = MagicMock()
+
+        with pytest.raises(ValueError, match="unexpected number of values"):
+            vna.get_sparam_data(1)
+
+    @pytest.mark.unit
+    def test_get_sparam_data_odd_length_raises(self, connected_vna):
+        """get_sparam_data should raise ValueError when CMD_GET_SDATA returns odd count."""
+        vna, mock_inst = connected_vna
+        mock_inst.query_ascii_values.return_value = [0.5, -0.5, 0.7]
+        mock_inst.write = MagicMock()
+
+        with pytest.raises(ValueError, match="unexpected number of values"):
+            vna.get_sparam_data(1)
+
+
 class TestHPE5071BErrorHandling:
     """Test HP E5071B error handling and edge cases."""
 
@@ -438,3 +478,37 @@ class TestHPE5071BErrorHandling:
 
         with pytest.raises((RuntimeError, pyvisa.VisaIOError)):
             vna.get_frequency_axis()
+
+
+class TestDriverDiscovery:
+    """Test driver discovery import behavior."""
+
+    @pytest.mark.unit
+    def test_discovery_uses_current_package_name(self, monkeypatch):
+        """Driver discovery should import relative modules using __package__."""
+        original_registry = dict(driver_base._DRIVER_REGISTRY)
+
+        imported = []
+
+        def fake_import_module(name, package=None):
+            imported.append((name, package))
+            module = types.ModuleType("fake_driver_module")
+            setattr(module, "HPE5071B", HPE5071B)
+            return module
+
+        monkeypatch.setattr(
+            driver_base.Path,
+            "glob",
+            lambda *_args, **_kwargs: [driver_base.Path("hp_e5071b.py")],
+        )
+        monkeypatch.setattr(driver_base.importlib, "import_module", fake_import_module)
+
+        try:
+            driver_base._DRIVER_REGISTRY.clear()
+            drivers = dict(driver_base.discover_drivers())
+        finally:
+            driver_base._DRIVER_REGISTRY.clear()
+            driver_base._DRIVER_REGISTRY.update(original_registry)
+
+        assert drivers[HPE5071B.driver_name] is HPE5071B
+        assert imported == [(".hp_e5071b", driver_base.__package__)]

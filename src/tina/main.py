@@ -7,54 +7,98 @@ import importlib.resources
 import os
 import platform
 import queue
-import re
 import subprocess
 import sys
-import tempfile
 import tkinter as tk
-import webbrowser
-from datetime import datetime
-from functools import partial
 from pathlib import Path
 from tkinter import filedialog
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
-import skrf as rf
-from rich.markup import escape as rich_escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.command import Hit, Hits, Provider
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.containers import Container, Horizontal, Vertical
+from textual.events import Key
 from textual.widgets import (
     Button,
     Checkbox,
-    Footer,
     Header,
     Input,
     Label,
     Markdown,
     ProgressBar,
-    RadioButton,
     RadioSet,
     RichLog,
     Select,
     Static,
     TabbedContent,
     TabPane,
+    TextArea,
 )
 
 # Set matplotlib to non-interactive backend
 matplotlib.use("Agg")
 
+from tina.tools import DistortionTool, MeasureTool
+
 from . import __version__
 from .config.settings import SettingsManager
 from .drivers import VNAConfig
-from .tools import DistortionTool, MeasureTool
-from .tools.distortion import COMPONENT_NAMES as _DISTORTION_COMPONENT_NAMES
+from .export import (
+    DEFAULT_TEMPLATE_TAGS,
+    PATH_INVALID_CHARS,
+    CsvExporter,
+    build_image_export_metadata,
+    embed_png_metadata,
+    embed_svg_metadata,
+    render_template,
+)
+from .gui.components import (
+    StatusFooter,
+)
+from .gui.modals import HelpScreen, build_update_screen, build_welcome_screen
+from .gui.modals.help import (
+    TEXTUAL_IMAGE_AVAILABLE,
+    ImageWidget,
+)
+from .gui.plotting import (
+    TRACE_COLOR_DEFAULT,
+    calculate_plot_range_with_outlier_filtering,
+    create_matplotlib_plot,
+    create_smith_chart,
+    get_plot_colors,
+    get_terminal_font,
+    truncate_path_intelligently,
+    unwrap_phase,
+)
+from .gui.providers import (
+    CursorMarkerProvider,
+    PlotBackendProvider,
+    SetupImportProvider,
+    StatusPollProvider,
+)
+from .gui.tabs import (
+    apply_tool_ui,
+    apply_tools_render_result,
+    compose_log_tab,
+    compose_measurement_tab,
+    compose_setup_tab,
+    compose_tools_tab,
+    delayed_redraw_tools_plot,
+    delayed_tools_refresh,
+    get_distortion_comp_enabled,
+    get_tools_trace,
+    log_logic,
+    rebuild_tools_params,
+    refresh_tools_plot,
+    render_tools_computation_result,
+    run_tools_computation,
+    set_active_tool,
+    setup_logic,
+    tools_logic,
+)
+from .gui.theme import TINA_THEME
 from .utils import TouchstoneExporter
 from .utils.update_checker import (
     fetch_test_update_data,
@@ -62,6 +106,9 @@ from .utils.update_checker import (
     get_update_info,
 )
 from .worker import (
+    BackgroundJob,
+    ImportRequest,
+    ImportResult,
     LogMessage,
     MeasurementResult,
     MeasurementWorker,
@@ -69,2316 +116,83 @@ from .worker import (
     ParamsResult,
     ProgressUpdate,
     StatusResult,
+    _write_image_save_back,
+    _write_touchstone_save_back,
 )
 
-try:
-    from pylatexenc.latex2text import LatexNodes2Text as _LatexNodes2Text
 
-    _latex_converter = _LatexNodes2Text()
-except ImportError:
-    _latex_converter = None
-
-# GUI-only imports - done at module level to ensure proper terminal detection
-try:
-    from textual_image.widget import Image as ImageWidget
-
-    TEXTUAL_IMAGE_AVAILABLE = True
-except ImportError:
-    ImageWidget = None
-    TEXTUAL_IMAGE_AVAILABLE = False
-
-# S-parameter to theme variable mapping.
-# Each S-param maps to a Textual CSS variable name.
-# These must be distinct colors across all built-in Textual themes.
-SPARAM_THEME_KEYS = {
-    "S11": "error",
-    "S21": "primary",
-    "S12": "accent",
-    "S22": "success",
-}
-
-# Fallback colors if theme variables are not available.
-SPARAM_FALLBACK_COLORS = {
-    "S11": "#ff6b6b",
-    "S21": "#4ecdc4",
-    "S12": "#ffe66d",
-    "S22": "#c77dff",
-}
-TRACE_COLOR_DEFAULT = "#ffffff"
-
-# Fixed hue-wheel palette for distortion overlays — guaranteed distinct regardless of theme.
-DISTORTION_OVERLAY_COLORS: list[str] = [
-    "#888888",  # n=0 constant  (~0° sat, neutral gray)
-    "#cc8800",  # n=1 linear    (~45°,  amber)
-    "#22aa44",  # n=2 parabolic (~135°, green)
-    "#cc2233",  # n=3 cubic     (~350°, red)
-    "#00aacc",  # n=4 quartic   (~190°, cyan)
-    "#7733cc",  # n=5 quintic   (~275°, violet)
-]
-_DISTORTION_OVERLAY_STYLES: list = [
-    "-",
-    "--",
-    "-.",
-    ":",
-    (0, (5, 2)),
-    (0, (3, 1, 1, 1)),
-]
-_DISTORTION_OVERLAY_LABELS: list[str] = [
-    "constant",
-    "linear",
-    "parabolic",
-    "cubic",
-    "quartic",
-    "quintic",
-]
-
-
-def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """
-    Convert a hex color string into an (R, G, B) tuple of integers.
-
-    Accepts strings in the forms "#RRGGBB", "RRGGBB", "#RGB", or "RGB". A leading '#' is optional;
-    3-digit shorthand is expanded to 6-digit form. Each returned component is in the range 0–255.
-
-    Parameters:
-        hex_color (str): Hex color string to convert.
-
-    Returns:
-        tuple[int, int, int]: RGB components as integers (red, green, blue).
-    """
-    h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
-def _get_plot_colors(theme_vars: dict[str, str] | None = None) -> dict:
-    """
-    Constructs a plotting color scheme from Textual theme variables.
-
-    Parameters:
-        theme_vars (dict[str, str] | None): Mapping of Textual theme variable names to hex color strings.
-            When None, a set of sensible fallback colors is used.
-
-    Returns:
-        dict: A dictionary containing plotting colors and RGB tuples with the following keys:
-            - 'traces': dict[str, str] — hex color per S-parameter (e.g., 'S11', 'S21').
-            - 'traces_rgb': dict[str, tuple[int, int, int]] — (R, G, B) tuples for each S-parameter.
-            - 'fg': str — foreground hex color.
-            - 'bg': str — background hex color.
-            - 'surface': str — surface/panel hex color.
-            - 'grid': str — grid/secondary hex color.
-            - 'default_trace': str — fallback hex color for traces.
-            - 'distortion_overlays': list[str] — fixed hex colors for distortion overlay components.
-            - 'distortion_overlays_rgb': list[tuple[int, int, int]] — RGB tuples for distortion overlays.
-            - 'cursor1': str — hex color for cursor 1.
-            - 'cursor1_rgb': tuple[int, int, int] — RGB tuple for cursor 1.
-            - 'cursor2': str — hex color for cursor 2.
-            - 'cursor2_rgb': tuple[int, int, int] — RGB tuple for cursor 2.
-    """
-    if theme_vars:
-        traces = {}
-        for param, key in SPARAM_THEME_KEYS.items():
-            hex_val = theme_vars.get(key)
-            traces[param] = hex_val if hex_val else SPARAM_FALLBACK_COLORS[param]
-        fg = theme_vars.get("foreground", theme_vars.get("text", "#e6e1dc"))
-        bg = theme_vars.get("background", "#0e1419")
-        surface = theme_vars.get("surface", bg)
-        grid = theme_vars.get("panel", theme_vars.get("surface-darken-1", "#2d3640"))
-    else:
-        traces = dict(SPARAM_FALLBACK_COLORS)
-        fg = "#e6e1dc"
-        bg = "#0e1419"
-        surface = bg
-        grid = "#2d3640"
-
-    # Build RGB tuples for plotext (which doesn't support hex strings)
-    traces_rgb = {}
-    for param, hex_val in traces.items():
-        try:
-            traces_rgb[param] = _hex_to_rgb(hex_val)
-        except (ValueError, IndexError):
-            traces_rgb[param] = (255, 255, 255)
-
-    def _resolve_color(
-        theme_color: str | None, fallback: str
-    ) -> tuple[str, tuple[int, int, int]]:
-        """
-        Resolve a theme hex color string and return the chosen hex value together with its RGB tuple.
-
-        If `theme_color` is a valid hex color string it is used; otherwise `fallback` is used.
-
-        Parameters:
-            theme_color (str | None): Optional theme-provided color (e.g. "#RRGGBB" or "#RGB").
-            fallback (str): Fallback hex color string to use when `theme_color` is missing or invalid.
-
-        Returns:
-            tuple[str, tuple[int, int, int]]: (hex_color, (R, G, B)) where `hex_color` is the resolved hex string and `(R, G, B)` are integer channels in the range 0–255.
-        """
-        if theme_color:
-            try:
-                return theme_color, _hex_to_rgb(theme_color)
-            except (ValueError, IndexError):
-                pass
-        return fallback, _hex_to_rgb(fallback)
-
-    # Distortion overlay colors are fixed — guaranteed distinct across the hue wheel.
-    distortion_overlays = list(DISTORTION_OVERLAY_COLORS)
-    distortion_overlays_rgb = [_hex_to_rgb(h) for h in DISTORTION_OVERLAY_COLORS]
-
-    # Cursor colors: cursor1 = warning, cursor2 = primary (matches CSS .tools-cursor-1/2)
-    cursor1_hex, cursor1_rgb = _resolve_color(
-        theme_vars.get("warning") if theme_vars else None, "#ffa500"
-    )
-    cursor2_hex, cursor2_rgb = _resolve_color(
-        theme_vars.get("primary") if theme_vars else None, "#00d7ff"
-    )
-
-    return {
-        "traces": traces,
-        "traces_rgb": traces_rgb,
-        "fg": fg,
-        "bg": bg,
-        "surface": surface,
-        "grid": grid,
-        "default_trace": TRACE_COLOR_DEFAULT,
-        "distortion_overlays": distortion_overlays,
-        "distortion_overlays_rgb": distortion_overlays_rgb,
-        "cursor1": cursor1_hex,
-        "cursor1_rgb": cursor1_rgb,
-        "cursor2": cursor2_hex,
-        "cursor2_rgb": cursor2_rgb,
-    }
-
-
-def _get_terminal_font() -> tuple[str, float | None]:
-    """Detect the terminal's font family and size by parsing its config file.
-
-    Uses TERM_PROGRAM to identify the terminal emulator, then reads its
-    configuration file to extract the font family and size.
-    Falls back to ('monospace', None).
-
-    Supported terminals: Ghostty, Kitty, Alacritty, WezTerm, iTerm2,
-    Windows Terminal.
-    """
-    import json
-    import re
-
-    import matplotlib.font_manager as fm
-
-    available_fonts = {f.name for f in fm.fontManager.ttflist}
-    term = os.environ.get("TERM_PROGRAM", "").lower()
-    home = Path.home()
-    font_name = None
-    font_size = None
-
-    def _parse_ghostty_config() -> None:
-        """Read font-family and font-size from the Ghostty config file if present."""
-        nonlocal font_name, font_size
-        cfg = home / ".config" / "ghostty" / "config"
-        if cfg.exists():
-            for line in cfg.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("#"):
-                    continue
-                if line.startswith("font-family") and not font_name:
-                    font_name = line.split("=", 1)[1].strip().strip("\"'")
-                elif line.startswith("font-size") and not font_size:
-                    try:
-                        font_size = float(line.split("=", 1)[1].strip().strip("\"'"))
-                    except ValueError:
-                        pass
-            # Ghostty default font-size is 13
-            if not font_size:
-                font_size = 13.0
-
-    try:
-        if "ghostty" in term:
-            _parse_ghostty_config()
-
-        elif "kitty" in term:
-            # ~/.config/kitty/kitty.conf:
-            #   font_family Font Name
-            #   font_size 12.0
-            cfg = home / ".config" / "kitty" / "kitty.conf"
-            if cfg.exists():
-                for line in cfg.read_text().splitlines():
-                    line = line.strip()
-                    if line.startswith("font_family") and not font_name:
-                        font_name = line.split(None, 1)[1].strip().strip("\"'")
-                    elif line.startswith("font_size") and not font_size:
-                        try:
-                            font_size = float(line.split(None, 1)[1].strip())
-                        except (ValueError, IndexError):
-                            pass
-
-        elif "alacritty" in term:
-            # ~/.config/alacritty/alacritty.toml:
-            #   [font] size = 12.0
-            #   [font.normal] family = "Font"
-            for name in ("alacritty.toml", "alacritty.yml"):
-                cfg = home / ".config" / "alacritty" / name
-                if cfg.exists():
-                    text = cfg.read_text()
-                    if name.endswith(".toml"):
-                        m = re.search(
-                            r'\[font\.normal\]\s*\n\s*family\s*=\s*["\']([^"\']+)',
-                            text,
-                        )
-                        if m:
-                            font_name = m.group(1)
-                        m = re.search(
-                            r"\[font\]\s*\n(?:.*\n)*?\s*size\s*=\s*([\d.]+)", text
-                        )
-                        if m:
-                            font_size = float(m.group(1))
-                    else:
-                        m = re.search(
-                            r'font:\s*\n\s*normal:\s*\n\s*family:\s*["\']?([^\n"\']+)',
-                            text,
-                        )
-                        if m:
-                            font_name = m.group(1).strip()
-                        m = re.search(r"font:\s*\n(?:.*\n)*?\s*size:\s*([\d.]+)", text)
-                        if m:
-                            font_size = float(m.group(1))
-                    if font_name:
-                        break
-
-        elif "wezterm" in term:
-            # ~/.config/wezterm/wezterm.lua or ~/.wezterm.lua:
-            #   font = wezterm.font("Font Name")
-            #   font_size = 12.0
-            for cfg in (
-                home / ".config" / "wezterm" / "wezterm.lua",
-                home / ".wezterm.lua",
-            ):
-                if cfg.exists():
-                    text = cfg.read_text()
-                    m = re.search(
-                        r'font\s*=\s*wezterm\.font\s*\(\s*["\']([^"\']+)', text
-                    )
-                    if m:
-                        font_name = m.group(1)
-                    m = re.search(r"font_size\s*=\s*([\d.]+)", text)
-                    if m:
-                        font_size = float(m.group(1))
-                    if font_name:
-                        break
-
-        elif "iterm" in term:
-            # macOS: defaults read com.googlecode.iterm2
-            if platform.system() == "Darwin":
-                result = subprocess.run(
-                    ["defaults", "read", "com.googlecode.iterm2", "Normal Font"],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                if result.returncode == 0:
-                    # Output like: "HackNF-Regular 13"
-                    raw = result.stdout.strip()
-                    parts = raw.rsplit(" ", 1)
-                    font_name = parts[0].replace("-Regular", "")
-                    if len(parts) == 2:
-                        try:
-                            font_size = float(parts[1])
-                        except ValueError:
-                            pass
-
-        elif platform.system() == "Windows":
-            # Windows Terminal: settings.json
-            local_app = os.environ.get("LOCALAPPDATA", "")
-            if local_app:
-                wt_dir = Path(local_app) / "Packages"
-                if wt_dir.exists():
-                    for pkg in wt_dir.iterdir():
-                        if "WindowsTerminal" in pkg.name:
-                            settings = pkg / "LocalState" / "settings.json"
-                            if settings.exists():
-                                data = json.loads(settings.read_text())
-                                profiles = data.get("profiles", {})
-                                defaults = profiles.get("defaults", {})
-                                font_cfg = defaults.get("font", {})
-                                face = font_cfg.get("face")
-                                if face:
-                                    font_name = face
-                                size = font_cfg.get("size")
-                                if size:
-                                    font_size = float(size)
-                                break
-
-        # Fallback: if TERM_PROGRAM didn't match any known terminal,
-        # try detecting from config files that exist on disk.
-        if not font_name:
-            _parse_ghostty_config()
-
-    except Exception:
-        pass
-
-    resolved_name = "monospace"
-    if font_name:
-        # Exact match first
-        if font_name in available_fonts:
-            resolved_name = font_name
-        else:
-            # Fuzzy match: try case-insensitive, then substring matching.
-            # Nerd Font variants often register under slightly different names
-            # (e.g. "SauceCodePro Nerd Font" vs "SauceCodePro Nerd Font Mono").
-            lower_name = font_name.lower()
-            for af in available_fonts:
-                if af.lower() == lower_name:
-                    resolved_name = af
-                    break
-            else:
-                # Substring: pick the shortest available name that contains
-                # the config name (or vice versa) to find the closest match
-                candidates = [
-                    af
-                    for af in available_fonts
-                    if lower_name in af.lower() or af.lower() in lower_name
-                ]
-                if candidates:
-                    resolved_name = min(candidates, key=len)
-
-    return resolved_name, font_size
-
-
-def _truncate_path_intelligently(path_str: str, max_width: int) -> str:
-    """
-    Intelligently truncate a file path to fit within a given width.
-
-    Strategy:
-    1. If path fits, return as-is
-    2. Progressively drop folders from the left (e.g., /a/b/c/file.txt -> .../b/c/file.txt -> .../c/file.txt)
-    3. Try showing only first letter of remaining folders
-    4. Try showing only filename (no folders)
-    5. Truncate filename with ellipsis
-
-    Args:
-        path_str: The full path string
-        max_width: Maximum character width
-
-    Returns:
-        Truncated path string
-    """
-    # Account for the 📁 emoji (2 chars) + space
-    effective_width = max_width - 2
-
-    if len(path_str) <= effective_width:
-        return path_str
-
-    path = Path(path_str)
-    parts = list(path.parts)
-
-    if len(parts) <= 1:
-        # Just a filename, truncate with ellipsis
-        filename = path.name
-        if len(filename) > effective_width and effective_width > 3:
-            return filename[: effective_width - 3] + "..."
-        return filename[:effective_width]
-
-    # Strategy 2: Progressively drop folders from the left
-    for i in range(1, len(parts) - 1):
-        truncated = ".../" + "/".join(parts[i:])
-        if len(truncated) <= effective_width:
-            return truncated
-
-    # Strategy 3: First letter of remaining folders + full filename
-    if len(parts) > 1:
-        abbreviated = "/".join(p[0] for p in parts[:-1]) + "/" + parts[-1]
-        if len(abbreviated) <= effective_width:
-            return abbreviated
-        # Try with ellipsis prefix
-        abbreviated_with_ellipsis = (
-            ".../"
-            + "/".join(p[0] for p in parts[1:-1])
-            + ("/" if len(parts) > 2 else "")
-            + parts[-1]
-        )
-        if len(abbreviated_with_ellipsis) <= effective_width:
-            return abbreviated_with_ellipsis
-
-    # Strategy 4: Just the filename
-    filename = path.name
-    if len(filename) <= effective_width:
-        return filename
-
-    # Strategy 5: Truncate filename with ellipsis
-    if effective_width > 3:
-        return filename[: effective_width - 3] + "..."
-    else:
-        return filename[:effective_width]
-
-
-def _calculate_plot_range_with_outlier_filtering(
-    data: np.ndarray, outlier_percentile: float = 1.0, safety_margin: float = 0.05
-) -> tuple[float, float]:
-    """
-    Calculate plot range while filtering out outliers.
-
-    This prevents extreme outliers from compressing the useful data range.
-
-    Args:
-        data: Array of values to analyze
-        outlier_percentile: Percentage of outliers to ignore on each end (default 2%)
-        safety_margin: Additional margin beyond filtered range (default 5%)
-
-    Returns:
-        Tuple of (min_value, max_value) for plot range
-    """
-    if len(data) == 0:
-        return (0.0, 1.0)
-
-    # Calculate percentiles to filter outliers
-    lower_percentile = outlier_percentile
-    upper_percentile = 100.0 - outlier_percentile
-
-    min_val = np.percentile(data, lower_percentile)
-    max_val = np.percentile(data, upper_percentile)
-
-    # Add safety margin
-    data_range = max_val - min_val
-    if data_range == 0:
-        # Handle case where all values are the same
-        data_range = abs(min_val) * 0.1 if min_val != 0 else 1.0
-
-    margin = data_range * safety_margin
-    min_val -= margin
-    max_val += margin
-
-    return (float(min_val), float(max_val))
-
-
-def _unwrap_phase(phase_deg: np.ndarray) -> np.ndarray:
-    """
-    Unwrap phase data to remove discontinuities.
-
-    Converts phase from [-180, 180] range to continuous values by removing
-    360-degree jumps.
-
-    Args:
-        phase_deg: Phase data in degrees
-
-    Returns:
-        Unwrapped phase in degrees
-    """
-    # Convert to radians for numpy's unwrap function
-    phase_rad = np.deg2rad(phase_deg)
-
-    # Unwrap phase (removes 2*pi discontinuities)
-    unwrapped_rad = np.unwrap(phase_rad)
-
-    # Convert back to degrees
-    unwrapped_deg = np.rad2deg(unwrapped_rad)
-
-    return unwrapped_deg
-
-
-def _create_matplotlib_plot(
+def _render_plot_image_snapshot(
     freqs: np.ndarray,
-    sparams: dict,
-    plot_params: list,
+    sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    plot_params: tuple[str, ...],
     plot_type: str,
     output_path: Path,
-    dpi: int = 150,
-    pixel_width: int | None = None,
-    pixel_height: int | None = None,
-    transparent: bool = False,
-    render_scale: int = 1,
-    colors: dict | None = None,
-    y_min: float | None = None,
-    y_max: float | None = None,
-    font_family: str = "monospace",
-    font_size: float | None = None,
+    dpi: int,
+    pixel_width: int,
+    pixel_height: int,
+    render_scale: int,
+    colors: dict,
+    y_min: float | None,
+    y_max: float | None,
+    plot_data: dict[str, np.ndarray] | None = None,
 ) -> None:
-    """
-    Create a plot using matplotlib with dark theme matching terminal UI.
-
-    Args:
-        freqs: Frequency array in Hz
-        sparams: Dictionary of S-parameters {param_name: (magnitude_db, phase_deg)}
-        plot_params: List of parameters to plot (e.g., ['S11', 'S21'])
-        plot_type: 'magnitude', 'phase', or 'phase_raw'
-        output_path: Path to save the plot
-        dpi: DPI for the output image
-        pixel_width: Desired image width in pixels
-        pixel_height: Desired image height in pixels
-        transparent: If True, use transparent background
-    """
-
-    # Use the same font as the terminal for visual consistency
-    font_family, font_size = _get_terminal_font()
-    plt.rcParams["font.family"] = font_family
-    # Base font size: use detected terminal size, or default to 10pt.
-    # Divide by render_scale since we render at higher resolution and
-    # the image gets scaled down for display.
-    base_size = (font_size if font_size else 10.0) / render_scale
-
-    if colors is None:
-        colors = _get_plot_colors()
-    fg_color = colors["fg"]
-    grid_color = colors["grid"]
-
-    # Calculate figure size in inches from pixel dimensions
-    if pixel_width and pixel_height:
-        fig_width = pixel_width / dpi
-        fig_height = pixel_height / dpi
+    """Render a plot image from UI-thread snapshots in a worker thread."""
+    if plot_type == "smith":
+        create_smith_chart(
+            freqs,
+            sparams,
+            list(plot_params),
+            output_path,
+            dpi=dpi,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            transparent=True,
+            render_scale=render_scale,
+            colors=colors,
+        )
     else:
-        fig_width = 10
-        fig_height = 5
-
-    # Create figure
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.patch.set_alpha(0.0 if transparent else 1.0)
-    if not transparent:
-        fig.patch.set_facecolor(colors["bg"])
-    ax.set_facecolor("none" if transparent else colors["bg"])
-
-    # Convert frequency to MHz
-    freq_mhz = freqs / 1e6
-
-    # Plot data based on plot type and collect all Y data for outlier filtering
-    all_y_data = []
-    for param in plot_params:
-        if plot_type == "magnitude":
-            data = sparams[param][0]  # Magnitude in dB
-            ylabel = "Magnitude (dB)"
-            title = "S-Parameter Magnitude"
-        elif plot_type == "phase":
-            data = _unwrap_phase(sparams[param][1])  # Unwrapped phase
-            ylabel = "Phase (degrees)"
-            title = "S-Parameter Phase (Unwrapped)"
-        else:  # phase_raw
-            data = sparams[param][1]  # Raw phase
-            ylabel = "Phase (degrees)"
-            title = "S-Parameter Phase (Raw)"
-
-        all_y_data.append(data)
-        ax.plot(
-            freq_mhz,
-            data,
-            label=param,
-            color=colors["traces"].get(param, colors["default_trace"]),
-            linewidth=1.5,
+        create_matplotlib_plot(
+            freqs,
+            sparams,
+            list(plot_params),
+            plot_type,
+            output_path,
+            dpi=dpi,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
+            transparent=True,
+            render_scale=render_scale,
+            colors=colors,
+            y_min=y_min,
+            y_max=y_max,
+            plot_data=plot_data,
         )
-
-    # Apply outlier filtering to Y-axis range or use provided limits
-    if all_y_data:
-        combined_data = np.concatenate(all_y_data)
-        if y_min is None or y_max is None:
-            # Auto-detect if not provided
-            auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
-                combined_data, outlier_percentile=1.0, safety_margin=0.05
-            )
-            final_y_min = y_min if y_min is not None else auto_y_min
-            final_y_max = y_max if y_max is not None else auto_y_max
-        else:
-            final_y_min = y_min
-            final_y_max = y_max
-        ax.set_ylim(final_y_min, final_y_max)
-
-    # Styling — scale font sizes relative to detected terminal font
-    ax.set_xlabel("Frequency (MHz)", color=fg_color, fontsize=base_size)
-    ax.set_ylabel(ylabel, color=fg_color, fontsize=base_size)
-    ax.set_title(title, color=fg_color, fontsize=base_size * 1.2, pad=15)
-    ax.tick_params(colors=fg_color, labelsize=base_size * 0.85)
-    ax.grid(True, alpha=0.2, color=grid_color, linestyle="-", linewidth=0.5)
-    legend = ax.legend(
-        edgecolor=grid_color,
-        labelcolor=fg_color,
-        fontsize=base_size * 0.9,
-    )
-    legend.get_frame().set_alpha(0.5 if transparent else 1.0)
-    if not transparent:
-        legend.get_frame().set_facecolor(colors["bg"])
-    else:
-        legend.get_frame().set_facecolor("none")
-
-    # Spine colors
-    for spine in ax.spines.values():
-        spine.set_edgecolor(grid_color)
-        spine.set_linewidth(1)
-
-    # Tight layout
-    plt.tight_layout()
-
-    # Save figure
-    plt.savefig(
-        output_path,
-        dpi=dpi,
-        facecolor=fig.get_facecolor(),
-        edgecolor="none",
-        bbox_inches="tight",
-        transparent=transparent,
-    )
-    plt.close(fig)
-
-
-def _create_smith_chart(
-    freqs: np.ndarray,
-    sparams: dict,
-    plot_params: list,
-    output_path: Path,
-    dpi: int = 150,
-    pixel_width: int | None = None,
-    pixel_height: int | None = None,
-    transparent: bool = False,
-    render_scale: int = 1,
-    colors: dict | None = None,
-) -> None:
-    """
-    Create a Smith chart using scikit-rf with dark theme matching terminal UI.
-
-    Args:
-        freqs: Frequency array in Hz
-        sparams: Dictionary of S-parameters {param_name: (magnitude_db, phase_deg)}
-        plot_params: List of parameters to plot (e.g., ['S11', 'S21'])
-        output_path: Path to save the plot
-        dpi: DPI for the output image
-        pixel_width: Desired image width in pixels
-        pixel_height: Desired image height in pixels
-        transparent: If True, use transparent background
-        render_scale: Scale factor for rendering (for high-DPI displays)
-        colors: Color scheme dictionary
-    """
-    # Use the same font as the terminal for visual consistency
-    font_family, font_size = _get_terminal_font()
-    plt.rcParams["font.family"] = font_family
-    base_size = (font_size if font_size else 10.0) / render_scale
-
-    if colors is None:
-        colors = _get_plot_colors()
-    fg_color = colors["fg"]
-    grid_color = colors["grid"]
-
-    # Calculate figure size in inches from pixel dimensions
-    # Smith charts MUST be square to display correctly
-    if pixel_width and pixel_height:
-        # Use the smaller dimension to create a square
-        square_size_px = min(pixel_width, pixel_height)
-        fig_width = square_size_px / dpi
-        fig_height = square_size_px / dpi
-    else:
-        fig_width = 10
-        fig_height = 10  # Square for Smith chart
-
-    # Create figure with regular axes (scikit-rf doesn't use matplotlib projection)
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.patch.set_alpha(0.0 if transparent else 1.0)
-    if not transparent:
-        fig.patch.set_facecolor(colors["bg"])
-    ax.set_facecolor("none" if transparent else colors["bg"])
-
-    # Force square aspect ratio for Smith chart
-    ax.set_aspect("equal")
-
-    # Draw Smith chart grid with labels
-    # chart_type: 'z' for impedance (default), 'y' for admittance
-    # ref_imm: reference impedance (50 ohms standard)
-    # draw_labels: show impedance/admittance values on grid
-    rf.plotting.smith(
-        ax=ax,
-        chart_type="z",  # Impedance Smith chart
-        draw_labels=True,  # Show grid labels
-        ref_imm=50.0,  # 50 ohm reference impedance
-        draw_vswr=None,  # Don't draw VSWR circles by default
-    )
-
-    # Mark special points on Smith chart
-    # Open circuit (Γ = 1+0j, at right edge)
-    # Short circuit (Γ = -1+0j, at left edge)
-    # Matched load (Γ = 0+0j, at center)
-    ax.scatter(
-        [1.0],
-        [0.0],
-        marker="o",
-        s=50,
-        color=grid_color,
-        edgecolor=fg_color,
-        linewidth=1.5,
-        zorder=10,
-        label="Open",
-    )
-    ax.scatter(
-        [-1.0],
-        [0.0],
-        marker="s",
-        s=50,
-        color=grid_color,
-        edgecolor=fg_color,
-        linewidth=1.5,
-        zorder=10,
-        label="Short",
-    )
-    ax.scatter(
-        [0.0],
-        [0.0],
-        marker="*",
-        s=100,
-        color="gold",
-        edgecolor=fg_color,
-        linewidth=1.5,
-        zorder=10,
-        label="Match (50Ω)",
-    )
-
-    # Plot each S-parameter on Smith chart
-    for param in plot_params:
-        # Convert magnitude (dB) and phase (degrees) to complex reflection coefficient
-        mag_db = sparams[param][0]
-        phase_deg = sparams[param][1]
-
-        # Convert dB to linear magnitude
-        mag_linear = 10 ** (mag_db / 20)
-
-        # Convert to complex reflection coefficient
-        phase_rad = np.deg2rad(phase_deg)
-        s_complex = mag_linear * np.exp(1j * phase_rad)
-
-        # Create Network object from S-parameter data
-        # scikit-rf expects frequency in Hz and S-parameters as complex arrays
-        network = rf.Network(
-            frequency=rf.Frequency.from_f(freqs, unit="Hz"),
-            s=s_complex.reshape(-1, 1, 1),  # Shape: (n_freqs, n_ports, n_ports)
-            name=param,
-        )
-
-        # Plot on Smith chart using scikit-rf's method
-        trace_color = colors["traces"].get(param, colors["default_trace"])
-        network.plot_s_smith(
-            m=0,
-            n=0,  # Plot S[0,0] (first port to first port)
-            ax=ax,
-            label=param,
-            color=trace_color,
-            linewidth=1.5,
-            draw_labels=False,  # Don't draw frequency labels (too cluttered)
-            show_legend=False,  # We'll create our own legend
-        )
-
-        # Add start/end frequency markers on the trace
-        # Start frequency marker (triangle pointing right)
-        ax.scatter(
-            s_complex[0].real,
-            s_complex[0].imag,
-            marker=">",
-            s=80,
-            color=trace_color,
-            edgecolor=fg_color,
-            linewidth=1,
-            zorder=15,
-        )
-        # End frequency marker (square)
-        ax.scatter(
-            s_complex[-1].real,
-            s_complex[-1].imag,
-            marker="s",
-            s=60,
-            color=trace_color,
-            edgecolor=fg_color,
-            linewidth=1,
-            zorder=15,
-        )
-
-        # Annotate start frequency
-        freq_start_mhz = freqs[0] / 1e6
-        freq_end_mhz = freqs[-1] / 1e6
-        ax.annotate(
-            f"{freq_start_mhz:.0f} MHz",
-            (s_complex[0].real, s_complex[0].imag),
-            xytext=(10, 10),
-            textcoords="offset points",
-            color=trace_color,
-            fontsize=base_size * 0.7,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=colors["bg"],
-                edgecolor=trace_color,
-                alpha=0.8,
-            ),
-        )
-        # Annotate end frequency
-        ax.annotate(
-            f"{freq_end_mhz:.0f} MHz",
-            (s_complex[-1].real, s_complex[-1].imag),
-            xytext=(-10, -10),
-            textcoords="offset points",
-            color=trace_color,
-            fontsize=base_size * 0.7,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=colors["bg"],
-                edgecolor=trace_color,
-                alpha=0.8,
-            ),
-        )
-
-    # Customize Smith chart appearance
-    ax.set_title("Smith Chart", color=fg_color, fontsize=base_size * 1.2, pad=15)
-
-    # Update Smith chart grid colors to match theme
-    # The Smith chart uses matplotlib collections for grid
-    for collection in ax.collections:
-        collection.set_edgecolor(grid_color)
-        collection.set_alpha(0.3)
-
-    # Update text colors
-    for text in ax.texts:
-        text.set_color(fg_color)
-        text.set_fontsize(base_size * 0.7)
-
-    # Create legend
-    if len(plot_params) > 0:
-        legend = ax.legend(
-            edgecolor=grid_color,
-            labelcolor=fg_color,
-            fontsize=base_size * 0.9,
-            loc="upper right",
-        )
-        legend.get_frame().set_alpha(0.5 if transparent else 1.0)
-        if not transparent:
-            legend.get_frame().set_facecolor(colors["bg"])
-        else:
-            legend.get_frame().set_facecolor("none")
-
-    # Tight layout
-    plt.tight_layout()
-
-    # Save figure
-    plt.savefig(
-        output_path,
-        dpi=dpi,
-        facecolor=fig.get_facecolor(),
-        edgecolor="none",
-        bbox_inches="tight",
-        transparent=transparent,
-    )
-    plt.close(fig)
-
-
-class UpdateNotificationScreen(ModalScreen):
-    """Reusable modal for update-related notifications (new release or post-update welcome)."""
-
-    DEFAULT_CSS = """
-    UpdateNotificationScreen {
-        align: center middle;
-    }
-    #notif-dialog {
-        width: 90;
-        height: auto;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-    }
-    UpdateNotificationScreen.--welcome #notif-dialog {
-        border: thick $success;
-    }
-    UpdateNotificationScreen #notif-title {
-        text-style: bold;
-        width: 1fr;
-    }
-    UpdateNotificationScreen.--welcome #notif-title {
-        color: $success;
-    }
-    UpdateNotificationScreen #notif-badge {
-        margin-left: 1;
-    }
-    UpdateNotificationScreen .badge-stable {
-        background: $success;
-        color: $background;
-        padding: 0 1;
-    }
-    UpdateNotificationScreen .badge-pre {
-        background: $warning;
-        color: $background;
-        padding: 0 1;
-    }
-    UpdateNotificationScreen #notif-body {
-        height: auto;
-        max-height: 60vh;
-        border: solid $panel;
-        padding: 0 1;
-        margin: 0;
-    }
-    UpdateNotificationScreen #notif-body Markdown {
-        margin: 0;
-        padding: 0;
-    }
-    UpdateNotificationScreen #notif-body Markdown > * {
-        margin-top: 0;
-    }
-    UpdateNotificationScreen #notif-header {
-        height: auto;
-    }
-    UpdateNotificationScreen #notif-footer {
-        width: 100%;
-        height: auto;
-        margin-top: 0;
-        align: right middle;
-    }
-    UpdateNotificationScreen .notif-btn {
-        height: 3;
-        min-width: 0;
-    }
-    #btn-notif-github {
-        max-width: 25;
-    }
-    #btn-notif-dismiss {
-        max-width: 15;
-    }
-    UpdateNotificationScreen #footer-spacer {
-        width: 1;
-    }
-    """
-
-    BINDINGS = [
-        ("escape", "close", "Close"),
-    ]
-
-    def __init__(
-        self,
-        title: str,
-        body: str,
-        button_label: str,
-        button_variant: str = "primary",
-        badge: str | None = None,
-        badge_class: str | None = None,
-        welcome: bool = False,
-    ) -> None:
-        """Initialise the notification screen with title, markdown body, and button config."""
-        super().__init__()
-        self._title = title
-        self._body = body or "_No changelog provided._"
-        self._button_label = button_label
-        self._button_variant = button_variant
-        self._badge = badge
-        self._badge_class = badge_class
-        if welcome:
-            self.add_class("--welcome")
-
-    def compose(self) -> ComposeResult:
-        """Compose the modal layout: title row, scrollable body, and dismiss button."""
-        with Vertical(id="notif-dialog"):
-            with Horizontal(id="notif-header"):
-                yield Label(self._title, id="notif-title")
-                if self._badge:
-                    yield Label(
-                        f" {self._badge} ",
-                        id="notif-badge",
-                        classes=self._badge_class or "",
-                    )
-            with VerticalScroll(id="notif-body"):
-                yield Markdown(self._body)
-            with Horizontal(id="notif-footer"):
-                yield Button(
-                    self._button_label,
-                    variant=self._button_variant,
-                    id="btn-notif-dismiss",
-                    classes="notif-btn",
-                )
-                yield Static(id="footer-spacer")
-                yield Button(
-                    "View on GitHub",
-                    variant="primary",
-                    id="btn-notif-github",
-                    classes="notif-btn",
-                )
-
-    @on(Button.Pressed, "#btn-notif-github")
-    def open_github_release(self) -> None:
-        """Open the latest releases page in the system browser."""
-        webbrowser.open("https://github.com/MysteriousWolf/tui-vna/releases/latest")
-
-    def action_close(self) -> None:
-        """Close the notification modal (via Escape key or action binding)."""
-        self.dismiss()
-
-    @on(Button.Pressed, "#btn-notif-dismiss")
-    def dismiss_notification(self) -> None:
-        """
-        Dismisses the modal screen.
-        """
-        self.dismiss()
-
-
-# ---------------------------------------------------------------------------
-# Help viewer helpers
-# ---------------------------------------------------------------------------
-
-
-def _pixel_graphics_available() -> bool:
-    """
-    Detect whether the terminal backend supports true pixel graphics (Sixel or Kitty TGP).
-
-    Checks that the optional textual_image package is available and that its chosen
-    image renderable is specifically the Sixel or Kitty TGP implementation; half-cell
-    or Unicode/block renderers are not considered supported for pixel-accurate math
-    rendering.
-
-    Returns:
-        `True` if pixel graphics via Sixel or Kitty TGP are available, `False` otherwise.
-    """
-    if not TEXTUAL_IMAGE_AVAILABLE:
-        return False
-    try:
-        from textual_image.renderable import Image as _AutoRenderable
-        from textual_image.renderable.sixel import Image as _SixelRenderable
-        from textual_image.renderable.tgp import Image as _TGPRenderable
-
-        return _AutoRenderable in (_SixelRenderable, _TGPRenderable)
-    except Exception:
-        return False
-
-
-def _preprocess_inline_latex(text: str) -> str:
-    """Convert inline ``$...$`` math spans to backtick-wrapped Unicode text.
-
-    Each ``$expr$`` is replaced with `` `unicode` `` so Textual's
-    ``Markdown`` widget renders it as inline code rather than raw LaTeX.
-    When *pylatexenc* is unavailable the raw expression is kept as-is inside
-    the backticks.  Cross-line spans (containing a newline) are intentionally
-    left untouched.
-
-    Args:
-        text: A markdown text segment that may contain ``$...$`` spans.
-            Must NOT contain ``$$...$$`` display-math blocks (those are split
-            out before this function is called in ``HelpScreen.compose``).
-
-    Returns:
-        The text with all inline math spans converted to backtick strings.
-    """
-    if _latex_converter is None:
-        return re.sub(r"\$([^$\n]+?)\$", r"`\1`", text)
-
-    def replace_inline(m: re.Match) -> str:
-        """
-        Convert an inline LaTeX match to plain-text wrapped in backticks.
-
-        Parameters:
-            m (re.Match): A regex match whose group(1) contains the inline LaTeX expression.
-
-        Returns:
-            str: The LaTeX expression converted to plain text, trimmed, and wrapped in backticks.
-        """
-        return f"`{_latex_converter.latex_to_text(m.group(1)).strip()}`"
-
-    return re.sub(r"\$([^$\n]+?)\$", replace_inline, text)
-
-
-class HelpScreen(ModalScreen):
-    """Help viewer modal with hybrid LaTeX rendering.
-
-    Display math ($$...$$) is rendered as a matplotlib image when the terminal
-    supports graphics, with a plain-text code-block fallback.  Inline math
-    ($...$) is always converted to Unicode via pylatexenc.
-    """
-
-    DEFAULT_CSS = """
-    HelpScreen {
-        align: center middle;
-    }
-    #help-dialog {
-        width: 90%;
-        height: 90%;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-    }
-    #help-title {
-        text-style: bold;
-        color: $primary;
-        width: 1fr;
-    }
-    #help-body {
-        height: 1fr;
-        border: solid $panel;
-        padding: 0 1;
-        margin: 0;
-    }
-    #help-body Markdown {
-        margin: 0;
-        padding: 0;
-    }
-    #help-body Markdown > * {
-        margin-top: 0;
-    }
-    .math-img-row {
-        height: auto;
-        width: 100%;
-        align-horizontal: center;
-        margin: 0 0 1 0;
-    }
-    #help-footer {
-        height: auto;
-        align-horizontal: right;
-    }
-    """
-
-    BINDINGS = [
-        ("escape", "close", "Close"),
-    ]
-
-    def __init__(self, title: str, content: str) -> None:
-        """
-        Initialize the help viewer modal.
-
-        Parameters:
-            title (str): Heading displayed at the top of the modal.
-            content (str): Raw Markdown text, optionally containing $$...$$ display-math blocks and $...$ inline math.
-        """
-        super().__init__()
-        self._title = title
-        self._raw_content = content
-        self._temp_files: list[Path] = []
-
-    @staticmethod
-    def _prep_for_mathtext(expr: str) -> str:
-        """
-        Sanitize a LaTeX expression for use with matplotlib's mathtext engine.
-
-        This function rewrites or removes LaTeX constructs that matplotlib.mathtext does not support,
-        producing an expression that can be rendered without causing a ParseFatalException.
-
-        Transformations performed:
-        - Removes `\boxed` while keeping its braced content.
-        - Replaces `\text{...}` with `\\mathrm{...}`.
-        - Replaces `\\lvert` / `\rvert` with `|`.
-        - Removes size/bracket decorators such as `\bigl`, `\bigr`, `\\Bigl`, `\\Bigr`, `\\left`, and `\right`.
-        - Drops subscripts from `\\max_{...}` and `\\min_{...}`, leaving `\\max` / `\\min`.
-
-        Parameters:
-            expr (str): Raw LaTeX string (without surrounding `$` delimiters).
-
-        Returns:
-            str: Sanitized expression safe to pass to matplotlib mathtext (e.g., `fig.text(..., usetex=False)`).
-        """
-        # \boxed is unsupported — drop the command, keep the braced content as a group
-        expr = expr.replace("\\boxed", "")
-        # \text{X} -> \mathrm{X}  (mathtext supports \mathrm)
-        expr = re.sub(r"\\text\{([^{}]*)\}", r"\\mathrm{\1}", expr)
-        # \lvert \rvert -> |
-        expr = expr.replace("\\lvert", "|").replace("\\rvert", "|")
-        # Size/bracket decorators that confuse the parser
-        for cmd in ("\\bigl", "\\bigr", "\\Bigl", "\\Bigr", "\\left", "\\right"):
-            expr = expr.replace(cmd, "")
-        # \max / \min with subscripts — drop the subscript
-        expr = re.sub(r"\\(max|min)_\{[^{}]*\}", r"\\\1", expr)
-        return expr
-
-    def _render_math_image(self, latex_expr: str) -> tuple[Path, int, int] | None:
-        """
-        Render a LaTeX display-math expression to a tightly cropped PNG and return its file path and pixel dimensions.
-
-        The input expression is sanitized for matplotlib's mathtext and rendered as a display-style formula. On success returns a temporary PNG Path and its width and height in pixels; returns `None` if rendering fails.
-        Parameters:
-            latex_expr (str): The LaTeX expression to render (may be raw math without surrounding `$$`).
-
-        Returns:
-            tuple[Path, int, int] | None: `(path, width_px, height_px)` on success, or `None` on failure.
-        """
-        try:
-            from io import BytesIO
-
-            from PIL import Image as PILImage
-            from PIL import ImageColor
-
-            v = self.app.get_css_variables()
-            bg_hex = v.get("surface", "#1a1a1a")
-            fg_hex = v.get("foreground", "#ffffff")
-
-            expr = self._prep_for_mathtext(latex_expr.strip())
-
-            with plt.rc_context({"font.family": "monospace"}):
-                fig = plt.figure(figsize=(9, 1.5))
-                fig.patch.set_facecolor("none")
-                fig.text(
-                    0.5,
-                    0.5,
-                    f"${expr}$",
-                    ha="center",
-                    va="center",
-                    fontsize=14,
-                    color=fg_hex,
-                    usetex=False,
-                )
-                buf = BytesIO()
-                fig.savefig(
-                    buf,
-                    format="png",
-                    dpi=130,
-                    bbox_inches="tight",
-                    pad_inches=0.05,
-                    transparent=True,
-                )
-                plt.close(fig)
-
-            buf.seek(0)
-            img = PILImage.open(buf).convert("RGBA")
-
-            # Alpha-based crop — transparent pixels are background
-            _, _, _, alpha = img.split()
-            content_bbox = alpha.getbbox()
-            if content_bbox:
-                pad_px = 5
-                content_bbox = (
-                    max(0, content_bbox[0] - pad_px),
-                    max(0, content_bbox[1] - pad_px),
-                    min(img.width, content_bbox[2] + pad_px),
-                    min(img.height, content_bbox[3] + pad_px),
-                )
-                img = img.crop(content_bbox)
-
-            # Composite onto solid theme background
-            bg_rgba = ImageColor.getrgb(bg_hex) + (255,)
-            bg_layer = PILImage.new("RGBA", img.size, bg_rgba)
-            final = PILImage.alpha_composite(bg_layer, img)
-
-            fd, tmp_path = tempfile.mkstemp(suffix=".png")
-            os.close(fd)
-            final.convert("RGB").save(tmp_path, "PNG")
-            tmp = Path(tmp_path)
-            self._temp_files.append(tmp)
-            return tmp, final.width, final.height
-        except Exception:
-            plt.close("all")
-            return None
-
-    def compose(self) -> ComposeResult:
-        """
-        Builds the help modal contents by splitting the raw markdown into text and display-math segments and rendering display-math as pixel images when supported.
-
-        Text segments have inline LaTeX spans preprocessed for Markdown rendering; display-math segments are rendered to tightly-cropped PNG images when pixel graphics are available, otherwise emitted as a fenced-code plaintext fallback.
-
-        Returns:
-            ComposeResult: an iterable of child widgets that compose the Help modal (title, body with Markdown or images, and a Close button).
-        """
-        use_images = _pixel_graphics_available()
-        parts = re.split(r"\$\$(.*?)\$\$", self._raw_content, flags=re.DOTALL)
-        with Vertical(id="help-dialog"):
-            yield Label(self._title, id="help-title")
-            with VerticalScroll(id="help-body"):
-                for i, part in enumerate(parts):
-                    if i % 2 == 0:
-                        # Text segment — convert inline math to Unicode
-                        processed = _preprocess_inline_latex(part)
-                        if processed.strip():
-                            yield Markdown(processed)
-                    else:
-                        # Display math — pixel image or plain-text fallback
-                        result = self._render_math_image(part) if use_images else None
-                        if result is not None:
-                            img_path, img_w_px, img_h_px = result
-                            try:
-                                from textual_image.widget._base import (
-                                    get_cell_size as _gtcs,
-                                )
-
-                                tc = _gtcs()
-                                cw = tc.width if tc.width > 0 else 8
-                                ch = tc.height if tc.height > 0 else 16
-                            except Exception:
-                                cw, ch = 8, 16
-                            w_cells = max(8, round(img_w_px / cw))
-                            h_cells = max(1, round(img_h_px / ch))
-                            img_widget = ImageWidget(str(img_path))
-                            img_widget.styles.width = w_cells
-                            img_widget.styles.height = h_cells
-                            with Horizontal(classes="math-img-row"):
-                                yield img_widget
-                        else:
-                            fallback = (
-                                _latex_converter.latex_to_text(part).strip()
-                                if _latex_converter is not None
-                                else part.strip()
-                            )
-                            yield Markdown(f"\n```\n{fallback}\n```\n")
-            with Horizontal(id="help-footer"):
-                yield Button("Close", variant="primary", id="btn-help-close")
-
-    def on_unmount(self) -> None:
-        """
-        Attempt to delete temporary PNG files created for rendered math.
-
-        Removes any paths in self._temp_files from the filesystem; failures during removal are ignored.
-        """
-        for f in self._temp_files:
-            try:
-                f.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    def action_close(self) -> None:
-        """Close the help modal (via Escape key or action binding)."""
-        self.dismiss()
-
-    @on(Button.Pressed, "#btn-help-close")
-    def close_help(self) -> None:
-        """Dismiss the help modal."""
-        self.dismiss()
-
-
-def _update_screen(release_info) -> UpdateNotificationScreen:
-    """
-    Create an UpdateNotificationScreen configured for the given release information.
-
-    The screen title, body text, dismiss button label, and badge (either "PRE-RELEASE" or "STABLE") are selected based on the release metadata.
-
-    Parameters:
-        release_info: An object with attributes `is_prerelease`, `version`, `changelog`, and `html_url` used to populate the notification content.
-
-    Returns:
-        UpdateNotificationScreen: A modal screen ready to show the release notification.
-    """
-    rel = release_info
-    if rel.is_prerelease:
-        intro = f"A new pre-release **v{rel.version}** is available.\n\n"
-        body = intro + (
-            rel.changelog if rel.changelog else f"[View on GitHub]({rel.html_url})"
-        )
-        badge, badge_class = "PRE-RELEASE", "badge-pre"
-    else:
-        body = rel.changelog or "_No changelog provided._"
-        badge, badge_class = "STABLE", "badge-stable"
-    return UpdateNotificationScreen(
-        title=f"Update available:  v{rel.version}",
-        body=body,
-        button_label="Dismiss",
-        badge=badge,
-        badge_class=badge_class,
-    )
-
-
-def _welcome_screen(version: str, changelog: str) -> UpdateNotificationScreen:
-    """Build an UpdateNotificationScreen for the post-update welcome."""
-    return UpdateNotificationScreen(
-        title=f"Thanks for updating to v{version}!",
-        body=changelog,
-        button_label="Got it!",
-        button_variant="success",
-        welcome=True,
-    )
-
-
-_POLL_OPTIONS = [
-    ("Status poll: Off", 0),
-    ("Status poll: 1 second", 1),
-    ("Status poll: 2 seconds", 2),
-    ("Status poll: 5 seconds", 5),
-    ("Status poll: 10 seconds", 10),
-    ("Status poll: 30 seconds", 30),
-]
-
-
-class StatusPollProvider(Provider):
-    """Command palette provider for changing the status bar poll interval."""
-
-    async def discover(self) -> Hits:
-        """Yield all available poll-interval options unconditionally."""
-        for label, value in _POLL_OPTIONS:
-            yield Hit(
-                1.0,
-                label,
-                partial(self._apply, value),
-                help="Set status bar refresh interval",
-            )
-
-    async def search(self, query: str) -> Hits:
-        """Yield poll-interval options whose labels match *query*."""
-        matcher = self.matcher(query)
-        for label, value in _POLL_OPTIONS:
-            score = matcher.match(label)
-            if score > 0:
-                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
-
-    def _apply(self, value: int) -> None:
-        """
-        Set the application's status poll interval and restart polling if the app is connected.
-
-        Parameters:
-            value (int): Poll interval in seconds.
-        """
-        app = self.app
-        app.settings.status_poll_interval = value
-        app.query_one("#sb_poll_interval", Select).value = value
-        if app.connected:
-            app._start_status_polling(value)
-
-
-_BACKEND_OPTIONS = [
-    ("Plot backend: Terminal", "terminal"),
-    ("Plot backend: Image", "image"),
-]
-
-
-class PlotBackendProvider(Provider):
-    """Command palette provider for switching the global plot backend."""
-
-    async def discover(self) -> Hits:
-        """Yield all backend options unconditionally."""
-        for label, value in _BACKEND_OPTIONS:
-            yield Hit(
-                1.0,
-                label,
-                partial(self._apply, value),
-                help="Set plot rendering backend",
-            )
-
-    async def search(self, query: str) -> Hits:
-        """
-        Search for backend options whose labels match the provided query.
-
-        Parameters:
-            query (str): Substring or pattern to match against backend option labels.
-
-        Returns:
-            Hits: An asynchronous iterator yielding Hit objects. Each Hit contains a relevance score, a highlighted label for display, and a callable action that applies the corresponding backend when invoked.
-        """
-        matcher = self.matcher(query)
-        for label, value in _BACKEND_OPTIONS:
-            score = matcher.match(label)
-            if score > 0:
-                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
-
-    def _apply(self, value: str) -> None:
-        """
-        Set the application's global plot backend and refresh plot-related UI.
-
-        Parameters:
-            value (str): Plot backend identifier, e.g. "terminal" or "image".
-        """
-        app = self.app
-        app.settings.plot_backend = value
-        app._update_plot_type_options()
-        app.settings_manager.save(app.settings)
-        if app.last_measurement is not None:
-            app.call_after_refresh(
-                app._update_results,
-                app.last_measurement["freqs"],
-                app.last_measurement["sparams"],
-                app.last_measurement["output_path"],
-            )
-            app.call_after_refresh(app._refresh_tools_plot)
-
-
-_CURSOR_MARKER_OPTIONS = [
-    ("Cursor marker: ▼ (arrow down)", "▼"),
-    ("Cursor marker: ✕ (cross)", "✕"),
-    ("Cursor marker: ○ (circle)", "○"),
-]
-
-
-class CursorMarkerProvider(Provider):
-    """Command palette provider for selecting the cursor marker symbol."""
-
-    async def discover(self) -> Hits:
-        """
-        Provide command-palette hits for each available cursor marker option.
-
-        Each yielded Hit, when applied, sets the cursor marker style used in the Tools tab.
-
-        Returns:
-            Hits: An async iterable yielding `Hit` objects for every cursor marker option.
-        """
-        for label, value in _CURSOR_MARKER_OPTIONS:
-            yield Hit(
-                1.0,
-                label,
-                partial(self._apply, value),
-                help="Set cursor marker style for Tools tab",
-            )
-
-    async def search(self, query: str) -> Hits:
-        """
-        Find cursor marker options whose labels match the given query and yield corresponding Hits.
-
-        Scores and highlights option labels according to the provider's matcher and yields Hit objects
-        for each option with a positive match score.
-
-        Parameters:
-                query (str): The search query used to score and highlight option labels.
-
-        Returns:
-                An iterator of `Hit` objects for matching cursor marker options; each `Hit` contains a score,
-                a highlighted label, and a callable that applies the selected marker value.
-        """
-        matcher = self.matcher(query)
-        for label, value in _CURSOR_MARKER_OPTIONS:
-            score = matcher.match(label)
-            if score > 0:
-                yield Hit(score, matcher.highlight(label), partial(self._apply, value))
-
-    def _apply(self, value: str) -> None:
-        """
-        Apply the selected cursor marker style to the application settings and persist it.
-
-        Parameters:
-            value (str): Identifier of the cursor marker style to apply (e.g., a symbol name or key).
-
-        Description:
-            Updates the app's cursor marker style, saves the settings, and triggers a tools-plot refresh if a previous measurement exists.
-        """
-        app = self.app
-        app.settings.cursor_marker_style = value
-        app.settings_manager.save(app.settings)
-        if app.last_measurement is not None:
-            app.call_after_refresh(app._refresh_tools_plot)
-
-
-_SB_ITEMS = ("sb_cal", "sb_smooth", "sb_ifbw", "sb_power", "sb_trigger")
-
-# Short human-readable names for common SCPI error codes (IEEE 488.2 / SCPI 1999).
-_SCPI_ERROR_NAMES: dict[str, str] = {
-    "+0": "OK",
-    "0": "OK",
-    "-100": "CMD",
-    "-113": "UNDEF",
-    "-222": "RANGE",
-    "-224": "ILLEGAL",
-    "-310": "SYS",
-    "-350": "QUEUE",
-    "-400": "QUERY",
-    "-420": "UNTMN",
-    "-430": "DEADLK",
-}
-
-
-def _scpi_mnemonic(cmd: str) -> str:
-    """Return a compact display mnemonic for a SCPI command.
-
-    Strips parameter values (text after a space), trailing ``?``, and any
-    channel-number suffix on the first node (e.g. ``SENS1`` → removed so
-    ``SENS1:CORR:STAT?`` becomes ``CORR:STAT``).
-    """
-    base = cmd.split(" ")[0].rstrip("?")
-    parts = base.split(":")
-    if parts and parts[0] and parts[0][-1].isdigit():
-        parts = parts[1:]
-    return ":".join(parts) or base
-
-
-_ALL_SB_STATE_CLASSES = (
-    "--stale",
-    "--state-ok",
-    "--state-off",
-    "--smo-on",
-    "--trig-INT",
-    "--trig-MAN",
-    "--trig-EXT",
-    "--trig-BUS",
-)
-
-
-class StatusFooter(Footer):
-    """Textual Footer with VNA status items appended after the key bindings."""
-
-    DEFAULT_CSS = Footer.DEFAULT_CSS + """
-    StatusFooter #sb_spacer {
-        width: 1fr;
-        height: 1;
-    }
-    StatusFooter #sb_status_container {
-        width: auto;
-        height: 1;
-        padding: 0 1 0 0;
-    }
-    StatusFooter .sb-item {
-        width: auto;
-        height: 1;
-        padding: 0 1;
-        content-align: left middle;
-        background: $panel-lighten-1;
-    }
-    StatusFooter .sb-sep {
-        width: 1;
-        height: 1;
-    }
-    StatusFooter .sb-item.--stale {
-        background: $panel-lighten-1;
-        color: $text-muted;
-        text-style: dim;
-    }
-    StatusFooter .sb-item.--state-ok  { background: $success;   color: $background; }
-    StatusFooter .sb-item.--state-off { background: $error;     color: $background; }
-    StatusFooter .sb-item.--smo-on    { background: $accent;    color: $background; }
-    StatusFooter .sb-item.--trig-INT  { background: $primary;   color: $background; }
-    StatusFooter .sb-item.--trig-MAN  { background: $warning;   color: $background; }
-    StatusFooter .sb-item.--trig-EXT  { background: $secondary; color: $background; }
-    StatusFooter .sb-item.--trig-BUS  { background: $success;   color: $background; }
-    StatusFooter #sb_debug_group {
-        display: none;
-        width: auto;
-        height: 1;
-    }
-    StatusFooter #sb_debug_group.--visible {
-        display: block;
-    }
-    """
-
-    # Initial placeholder text shown before first poll
-    _PLACEHOLDERS: dict[str, str] = {
-        "sb_cal": "CAL",
-        "sb_smooth": "SMTH",
-        "sb_ifbw": "IFBW",
-        "sb_power": "PWR",
-        "sb_trigger": "TRIG",
-    }
-
-    def __init__(self, **kwargs):
-        """Initialise state stores for chip text/class and debug chip visibility."""
-        super().__init__(**kwargs)
-        # (text, css_class) — class "" means no coloured background
-        self._sb_state: dict[str, tuple[str, str]] = {
-            k: (self._PLACEHOLDERS[k], "--stale") for k in _SB_ITEMS
-        }
-        # Debug chip state — persists across Footer recomposes
-        self._debug_visible: bool = False
-        self._debug_chip_state: tuple[str, str] = ("ERR OK", "--state-ok")
-
-    def compose(self) -> ComposeResult:
-        """Build footer: key bindings (left), debug chip, spacer, status chips (right)."""
-        yield from super().compose()  # q Quit leftmost; ^p palette docked right
-        # Debug error chip — left-aligned next to q Quit, hidden until debug active.
-        # Classes are set from stored state so recomposes (triggered by Footer
-        # internals on focus changes) preserve visibility and chip content.
-        debug_text, debug_css = self._debug_chip_state
-        grp_classes = "--visible" if self._debug_visible else ""
-        with Horizontal(id="sb_debug_group", classes=grp_classes):
-            yield Static(" ", classes="sb-sep")
-            yield Static(
-                debug_text,
-                id="sb_lasterr",
-                classes=f"sb-item {debug_css}".strip(),
-            )
-        yield Static("", id="sb_spacer")  # pushes status items to the right
-        with Horizontal(id="sb_status_container"):
-            for i, item_id in enumerate(_SB_ITEMS):
-                if i > 0:
-                    yield Static(" ", classes="sb-sep")
-                text, css_class = self._sb_state[item_id]
-                yield Static(text, id=item_id, classes=f"sb-item {css_class}".strip())
-
-    def _set_item(self, item_id: str, text: str, css_class: str = "") -> None:
-        """Update a single status chip's text and CSS class in state and in the DOM."""
-        self._sb_state[item_id] = (text, css_class)
-        try:
-            w = self.query_one(f"#{item_id}", Static)
-            w.update(text)
-            w.remove_class(*_ALL_SB_STATE_CLASSES)
-            if css_class:
-                w.add_class(css_class)
-        except Exception:
-            pass
-
-    def _apply_debug_chip(self) -> None:
-        """Push stored debug chip state to the live widgets."""
-        try:
-            self.query_one("#sb_debug_group").set_class(
-                self._debug_visible, "--visible"
-            )
-            # Only update chip content when visible — avoids a colour flash
-            # when the group is being hidden (class change rendered before hide).
-            if not self._debug_visible:
-                return
-            text, css_class = self._debug_chip_state
-            chip = self.query_one("#sb_lasterr", Static)
-            chip.update(text)
-            chip.remove_class(*_ALL_SB_STATE_CLASSES)
-            if css_class:
-                chip.add_class(css_class)
-        except Exception:
-            pass
-
-    def set_disconnected(self) -> None:
-        """Mark all items as stale; preserve last-known text."""
-        for item_id in _SB_ITEMS:
-            text, _ = self._sb_state[item_id]
-            self._sb_state[item_id] = (text, "--stale")
-            try:
-                w = self.query_one(f"#{item_id}", Static)
-                w.remove_class(*_ALL_SB_STATE_CLASSES)
-                w.add_class("--stale")
-            except Exception:
-                pass
-        # Gray out debug chip while disconnected
-        prev_text, _ = self._debug_chip_state
-        self._debug_chip_state = (prev_text, "--stale")
-        self._apply_debug_chip()
-
-    def set_debug_mode(self, enabled: bool, connected: bool = True) -> None:
-        """Show or hide the last-error debug chip."""
-        self._debug_visible = enabled
-        if not enabled:
-            self._debug_chip_state = ("ERR OK", "--state-ok")
-        elif not connected:
-            self._debug_chip_state = ("ERR OK", "--stale")
-        self._apply_debug_chip()
-
-    def update_last_error(self, command: str, raw_error: str) -> None:
-        """Update the debug error chip from a SYST:ERR? response.
-
-        Args:
-            command:   The SCPI command that preceded the SYST:ERR? check.
-            raw_error: Stripped SYST:ERR? response, e.g. ``+0,"No error"``
-                       or ``-113,"Undefined header"``.
-        """
-        if raw_error.startswith("+0") or raw_error.startswith("0,"):
-            self._debug_chip_state = ("ERR OK", "--state-ok")
-        else:
-            code = raw_error.split(",")[0].strip()
-            name = _SCPI_ERROR_NAMES.get(code, code)
-            mnem = _scpi_mnemonic(command)
-            self._debug_chip_state = (f"{mnem} {name}", "--state-off")
-        self._apply_debug_chip()
-
-    def update_status(self, result: "StatusResult") -> None:
-        """Refresh all status chips from a fresh StatusResult."""
-        # Calibration
-        if result.cal_enabled is None:
-            self._set_item("sb_cal", self._sb_state["sb_cal"][0], "--stale")
-        elif result.cal_enabled:
-            self._set_item("sb_cal", (result.cal_type or "CAL").strip(), "--state-ok")
-        else:
-            self._set_item("sb_cal", "CAL", "--state-off")
-
-        # Smoothing
-        if result.smoothing_enabled is None:
-            self._set_item("sb_smooth", self._sb_state["sb_smooth"][0], "--stale")
-        elif result.smoothing_enabled and result.smoothing_aperture is not None:
-            self._set_item(
-                "sb_smooth", f"SMTH {result.smoothing_aperture:.1f}%", "--smo-on"
-            )
-        else:
-            self._set_item("sb_smooth", "SMTH", "--state-off")
-
-        # IF bandwidth
-        hz = result.if_bandwidth_hz
-        if hz is None:
-            self._set_item("sb_ifbw", self._sb_state["sb_ifbw"][0], "--stale")
-        elif hz >= 1e6:
-            self._set_item("sb_ifbw", f"{hz / 1e6:.3g} MHz")
-        elif hz >= 1e3:
-            self._set_item("sb_ifbw", f"{hz / 1e3:.3g} kHz")
-        else:
-            self._set_item("sb_ifbw", f"{hz:.3g} Hz")
-
-        # Port power
-        if result.port_power_dbm is None:
-            self._set_item("sb_power", self._sb_state["sb_power"][0], "--stale")
-        else:
-            self._set_item("sb_power", f"{result.port_power_dbm:+.1f} dBm")
-
-        # Trigger source
-        if result.trigger_source is None:
-            self._set_item("sb_trigger", self._sb_state["sb_trigger"][0], "--stale")
-        else:
-            src = result.trigger_source.strip().upper()
-            css = f"--trig-{src}" if f"--trig-{src}" in _ALL_SB_STATE_CLASSES else ""
-            self._set_item("sb_trigger", src, css)
 
 
 class VNAApp(App):
     """TINA - Terminal UI Network Analyzer"""
 
-    # Maps log level names to their filter checkbox widget IDs.
-    # Both primary and secondary levels are listed here; composite levels
-    # (e.g. "tx/poll") require both halves to be enabled to show.
-    _LOG_FILTER_IDS: dict[str, str] = {
-        "tx": "#check_log_tx",
-        "rx": "#check_log_rx",
-        "info": "#check_log_info",
-        "progress": "#check_log_progress",
-        "success": "#check_log_success",
-        "error": "#check_log_error",
-        "debug": "#check_log_debug",
-        "poll": "#check_log_poll",
-    }
-
-    CSS = """
-    Screen {
-        background: $surface;
-    }
-
-    #content {
-        height: 100%;
-        margin: 1;
-        margin-bottom: 0;
-    }
-
-    .panel {
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
-        height: auto;
-        padding: 0 1;
-        margin-bottom: 1;
-    }
-
-    .field {
-        height: auto;
-        margin-bottom: 0;
-        align: left middle;
-    }
-
-    .field Label {
-        width: auto;
-        padding-right: 1;
-        content-align: left middle;
-        height: 100%;
-    }
-
-    .field Input {
-        width: 1fr;
-    }
-
-    .field Select {
-        width: 1fr;
-    }
-
-    .field Checkbox {
-        width: auto;
-        margin-right: 2;
-        height: 3;
-        border: none;
-        content-align: left middle;
-    }
-
-    Checkbox {
-        border: none;
-        height: 3;
-        content-align: left middle;
-    }
-
-    .param-row {
-        height: 3;
-        margin-bottom: 0;
-        align: left middle;
-    }
-
-    .param-row .col-label {
-        width: 12;
-        content-align: left middle;
-        height: 100%;
-    }
-
-    .param-row Label {
-        content-align: center middle;
-        height: 100%;
-    }
-
-    .param-row .col-input {
-        width: 1fr;
-    }
-
-    .param-row .col-input Input {
-        width: 1fr;
-    }
-
-    .param-row .col-check {
-        width: 17;
-    }
-
-    .filter-row {
-        height: auto;
-    }
-
-    .filter-row Checkbox {
-        width: auto;
-        margin-right: 0;
-    }
-
-    .filter-spacer {
-        width: 1fr;
-    }
-
-    .secondary-filter {
-        opacity: 0.5;
-    }
-
-    .button-group {
-        height: auto;
-        margin-top: 1;
-        margin-bottom: 0;
-        align: center middle;
-    }
-
-    Button {
-        margin: 1 0 0 0;
-        width: 100%;
-    }
-
-    .plot-controls {
-        height: auto;
-        margin-bottom: 0;
-        align: left middle;
-    }
-
-    .plot-controls Label {
-        width: auto;
-        padding-right: 1;
-        content-align: left middle;
-        height: 3;
-    }
-
-    .plot-controls Select {
-        width: 20;
-        margin-right: 2;
-    }
-
-    .plot-controls Checkbox {
-        width: auto;
-        margin-right: 1;
-        height: 3;
-        border: none;
-    }
-
-    .plot-controls .spacer {
-        width: 1fr;
-    }
-
-    .plot-controls Button {
-        width: auto;
-        min-width: 8;
-        margin-left: 1;
-    }
-
-    .plot-controls Input {
-        width: 1fr;
-        margin-right: 1;
-    }
-
-    .span-axis-group {
-        width: 1fr;
-        height: auto;
-        margin-right: 2;
-    }
-
-    .span-axis-group:last-child {
-        margin-right: 0;
-    }
-
-    #btn_reset_freq_limits,
-    #btn_reset_y_limits,
-    #btn_apply_limits {
-        padding: 0 2;
-    }
-
-    #btn_import_results {
-        min-width: 16;
-    }
-
-    #btn_open_output,
-    #btn_export_png,
-    #btn_export_svg {
-        width: auto;
-        min-width: 12;
-    }
-
-    #output_file_label {
-        width: auto;
-        height: 3;
-        content-align: left middle;
-    }
-
-    #controls_panel {
-        dock: bottom;
-        width: 100%;
-        height: auto;
-        margin: 0;
-        padding: 0;
-        border: none;
-    }
-
-    #action_bar {
-        width: 100%;
-        height: auto;
-        align: right middle;
-        background: $boost;
-        padding: 0 1 1 1;
-    }
-
-    #progress_container {
-        width: 1fr;
-        height: auto;
-    }
-
-    #progress_container {
-        width: 1fr;
-        height: auto;
-        padding: 0;
-        margin: 0;
-    }
-
-    #progress_label {
-        height: 1;
-        padding: 0;
-        margin: 0;
-    }
-
-    #progress_bar {
-        width: 100%;
-        height: 1;
-        padding: 0;
-        margin: 0;
-    }
-
-    #progress_bar PercentageStatus {
-        display: none;
-    }
-
-    #progress_bar ETAStatus {
-        display: none;
-    }
-
-    #progress_bar Bar {
-        width: 1fr;
-        height: 1;
-    }
-
-    #progress_bar Bar > .bar--indeterminate {
-        color: $surface-lighten-1;
-    }
-
-    #progress_bar Bar > .bar--background {
-        color: $surface-lighten-1;
-    }
-
-    #progress_bar Bar > .bar--bar {
-        color: $primary;
-    }
-
-    #progress_bar Bar > .bar--complete {
-        color: $success;
-    }
-
-    #action_bar Button {
-        width: auto;
-        min-width: 16;
-        margin: 0 0 0 1;
-        height: 2;
-        border: none;
-        padding: 0 2;
-    }
-
-    .spacer {
-        width: 1fr;
-    }
-
-    #log_content {
-        height: 1fr;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
-        margin: 1 0 0 0;
-    }
-
-
-    #results_text {
-        height: 100%;
-        padding: 1;
-    }
-
-    TabbedContent {
-        height: 100%;
-    }
-
-    #footer_separator {
-        dock: bottom;
-        height: 1;
-        background: $secondary;
-    }
-
-    .log-info {
-        color: $text;
-    }
-
-    .log-success {
-        color: $success;
-    }
-
-    .log-error {
-        color: $error;
-    }
-
-    .log-progress {
-        color: $warning;
-    }
-
-    .log-tx {
-        color: $accent;
-    }
-
-    .log-rx {
-        color: $primary;
-    }
-
-    DataTable {
-        width: 100%;
-        height: auto;
-    }
-
-    #results_container {
-        width: 100%;
-        align: center top;
-    }
-
-    PlotextPlot {
-        width: 100%;
-        height: 25;
-        margin: 1 0;
-    }
-
-    ImageWidget {
-        margin: 1 0;
-    }
-
-    #tools_plot_container {
-        width: 100%;
-        align: center top;
-        height: auto;
-        padding: 0;
-    }
-
-    #tools_plot_placeholder, #results_plot_placeholder {
-        padding: 1 1;
-        content-align: center middle;
-        width: 100%;
-    }
-
-    #tools_params_container {
-        height: auto;
-        padding: 0;
-        margin: 0;
-    }
-
-    #tools_scroll {
-        height: 1fr;
-    }
-
-    #tools_tool_panel {
-        height: 3;
-        border: none;
-        margin-bottom: 0;
-    }
-
-    #output_file_container {
-        dock: bottom;
-        margin-bottom: 0;
-        height: 3;
-        border: none;
-        padding-bottom: 1;
-    }
-
-
-    #tools_tool_panel Button, #output_file_container Button {
-        height: 2;
-        border: none;
-        padding: 0 2;
-    }
-
-    #tools_tool_panel .button-group {
-        margin-top: 0;
-    }
-
-    #tools_middle_row {
-        layout: grid;
-        grid-size: 2 1;
-        grid-columns: 2fr 1fr;
-        height: auto;
-    }
-
-    #tools_middle_row > Container {
-        height: 100%;
-        margin-bottom: 0;
-    }
-
-    #tools_results_container {
-        align: center middle;
-    }
-
-    #tools_params_placeholder {
-        padding: 1 0;
-        width: 100%;
-        content-align: center middle;
-    }
-
-    #tools_results_display {
-        padding: 1 0;
-        width: auto;
-        height: auto;
-        content-align: center middle;
-        link-style: none;
-        link-style-hover: none;
-        link-color-hover: $background;
-        link-background-hover: $foreground;
-    }
-
-    .tools-cursor-1 {
-        color: $warning;
-    }
-
-    .tools-cursor-2 {
-        color: $primary;
-    }
-
-    .distortion-comp-row {
-        height: 3;
-        border: none;
-        background: transparent;
-        margin: 0;
-        padding: 0;
-        layout: horizontal;
-        align: center middle;
-    }
-
-    .distortion-comp-row Checkbox {
-        height: 1;
-        border: none;
-        background: transparent;
-        padding: 0 1;
-        width: auto;
-        content-align: left middle;
-    }
-
-    #tools_trace_radioset {
-        height: 3;
-        border: none;
-        background: transparent;
-        margin: 0;
-        padding: 0;
-        layout: horizontal;
-    }
-
-    #tools_trace_radioset RadioButton {
-        height: 3;
-        border: none;
-        background: transparent;
-        padding: 0 1;
-        width: auto;
-        content-align: left middle;
-    }
-
-    #btn_tool_measure,
-    #btn_tool_distortion {
-        width: 1fr;
-        margin: 0 1 0 0;
-    }
-
-    #btn_tool_distortion {
-        margin-right: 0;
-    }
-
-    """
+    CSS_PATH = [
+        "gui/styles/core.tcss",
+        "gui/styles/plots.tcss",
+        "gui/styles/setup_tab.tcss",
+        "gui/styles/measurement_tab.tcss",
+        "gui/styles/tools_tab.tcss",
+        "gui/styles/frequency_entry.tcss",
+        "gui/styles/log_tab.tcss",
+    ]
 
     COMMANDS = App.COMMANDS | {
         StatusPollProvider,
         PlotBackendProvider,
         CursorMarkerProvider,
+        SetupImportProvider,
     }
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("ctrl+d", "toggle_debug_scpi", "SCPI Debug", show=False),
+        Binding("ctrl+s", "save_back", "Save measurement notes", show=False),
     ]
 
     TITLE = "TINA - Terminal UI Network Analyzer"
@@ -2390,16 +204,28 @@ class VNAApp(App):
         migration_message: str | None = None,
     ):
         """
-        Initialize application state, configuration, worker, timers, and temporary plot directory.
+        Initialize application state, configuration, worker, timers, and
+        temporary plot directory.
 
-        Sets up settings (via SettingsManager), measurement worker, VNA configuration, UI-related flags and caches, timers used for polling and debouncing, tools tab state, a temporary directory for rendered plot images, and detects terminal font/program for consistent rendering.
+        Sets up settings (via SettingsManager), measurement worker, and VNA
+        configuration. Also initializes UI-related flags and caches, timers
+        used for polling and debouncing, tools tab state, a temporary
+        directory for rendered plot images, and detects the terminal font
+        and program for consistent rendering.
 
         Parameters:
-            test_updates (bool): When True, enable test-mode update behavior used by the background update checker (shows test/welcome notifications).
-            dev_mode (bool): When True, suppress the post-update welcome popup and skip persisting the version acknowledgement to disk.
-            migration_message (str | None): If set, logged at startup to inform the user that legacy settings were migrated.
+            test_updates (bool): When True, enable test-mode update behavior
+                used by the background update checker (shows test/welcome
+                notifications).
+            dev_mode (bool): When True, suppress the post-update welcome
+                popup and skip persisting the version acknowledgement to
+                disk.
+            migration_message (str | None): If set, logged at startup to
+                inform the user that legacy settings were migrated.
         """
         super().__init__()
+        self.register_theme(TINA_THEME)
+        self.theme = "tina"
 
         self._test_updates = test_updates
         self._dev_mode = dev_mode
@@ -2410,29 +236,55 @@ class VNAApp(App):
         self.config = VNAConfig()
         self.connected = False
         self.measuring = False
+        self._import_in_flight = False
         self.last_measurement = None  # Store last measurement data
+        self._measurement_plot_cache = {}
+        self._measurement_plot_cache_measurement_id = None
+        self._plot_render_generation = 0
+        self._results_plot_generation = 0
+        self._results_plot_cache_key = None
+        self._results_plot_display_key = None
+        self._results_plot_pixel_size = None
+        self._current_background_job_id = 0
+        self._background_jobs: dict[int, dict[str, object]] = {}
+        self._manual_export_jobs_in_flight = 0
+        self.measurement_notes = ""  # Store raw markdown notes for current measurement
         self.last_output_path = None  # Store last output file path
         self.last_plot_path = None  # Store last plot image path
         self.log_messages = []  # Store all log messages for filtering
         self._message_check_timer = None  # Timer for checking worker messages
         self._resize_timer = None  # Timer for debouncing resize events
         self._path_update_timer = None  # Timer for updating path label on resize
+        self._plot_refresh_timer = None  # Timer for debouncing plot control changes
         self._poll_timer = None  # Timer for status bar polling
         self._status_poll_in_flight = False  # True while a STATUS_POLL is outstanding
         self._debug_scpi = self.settings.debug_scpi
+        self._filename_template_validation = None
+        self._folder_template_validation = None
+        self._minimal_export_mode = False
 
         # Tools tab state
         self._tools_cursor1_hz: float | None = None
         self._tools_cursor2_hz: float | None = None
         self._tools_resize_timer = None
         self._tools_input_timer = None  # Timer for debouncing cursor input changes
+        self._tools_plot_generation = 0
+        self._tools_plot_cache_key = None
+        self._tools_plot_display_key = None
+        self._latest_tools_render_result: dict[str, object] | None = None
+        self._latest_tools_render_cache_key: tuple[object, ...] | None = None
+        self._latest_tools_compute_result: dict[str, object] | None = None
+        self._latest_tools_compute_cache_key: tuple[object, ...] | None = None
+        self._tools_distortion_cache = {}
+        self._tools_distortion_cache_last_data_key = None
+        self._template_input_timer = None
 
         # Create temporary directory for plot images
         self.plot_temp_dir = Path("/tmp/tui-vna-plots")
         self.plot_temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Detect terminal and font once at boot
-        self.terminal_font, self.terminal_font_size = _get_terminal_font()
+        self.terminal_font, self.terminal_font_size = get_terminal_font()
         self.terminal_program = os.getenv("TERM_PROGRAM", "unknown")
 
     def compose(self) -> ComposeResult:
@@ -2440,402 +292,17 @@ class VNAApp(App):
         yield Header()
 
         with TabbedContent(id="content"):
-            # Measurement Tab
             with TabPane("Setup", id="tab_measure"):
-                with VerticalScroll():
-                    # Connection Settings
-                    with Container(classes="panel") as panel:
-                        panel.border_title = "Connection"
-                        with Horizontal(classes="field"):
-                            yield Label("Host:")
-                            yield Input(
-                                value=self.settings.last_host,
-                                placeholder="IP address (e.g., 192.168.1.100)",
-                                id="input_host",
-                            )
-                            yield Label("Port:")
-                            yield Input(
-                                value=self.settings.last_port,
-                                placeholder="inst0",
-                                id="input_port",
-                            )
-                        with Horizontal(classes="param-row"):
-                            yield Label("Status poll:", classes="col-label")
-                            yield Select(
-                                options=[
-                                    ("Off", 0),
-                                    ("1 s", 1),
-                                    ("2 s", 2),
-                                    ("5 s", 5),
-                                    ("10 s", 10),
-                                    ("30 s", 30),
-                                ],
-                                value=self.settings.status_poll_interval,
-                                id="sb_poll_interval",
-                                classes="col-input",
-                            )
-                            yield Static("", classes="col-check")
+                yield from compose_setup_tab(self)
 
-                    # Measurement Settings
-                    with Container(classes="panel") as panel:
-                        panel.border_title = "Measurement Parameters"
-                        with Horizontal(classes="param-row"):
-                            yield Label("Unit:", classes="col-label")
-                            yield Select(
-                                options=[
-                                    ("Hz", "Hz"),
-                                    ("kHz", "kHz"),
-                                    ("MHz", "MHz"),
-                                    ("GHz", "GHz"),
-                                ],
-                                value=self.settings.freq_unit,
-                                id="select_freq_unit",
-                                classes="col-input",
-                            )
-                            yield Static("", classes="col-check")
-                        with Horizontal(classes="param-row"):
-                            yield Label("Frequency:", classes="col-label")
-                            yield Input(
-                                value=str(self.settings.start_freq_mhz),
-                                placeholder="Start",
-                                id="input_start_freq",
-                                classes="col-input",
-                            )
-                            yield Label("-")
-                            yield Input(
-                                value=str(self.settings.stop_freq_mhz),
-                                placeholder="Stop",
-                                id="input_stop_freq",
-                                classes="col-input",
-                            )
-                            yield Checkbox(
-                                "Override",
-                                id="check_set_freq",
-                                value=self.settings.set_freq_range,
-                                classes="col-check",
-                            )
-                        with Horizontal(classes="param-row"):
-                            yield Label("Points:", classes="col-label")
-                            yield Input(
-                                value=str(self.settings.sweep_points),
-                                placeholder="601",
-                                id="input_points",
-                                classes="col-input",
-                            )
-                            yield Label(" ")
-                            yield Static("", classes="col-input")
-                            yield Checkbox(
-                                "Override",
-                                id="check_set_points",
-                                value=self.settings.set_sweep_points,
-                                classes="col-check",
-                            )
-                        with Horizontal(classes="param-row"):
-                            yield Label("Averaging:", classes="col-label")
-                            yield Input(
-                                value=str(self.settings.averaging_count),
-                                placeholder="16",
-                                id="input_avg_count",
-                                classes="col-input",
-                            )
-                            yield Checkbox(
-                                "Enable",
-                                id="check_averaging",
-                                value=self.settings.enable_averaging,
-                                classes="col-input",
-                            )
-                            yield Checkbox(
-                                "Override",
-                                id="check_set_avg_count",
-                                value=self.settings.set_averaging_count,
-                                classes="col-check",
-                            )
-
-                    # Output Settings
-                    with Container(classes="panel") as panel:
-                        panel.border_title = "Output"
-                        with Horizontal(classes="param-row"):
-                            yield Label("Prefix:", classes="col-label")
-                            yield Input(
-                                value=self.settings.filename_prefix,
-                                placeholder="measurement",
-                                id="input_filename_prefix",
-                                classes="col-input",
-                            )
-                            yield Static("", classes="col-check")
-                        with Horizontal(classes="param-row"):
-                            yield Label("Folder:", classes="col-label")
-                            yield Input(
-                                value=self.settings.output_folder,
-                                placeholder="measurement",
-                                id="input_output_folder",
-                                classes="col-input",
-                            )
-                            yield Static("", classes="col-check")
-                        with Horizontal(classes="param-row"):
-                            yield Label("Filename:", classes="col-label")
-                            yield Input(
-                                value=self.settings.custom_filename,
-                                placeholder="(auto-generated)",
-                                id="input_custom_filename",
-                                classes="col-input",
-                                disabled=not self.settings.use_custom_filename,
-                            )
-                            yield Checkbox(
-                                "Custom",
-                                id="check_custom_filename",
-                                value=self.settings.use_custom_filename,
-                                classes="col-check",
-                            )
-                        with Horizontal(classes="param-row"):
-                            yield Label("Export:", classes="col-label")
-                            yield Checkbox(
-                                "S11",
-                                id="check_export_s11",
-                                value=self.settings.export_s11,
-                            )
-                            yield Checkbox(
-                                "S21",
-                                id="check_export_s21",
-                                value=self.settings.export_s21,
-                            )
-                            yield Checkbox(
-                                "S12",
-                                id="check_export_s12",
-                                value=self.settings.export_s12,
-                            )
-                            yield Checkbox(
-                                "S22",
-                                id="check_export_s22",
-                                value=self.settings.export_s22,
-                            )
-                            yield Static("", classes="col-check")
-
-            # Measurement Tab
             with TabPane("Measurement", id="tab_results"):
-                # Output File panel — docked to bottom
-                with Container(id="output_file_container", classes="panel") as panel:
-                    panel.border_title = "Output"
-                    with Horizontal(classes="plot-controls"):
-                        yield Static(
-                            "No file loaded", id="output_file_label", markup=True
-                        )
-                        yield Static(classes="spacer")
-                        yield Button(
-                            "📂\nShow",
-                            id="btn_open_output",
-                            variant="primary",
-                            disabled=True,
-                        )
-                        yield Button(
-                            "◐\nPNG",
-                            id="btn_export_png",
-                            variant="success",
-                            disabled=True,
-                        )
-                        yield Button(
-                            "◇\nSVG",
-                            id="btn_export_svg",
-                            variant="success",
-                            disabled=True,
-                        )
-                with VerticalScroll():
-                    # Plot container (results/graph)
-                    with Container(id="results_container", classes="panel") as panel:
-                        panel.border_title = "Plot"
-                        yield Static(
-                            "[dim]No measurements yet.[/dim]",
-                            id="results_plot_placeholder",
-                            markup=True,
-                        )
-                    # Options panel (plot parameter selection)
-                    with Container(classes="panel") as panel:
-                        panel.border_title = "Options"
-                        with Horizontal(classes="plot-controls"):
-                            yield Label("Type:")
-                            yield Select(
-                                options=[
-                                    ("Magnitude", "magnitude"),
-                                    ("Phase", "phase"),
-                                    ("Phase Raw", "phase_raw"),
-                                ],
-                                value=(
-                                    self.settings.plot_type
-                                    if self.settings.plot_type
-                                    in ["magnitude", "phase", "phase_raw"]
-                                    else "magnitude"
-                                ),
-                                id="select_plot_type",
-                            )
-                            yield Label("Show:")
-                            yield Checkbox(
-                                "S11", id="check_plot_s11", value=self.settings.plot_s11
-                            )
-                            yield Checkbox(
-                                "S21", id="check_plot_s21", value=self.settings.plot_s21
-                            )
-                            yield Checkbox(
-                                "S12", id="check_plot_s12", value=self.settings.plot_s12
-                            )
-                            yield Checkbox(
-                                "S22", id="check_plot_s22", value=self.settings.plot_s22
-                            )
-                        with Horizontal(classes="plot-controls"):
-                            with Horizontal(classes="span-axis-group"):
-                                yield Label("X:")
-                                yield Input(
-                                    placeholder="Min",
-                                    id="input_plot_freq_min",
-                                )
-                                yield Label("-")
-                                yield Input(
-                                    placeholder="Max",
-                                    id="input_plot_freq_max",
-                                )
-                                yield Button(
-                                    "↻ Reset",
-                                    id="btn_reset_freq_limits",
-                                    variant="default",
-                                )
-                            with Horizontal(classes="span-axis-group"):
-                                yield Label("Y:")
-                                yield Input(
-                                    placeholder="Min",
-                                    id="input_plot_y_min",
-                                )
-                                yield Label("-")
-                                yield Input(
-                                    placeholder="Max",
-                                    id="input_plot_y_max",
-                                )
-                                yield Button(
-                                    "↻ Reset",
-                                    id="btn_reset_y_limits",
-                                    variant="default",
-                                )
-                            yield Button(
-                                "✓ Apply",
-                                id="btn_apply_limits",
-                                variant="primary",
-                            )
+                yield from compose_measurement_tab(self)
 
-            # Tools Tab
             with TabPane("Tools", id="tab_tools"):
-                with VerticalScroll(id="tools_scroll"):
-                    # Plot frame
-                    with Container(id="tools_plot_container", classes="panel") as panel:
-                        panel.border_title = "Plot"
-                        yield Static(
-                            "[dim]No measurement loaded.[/dim]",
-                            id="tools_plot_placeholder",
-                            markup=True,
-                        )
-                    # Selection + Results side by side
-                    with Horizontal(id="tools_middle_row"):
-                        # Selection frame (left half)
-                        with Container(classes="panel") as panel:
-                            panel.border_title = "Selection"
-                            with Horizontal(classes="plot-controls"):
-                                yield Label("Type:")
-                                yield Select(
-                                    options=[
-                                        ("Magnitude", "magnitude"),
-                                        ("Phase", "phase"),
-                                        ("Phase (raw)", "phase_raw"),
-                                    ],
-                                    value=(
-                                        self.settings.tools_plot_type
-                                        if self.settings.tools_plot_type
-                                        in ("magnitude", "phase", "phase_raw")
-                                        else "magnitude"
-                                    ),
-                                    id="select_tools_plot_type",
-                                )
-                                yield Label("Trace:")
-                                with RadioSet(id="tools_trace_radioset"):
-                                    yield RadioButton(
-                                        "S11",
-                                        id="tools_radio_s11",
-                                        value=(self.settings.tools_trace == "S11"),
-                                    )
-                                    yield RadioButton(
-                                        "S21",
-                                        id="tools_radio_s21",
-                                        value=(self.settings.tools_trace == "S21"),
-                                    )
-                                    yield RadioButton(
-                                        "S12",
-                                        id="tools_radio_s12",
-                                        value=(self.settings.tools_trace == "S12"),
-                                    )
-                                    yield RadioButton(
-                                        "S22",
-                                        id="tools_radio_s22",
-                                        value=(self.settings.tools_trace == "S22"),
-                                    )
-                            # Dynamic parameters area (populated when a tool is active)
-                            with Container(id="tools_params_container"):
-                                yield Static(
-                                    "[dim]Activate a tool below to see options.[/dim]",
-                                    id="tools_params_placeholder",
-                                    markup=True,
-                                )
-                        # Results frame (right half)
-                        with Container(
-                            id="tools_results_container", classes="panel"
-                        ) as panel:
-                            panel.border_title = "Tool Results [@click='app.show_tool_help'][on $primary] ? [/]"
-                            yield Static(
-                                "[dim]No tool active.[/dim]",
-                                id="tools_results_display",
-                                markup=True,
-                            )
+                yield from compose_tools_tab(self)
 
-                # Tool selector — below the scroll area
-                with Container(id="tools_tool_panel", classes="panel") as panel:
-                    panel.border_title = "Tool"
-                    with Horizontal(classes="button-group"):
-                        yield Button(
-                            "⊙\nCursor",
-                            id="btn_tool_measure",
-                            variant="primary",
-                        )
-                        yield Button(
-                            "⌇\nDistortion",
-                            id="btn_tool_distortion",
-                            variant="primary",
-                        )
-
-            # Log Tab
             with TabPane("Log", id="tab_log"):
-                # Log filters
-                with Container(classes="panel") as panel:
-                    panel.border_title = "Filter"
-                    with Horizontal(classes="filter-row"):
-                        yield Checkbox("↑ TX", id="check_log_tx", value=True)
-                        yield Checkbox("↓ RX", id="check_log_rx", value=True)
-                        yield Checkbox("i Info", id="check_log_info", value=True)
-                        yield Checkbox("⋯ Busy", id="check_log_progress", value=True)
-                        yield Checkbox("✓ Good", id="check_log_success", value=True)
-                        yield Checkbox("✗ Bad", id="check_log_error", value=True)
-                        yield Static("", classes="filter-spacer")
-                        yield Checkbox(
-                            "• Debug",
-                            id="check_log_debug",
-                            value=False,
-                            classes="secondary-filter",
-                        )
-                        yield Checkbox(
-                            "~ Poll",
-                            id="check_log_poll",
-                            value=False,
-                            classes="secondary-filter",
-                        )
-                log_area = RichLog(
-                    id="log_content", markup=True, highlight=False, wrap=False
-                )
-                log_area.border_title = "Log  [@click='app.copy_log'][reverse] ⎘ [/][/]"
-                yield log_area
+                yield from compose_log_tab()
 
         yield Static("", id="footer_separator")
 
@@ -2845,36 +312,69 @@ class VNAApp(App):
                 with Vertical(id="progress_container"):
                     yield Label("Disconnected", id="progress_label")
                     yield ProgressBar(id="progress_bar")
-                yield Button("📡\nConnect", id="btn_connect", variant="primary")
                 yield Button(
-                    "🔍\nRead Parameters",
+                    "📡\nConnect",
+                    id="btn_connect",
+                    variant="primary",
+                    flat=True,
+                    classes="panel-button",
+                )
+                yield Button(
+                    "🔍\nRead",
                     id="btn_read_params",
                     variant="default",
                     disabled=True,
+                    flat=True,
+                    classes="panel-button",
                 )
                 yield Button(
-                    "📊\nMeasure", id="btn_measure", variant="success", disabled=True
+                    "📊\nMeasure",
+                    id="btn_measure",
+                    variant="success",
+                    disabled=True,
+                    flat=True,
+                    classes="panel-button",
                 )
                 yield Button(
-                    "📁\nImport File",
+                    "📁\nImport",
                     id="btn_import_results",
                     variant="warning",
+                    flat=True,
+                    classes="panel-button",
+                )
+                yield Button(
+                    "💾\nSave",
+                    id="btn_save_notes",
+                    variant="default",
+                    disabled=True,
+                    flat=True,
+                    classes="panel-button",
                 )
 
         yield StatusFooter()
 
     def on_mount(self) -> None:
         """
-        Initialize application UI and background services when the app is mounted.
+        Initialize application UI and background services when the app is
+        mounted.
 
-        Performs startup initialization: updates window title and footer debug state, initializes progress bar and plot-type options, applies tool UI state, starts the measurement worker and its message polling, and schedules a background update check once the UI is ready.
+        Performs startup initialization: updates window title and footer
+        debug state, initializes progress bar and plot-type options, applies
+        tool UI state, starts the measurement worker and its message
+        polling, and schedules a background update check once the UI is
+        ready.
         """
         self._update_title()
         self.query_one(StatusFooter).set_debug_mode(self._debug_scpi, connected=False)
         self.call_after_refresh(self._log_startup)
+        self.call_after_refresh(setup_logic.mount_setup_autocompletes, self)
+        self.call_after_refresh(setup_logic.refresh_export_template_validation, self)
+        self.call_after_refresh(self._load_measurement_notes_into_editor)
+        self.call_after_refresh(self._refresh_measurement_notes_preview)
+        self.call_after_refresh(self._refresh_export_button_labels)
         # Initialize progress bar to 0 (not indeterminate)
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=0)
-        # Initialize plot type dropdown based on backend
+        # Initialize plot-type options based on backend
         self._update_plot_type_options()
         # Apply active tool UI state at startup
         self._apply_tool_ui()
@@ -2908,9 +408,9 @@ class VNAApp(App):
             welcome_cl, stable_fake, pre_fake = await loop.run_in_executor(
                 None, fetch_test_update_data, __version__
             )
-            await self.push_screen_wait(_welcome_screen(__version__, welcome_cl))
-            await self.push_screen_wait(_update_screen(stable_fake))
-            await self.push_screen_wait(_update_screen(pre_fake))
+            await self.push_screen_wait(build_welcome_screen(__version__, welcome_cl))
+            await self.push_screen_wait(build_update_screen(stable_fake))
+            await self.push_screen_wait(build_update_screen(pre_fake))
             return
 
         # --- Post-update welcome (shown once per version after upgrading) ---
@@ -2923,7 +423,9 @@ class VNAApp(App):
                 changelog = await loop.run_in_executor(
                     None, get_changelogs_since, last_ack, __version__
                 )
-                await self.push_screen_wait(_welcome_screen(__version__, changelog))
+                await self.push_screen_wait(
+                    build_welcome_screen(__version__, changelog)
+                )
                 self.settings.last_acknowledged_version = __version__
                 self.settings_manager.save(self.settings)
             elif not last_ack:
@@ -2935,10 +437,10 @@ class VNAApp(App):
         stable, pre = await loop.run_in_executor(None, get_update_info, __version__)
 
         if stable:
-            await self.push_screen_wait(_update_screen(stable))
+            await self.push_screen_wait(build_update_screen(stable))
         elif pre:
             if self.settings.notified_prerelease != pre.version:
-                await self.push_screen_wait(_update_screen(pre))
+                await self.push_screen_wait(build_update_screen(pre))
                 if not self._dev_mode:
                     self.settings.notified_prerelease = pre.version
                     self.settings_manager.save(self.settings)
@@ -2978,12 +480,15 @@ class VNAApp(App):
 
     def on_app_theme_changed(self) -> None:
         """
-        Handle theme change by clearing cached styles and updating UI components.
+        Handle theme change by clearing cached styles and updating UI
+        components.
 
-        Clears the cached style map, re-renders the log using the updated theme colors, and—if a measurement is loaded—schedules refreshed tools and results plots to run after the next render cycle.
+        Clears the cached style map, re-renders the log using the updated
+        theme colors, and — if a measurement is loaded — schedules refreshed
+        tools and results plots to run after the next render cycle.
         """
         self._cached_style_map = None
-        self._refresh_log_display()
+        log_logic.refresh_log_display(self)
         if self.last_measurement is not None:
             self.call_after_refresh(self._refresh_tools_plot)
             self.call_after_refresh(self._refresh_results_plot)
@@ -2992,10 +497,21 @@ class VNAApp(App):
         """
         Perform shutdown tasks for the application.
 
-        Saves current settings and attempts to stop the background measurement worker, waiting up to 5.0 seconds for it to terminate.
+        Saves current settings and attempts to stop the background measurement worker.
+
+        Waits up to 5.0 seconds for it to terminate.
         """
         # Save settings before exit
         self._save_current_settings()
+        try:
+            tools_plot_state = getattr(self, "_tools_mpl_plot_state", None)
+            tools_plot_fig = tools_plot_state.get("fig") if tools_plot_state else None
+            if tools_plot_fig is not None:
+                import matplotlib.pyplot as plt
+
+                plt.close(tools_plot_fig)
+        except Exception:
+            pass
         # Stop worker thread gracefully
         if self.worker:
             self.worker.stop(timeout=5.0)
@@ -3010,7 +526,9 @@ class VNAApp(App):
             )
 
             # Measurement parameters
-            self.settings.freq_unit = self.query_one("#select_freq_unit", Select).value
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            if isinstance(freq_unit_value, str):
+                self.settings.freq_unit = freq_unit_value
             self.settings.start_freq_mhz = float(
                 self.query_one("#input_start_freq", Input).value or "1.0"
             )
@@ -3040,17 +558,13 @@ class VNAApp(App):
 
             # Output settings
             self.settings.output_folder = self.query_one(
-                "#input_output_folder", Input
+                "#input_folder_template", Input
             ).value
+            self.settings.folder_template = self.settings.output_folder
             self.settings.filename_prefix = self.query_one(
-                "#input_filename_prefix", Input
+                "#input_filename_template", Input
             ).value
-            self.settings.use_custom_filename = self.query_one(
-                "#check_custom_filename", Checkbox
-            ).value
-            self.settings.custom_filename = self.query_one(
-                "#input_custom_filename", Input
-            ).value
+            self.settings.filename_template = self.settings.filename_prefix
             self.settings.export_s11 = self.query_one(
                 "#check_export_s11", Checkbox
             ).value
@@ -3063,20 +577,44 @@ class VNAApp(App):
             self.settings.export_s22 = self.query_one(
                 "#check_export_s22", Checkbox
             ).value
+            self.settings.export_bundle_s2p = self.query_one(
+                "#check_export_bundle_s2p", Checkbox
+            ).value
+            self.settings.export_bundle_csv = self.query_one(
+                "#check_export_bundle_csv", Checkbox
+            ).value
+            self.settings.export_bundle_png = self.query_one(
+                "#check_export_bundle_png", Checkbox
+            ).value
+            self.settings.export_bundle_svg = self.query_one(
+                "#check_export_bundle_svg", Checkbox
+            ).value
+            self.settings_manager.touch_template_history(
+                "filename_template_history",
+                self.settings.filename_template,
+            )
+            self.settings_manager.touch_template_history(
+                "folder_template_history",
+                self.settings.folder_template,
+            )
 
             # Plot settings
             self.settings.plot_s11 = self.query_one("#check_plot_s11", Checkbox).value
             self.settings.plot_s21 = self.query_one("#check_plot_s21", Checkbox).value
             self.settings.plot_s12 = self.query_one("#check_plot_s12", Checkbox).value
             self.settings.plot_s22 = self.query_one("#check_plot_s22", Checkbox).value
-            self.settings.plot_type = self.query_one("#select_plot_type", Select).value
+            plot_type_value = self.query_one("#select_plot_type", Select).value
+            if isinstance(plot_type_value, str):
+                self.settings.plot_type = plot_type_value
 
             # Tools tab settings
             self.settings.tools_trace = self._get_tools_trace()
             try:
-                self.settings.tools_plot_type = self.query_one(
+                tools_plot_type_value = self.query_one(
                     "#select_tools_plot_type", Select
                 ).value
+                if isinstance(tools_plot_type_value, str):
+                    self.settings.tools_plot_type = tools_plot_type_value
             except Exception:
                 pass
 
@@ -3085,6 +623,811 @@ class VNAApp(App):
         except Exception:
             # Silently fail during shutdown to avoid errors
             pass
+
+    def _build_touchstone_export_metadata(
+        self,
+        *,
+        exported_traces: list[str],
+        output_path: str | None = None,
+    ) -> dict[str, object]:
+        """Build machine-readable metadata for Touchstone export and recovery."""
+        metadata: dict[str, object] = {
+            "setup": {
+                "host": self.settings.last_host,
+                "port": self.settings.last_port,
+                "freq_unit": self.settings.freq_unit,
+                "start_freq_mhz": self.settings.start_freq_mhz,
+                "stop_freq_mhz": self.settings.stop_freq_mhz,
+                "sweep_points": self.settings.sweep_points,
+                "averaging_count": self.settings.averaging_count,
+                "set_freq_range": self.settings.set_freq_range,
+                "set_sweep_points": self.settings.set_sweep_points,
+                "enable_averaging": self.settings.enable_averaging,
+                "set_averaging_count": self.settings.set_averaging_count,
+                "output_folder": self.settings.output_folder,
+                "filename_template": self.settings.filename_template,
+                "folder_template": self.settings.folder_template,
+                "export_bundle_s2p": self.settings.export_bundle_s2p,
+                "export_bundle_csv": self.settings.export_bundle_csv,
+                "export_bundle_png": self.settings.export_bundle_png,
+                "export_bundle_svg": self.settings.export_bundle_svg,
+                "export_s11": self.settings.export_s11,
+                "export_s21": self.settings.export_s21,
+                "export_s12": self.settings.export_s12,
+                "export_s22": self.settings.export_s22,
+            },
+            "measurement": {
+                "plot_type": self.settings.plot_type,
+                "plot_s11": self.settings.plot_s11,
+                "plot_s21": self.settings.plot_s21,
+                "plot_s12": self.settings.plot_s12,
+                "plot_s22": self.settings.plot_s22,
+                "exported_traces": exported_traces,
+                "notes_present": bool(self.measurement_notes.strip()),
+            },
+            "tools": {
+                "trace": self.settings.tools_trace,
+                "plot_type": self.settings.tools_plot_type,
+                "active_tool": self.settings.tools_active_tool,
+            },
+        }
+        if output_path:
+            metadata["export"] = {"path": output_path}
+        return metadata
+
+    def _notify_export_result(
+        self,
+        *,
+        kind: str,
+        path: str,
+        exported_items: str,
+    ) -> None:
+        """Show a toaster notification summarizing a completed export."""
+        self.notify(
+            f"Saved {kind}: {Path(path).name} — {exported_items}",
+            severity="information",
+            timeout=4,
+        )
+        try:
+            # Record recent exported path
+            self.settings_manager.add_recent_exported_measurement(path)
+            self.settings_manager.save(self.settings)
+        except Exception:
+            pass
+
+    def _apply_import_result(self, result: ImportResult) -> None:
+        """Restore UI state from a worker-produced import result."""
+        imported_metadata = {
+            "setup": dict(result.setup),
+            "measurement": (
+                dict(result.measurement.get("metadata", {}))
+                if isinstance(result.measurement.get("metadata", {}), dict)
+                else {}
+            ),
+        }
+        self._restore_setup_from_metadata(imported_metadata)
+
+        file_path = str(result.paths.get("selected_path") or "")
+        restored_panels = ["Setup"]
+        restore_measurement = bool(result.measurement.get("restore_measurement", False))
+        self._invalidate_tools_render_result_cache()
+
+        if restore_measurement:
+            freqs = result.measurement.get("frequencies")
+            sparams = result.measurement.get("sparams")
+            imported_freq_unit = result.measurement.get("freq_unit", "MHz")
+            if not isinstance(freqs, np.ndarray) or not isinstance(sparams, dict):
+                raise ValueError(
+                    "Measurement output does not contain recoverable measurement data"
+                )
+
+            self.measurement_notes = result.notes
+            self.last_measurement = {
+                "freqs": freqs,
+                "sparams": sparams,
+                "output_path": result.paths.get("output_path"),
+                "touchstone_path": result.paths.get("touchstone_path"),
+                "png_path": result.paths.get("png_path"),
+                "svg_path": result.paths.get("svg_path"),
+                "freq_unit": imported_freq_unit,
+                "notes": self.measurement_notes,
+                "metadata": imported_metadata,
+            }
+            self.last_output_path = file_path
+            self._load_measurement_notes_into_editor()
+            self._refresh_measurement_notes_preview()
+            self._restore_measurement_view_from_metadata(
+                imported_metadata,
+                sparams=sparams,
+            )
+            restored_panels.append("Measurement")
+
+            self.log_message(
+                f"Imported {len(freqs)} points, {len(sparams)} S-parameters", "success"
+            )
+
+            asyncio.create_task(self._update_results(freqs, sparams, file_path))
+            asyncio.create_task(self._refresh_tools_plot())
+            self._run_tools_computation()
+            self.call_after_refresh(self._rebuild_tools_params)
+            self._notify_import_result(
+                path=file_path,
+                imported_items=(
+                    f"{len(sparams)} traces, {len(freqs)} points; "
+                    f"restored {', '.join(restored_panels)}"
+                ),
+            )
+        else:
+            self.log_message("Imported setup from measurement output", "success")
+            self.notify(
+                f"Loaded setup from {Path(file_path).name} — restored {', '.join(restored_panels)}",
+                severity="information",
+                timeout=4,
+            )
+
+        try:
+            self.settings_manager.add_recent_imported_measurement(file_path)
+            self.settings_manager.save(self.settings)
+        except Exception:
+            pass
+
+    def _start_measurement_import(
+        self, file_path: str, restore_measurement: bool
+    ) -> None:
+        """Queue a threaded import request and update footer state."""
+        if not file_path or self._import_in_flight:
+            return
+
+        self._import_in_flight = True
+        self.disable_all_buttons()
+        self.set_progress("Importing...", 0)
+        self.log_message(f"Importing: {file_path}", "progress")
+        self.worker.send_command(
+            MessageType.IMPORT,
+            ImportRequest(
+                file_path=file_path,
+                restore_measurement=restore_measurement,
+            ),
+        )
+
+    def _notify_import_result(
+        self,
+        *,
+        path: str,
+        imported_items: str,
+    ) -> None:
+        """Show a toaster notification summarizing a completed import."""
+        self.notify(
+            f"Loaded {Path(path).name} — {imported_items}",
+            severity="information",
+            timeout=4,
+        )
+
+    def _build_image_export_metadata(
+        self,
+        *,
+        exported_traces: list[str],
+        plot_type: str,
+        output_path: str,
+    ) -> dict[str, object]:
+        """Build image-export metadata including raw measurement payload for recovery."""
+        metadata = self._build_touchstone_export_metadata(
+            exported_traces=exported_traces,
+            output_path=output_path,
+        )
+        measurement_data = metadata.get("measurement", {})
+        measurement = (
+            dict(measurement_data) if isinstance(measurement_data, dict) else {}
+        )
+        measurement["plot_type"] = plot_type
+        measurement["raw_data"] = {
+            "freqs_hz": (
+                self.last_measurement["freqs"].tolist()
+                if self.last_measurement is not None
+                else []
+            ),
+            "sparams": {
+                name: {
+                    "magnitude_db": values[0].tolist(),
+                    "phase_deg": values[1].tolist(),
+                }
+                for name, values in (
+                    self.last_measurement.get("sparams", {}).items()
+                    if self.last_measurement is not None
+                    else []
+                )
+            },
+        }
+        metadata["measurement"] = measurement
+        return build_image_export_metadata(
+            notes_markdown=self.measurement_notes,
+            machine_settings=metadata,
+        ).machine_settings
+
+    def _is_minimal_export_enabled(self) -> bool:
+        """Return whether minimal export mode is enabled in the Measurement tab."""
+        return self._minimal_export_mode
+
+    @staticmethod
+    def _minimal_export_suffix(minimal_export: bool) -> str:
+        """Return a short label suffix for minimal export notifications."""
+        return " (minimal)" if minimal_export else ""
+
+    def _write_image_export(
+        self,
+        *,
+        file_path: str,
+        plot_type: str,
+        plot_params: list[str],
+        dpi: int,
+        metadata_writer,
+        minimal_export: bool = False,
+    ) -> None:
+        """Render an image export and optionally embed notes plus recovery metadata."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement data available for image export")
+
+        measurement = self.last_measurement
+
+        if plot_type == "smith":
+            create_smith_chart(
+                measurement["freqs"],
+                measurement["sparams"],
+                plot_params,
+                Path(file_path),
+                dpi=dpi,
+                colors=get_plot_colors(self.get_css_variables()),
+            )
+        else:
+            create_matplotlib_plot(
+                measurement["freqs"],
+                measurement["sparams"],
+                plot_params,
+                str(plot_type),
+                Path(file_path),
+                dpi=dpi,
+                colors=get_plot_colors(self.get_css_variables()),
+            )
+
+        if minimal_export:
+            return
+
+        metadata_writer(
+            file_path,
+            notes_markdown=str(measurement.get("notes", "")),
+            machine_settings=self._build_image_export_metadata(
+                exported_traces=plot_params,
+                plot_type=str(plot_type),
+                output_path=file_path,
+            ),
+        )
+
+    async def _run_measurement_image_export(
+        self,
+        *,
+        file_path: str,
+        plot_type: str,
+        plot_params: list[str],
+        dpi: int,
+        metadata_writer,
+        minimal_export: bool,
+        kind: str,
+    ) -> None:
+        """Write a measurement bundle image export without blocking plot refresh."""
+        try:
+            if not VNAApp._supports_unified_background_jobs(self):
+                self._write_image_export(
+                    file_path=file_path,
+                    plot_type=plot_type,
+                    plot_params=plot_params,
+                    dpi=dpi,
+                    metadata_writer=metadata_writer,
+                    minimal_export=minimal_export,
+                )
+                self._notify_export_result(
+                    kind=f"{kind}{self._minimal_export_suffix(minimal_export)}",
+                    path=file_path,
+                    exported_items=", ".join(plot_params),
+                )
+                return
+
+            image_format = "png" if metadata_writer is embed_png_metadata else "svg"
+            await self._run_background_worker_job(
+                msg_type=MessageType.EXPORT,
+                operation=f"Export {kind}",
+                payload={
+                    "kind": kind,
+                    "export_kind": "image",
+                    "file_path": file_path,
+                    "plot_type": plot_type,
+                    "plot_params": plot_params,
+                    "dpi": dpi,
+                    "image_format": image_format,
+                    "minimal_export": minimal_export,
+                    "notes_markdown": (
+                        str(self.last_measurement.get("notes", ""))
+                        if self.last_measurement
+                        else ""
+                    ),
+                    "metadata": (
+                        None
+                        if minimal_export
+                        else self._build_image_export_metadata(
+                            exported_traces=plot_params,
+                            plot_type=str(plot_type),
+                            output_path=file_path,
+                        )
+                    ),
+                    "freqs": self.last_measurement["freqs"].tolist(),
+                    "sparams": {
+                        name: [values[0].tolist(), values[1].tolist()]
+                        for name, values in self.last_measurement["sparams"].items()
+                    },
+                    "colors": get_plot_colors(self.get_css_variables()),
+                    "freq_unit": self.last_measurement.get("freq_unit", "MHz"),
+                },
+            )
+            self.log_message(
+                f"Saved{self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
+            self._notify_export_result(
+                kind=f"{kind}{self._minimal_export_suffix(minimal_export)}",
+                path=file_path,
+                exported_items=", ".join(plot_params),
+            )
+        except Exception as e:
+            self.log_message(f"Post-measurement processing failed: {str(e)}", "error")
+
+    async def _run_touchstone_export_job(
+        self,
+        *,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        freq_unit: str,
+        output_folder: str,
+        filename: str,
+        output_name: str,
+        notes_markdown: str,
+        metadata: dict[str, object] | None,
+        operation: str,
+    ) -> str:
+        """Run Touchstone export via the worker-backed background job path."""
+        if not VNAApp._supports_unified_background_jobs(self):
+            exporter = TouchstoneExporter(freq_unit=freq_unit)
+            return str(
+                exporter.export(
+                    freqs,
+                    sparams,
+                    output_folder,
+                    filename,
+                    output_name,
+                    notes_markdown=notes_markdown,
+                    metadata=metadata,
+                )
+            )
+
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.EXPORT,
+            operation=operation,
+            payload={
+                "kind": "Touchstone",
+                "export_kind": "touchstone",
+                "freq_unit": freq_unit,
+                "output_folder": output_folder,
+                "filename": filename,
+                "output_name": output_name,
+                "notes_markdown": notes_markdown,
+                "metadata": metadata,
+                "freqs": freqs.tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in sparams.items()
+                },
+            },
+        )
+        return str(result)
+
+    async def _run_csv_export_job(
+        self,
+        *,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        freq_unit: str,
+        output_folder: str,
+        filename: str,
+        output_name: str,
+        operation: str,
+    ) -> str:
+        """Run CSV export via the worker-backed background job path."""
+        if not VNAApp._supports_unified_background_jobs(self):
+            exporter = CsvExporter(freq_unit=freq_unit)
+            return str(
+                exporter.export(
+                    freqs,
+                    sparams,
+                    output_folder,
+                    filename=filename,
+                    output_name=output_name,
+                )
+            )
+
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.EXPORT,
+            operation=operation,
+            payload={
+                "kind": "CSV",
+                "export_kind": "csv",
+                "freq_unit": freq_unit,
+                "output_folder": output_folder,
+                "filename": filename,
+                "output_name": output_name,
+                "freqs": freqs.tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in sparams.items()
+                },
+            },
+        )
+        return str(result)
+
+    async def _run_results_plot_render_job(
+        self,
+        *,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+        plot_params: list[str],
+        plot_type: str,
+        output_path: Path,
+        dpi: int,
+        pixel_width: int,
+        pixel_height: int,
+        render_scale: int,
+        colors: dict,
+        y_min: float | None,
+        y_max: float | None,
+        plot_data: dict[str, np.ndarray] | None,
+    ) -> dict[str, object]:
+        """Render the Measurement plot image via the worker job system."""
+        self._cancel_background_jobs_by_operation("Results plot render")
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.EXPORT,
+            operation="Results plot render",
+            payload={
+                "kind": "Results plot",
+                "export_kind": "results_plot",
+                "freqs": freqs.tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in sparams.items()
+                },
+                "plot_params": plot_params,
+                "plot_type": plot_type,
+                "output_path": str(output_path),
+                "dpi": dpi,
+                "pixel_width": pixel_width,
+                "pixel_height": pixel_height,
+                "render_scale": render_scale,
+                "colors": colors,
+                "y_min": y_min,
+                "y_max": y_max,
+                "plot_data": (
+                    {
+                        name: values.tolist()
+                        for name, values in (plot_data or {}).items()
+                    }
+                    if plot_data is not None
+                    else None
+                ),
+            },
+        )
+        return dict(result)
+
+    async def _run_tools_compute_job(self) -> dict[str, object]:
+        """Compute Tools tab results via the worker (no image rendering)."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement loaded")
+
+        self._cancel_background_jobs_by_operation("Tools compute")
+        compute_cache_key = tools_logic.get_tools_plot_cache_key(self)
+        trace = self._get_tools_trace()
+        plot_type_value = self.query_one("#select_tools_plot_type", Select).value
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.TOOLS_COMPUTE,
+            operation="Tools compute",
+            payload={
+                "freqs": self.last_measurement["freqs"].tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in self.last_measurement["sparams"].items()
+                },
+                "trace": trace,
+                "plot_type": plot_type,
+                "freq_unit": str(self.last_measurement.get("freq_unit", "MHz")),
+                "cursor1_hz": self._tools_cursor1_hz,
+                "cursor2_hz": self._tools_cursor2_hz,
+                "active_tool": self.settings.tools_active_tool,
+                "compute_cache_key": compute_cache_key,
+            },
+        )
+        return dict(result)
+
+    async def _run_tools_render_job(self) -> dict[str, object]:
+        """Render the Tools tab image plot via the worker job system."""
+        if self.last_measurement is None:
+            raise ValueError("No measurement loaded")
+
+        self._cancel_background_jobs_by_operation("Tools render")
+        render_cache_key = tools_logic.get_tools_plot_cache_key(self)
+        trace = self._get_tools_trace()
+        plot_type_value = self.query_one("#select_tools_plot_type", Select).value
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
+        # Pass a pre-computed result when the compute cache is warm so the
+        # worker can skip recomputation and go straight to rendering.
+        cached_compute = (
+            dict(self._latest_tools_compute_result)
+            if isinstance(self._latest_tools_compute_result, dict)
+            and self._latest_tools_compute_cache_key == render_cache_key
+            else None
+        )
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.TOOLS_RENDER,
+            operation="Tools render",
+            payload={
+                "freqs": self.last_measurement["freqs"].tolist(),
+                "sparams": {
+                    name: [values[0].tolist(), values[1].tolist()]
+                    for name, values in self.last_measurement["sparams"].items()
+                },
+                "trace": trace,
+                "plot_type": plot_type,
+                "freq_unit": str(self.last_measurement.get("freq_unit", "MHz")),
+                "cursor1_hz": self._tools_cursor1_hz,
+                "cursor2_hz": self._tools_cursor2_hz,
+                "active_tool": self.settings.tools_active_tool,
+                "marker_symbol": self.settings.cursor_marker_style,
+                "colors": {
+                    "fg": get_plot_colors(self.get_css_variables())["fg"],
+                    "grid": get_plot_colors(self.get_css_variables())["grid"],
+                    "trace": get_plot_colors(self.get_css_variables())["traces"].get(
+                        trace, TRACE_COLOR_DEFAULT
+                    ),
+                    "cursor1": get_plot_colors(self.get_css_variables())["cursor1"],
+                    "cursor2": get_plot_colors(self.get_css_variables())["cursor2"],
+                    "distortion_overlays": get_plot_colors(self.get_css_variables())[
+                        "distortion_overlays"
+                    ],
+                },
+                "distortion_components": self._get_distortion_comp_enabled(),
+                "render_cache_key": render_cache_key,
+                "output_path": str(self.plot_temp_dir / "tools_plot.png"),
+                "tool_result": (
+                    cached_compute.get("tool_result") if cached_compute else None
+                ),
+            },
+        )
+        return dict(result)
+
+    def _invalidate_tools_render_result_cache(self) -> None:
+        """Drop all cached worker-side Tools result payloads (compute and render)."""
+        self._latest_tools_render_result = None
+        self._latest_tools_render_cache_key = None
+        self._latest_tools_compute_result = None
+        self._latest_tools_compute_cache_key = None
+
+    def _current_tools_render_cache_key(self) -> tuple[object, ...] | None:
+        """Return the current tools-state key used for render/result reuse."""
+        return tools_logic.get_tools_plot_cache_key(self)
+
+    async def _run_save_back_job(self, payload: dict[str, object]) -> str:
+        """Save notes/metadata back through the worker job system."""
+        if not VNAApp._supports_unified_background_jobs(self):
+            target_kind = str(payload["target_kind"])
+            if target_kind == "touchstone":
+                return _write_touchstone_save_back(
+                    str(payload["target_path"]),
+                    str(payload.get("measurement_notes", "")),
+                    dict(payload.get("metadata", {})),
+                )
+            return _write_image_save_back(
+                str(payload["target_path"]),
+                str(payload.get("measurement_notes", "")),
+                dict(payload.get("metadata", {})),
+                target_kind,
+            )
+
+        result = await self._run_background_worker_job(
+            msg_type=MessageType.SAVE_BACK,
+            operation="Save back",
+            payload=payload,
+        )
+        return str(result)
+
+    def _restore_setup_from_metadata(self, metadata: dict[str, object]) -> None:
+        """Restore Setup tab widgets and persisted settings from imported metadata."""
+        setup = metadata.get("setup", {})
+        if not isinstance(setup, dict):
+            return
+
+        def _set_input(selector: str, value: object) -> None:
+            if value is not None:
+                self.query_one(selector, Input).value = str(value)
+
+        def _set_checkbox(selector: str, value: object) -> None:
+            if isinstance(value, bool):
+                self.query_one(selector, Checkbox).value = value
+
+        def _set_select(selector: str, value: object) -> None:
+            if value is not None:
+                self.query_one(selector, Select).value = value
+
+        _set_input("#input_host", setup.get("host"))
+        _set_input("#input_port", setup.get("port"))
+        _set_select("#select_freq_unit", setup.get("freq_unit"))
+        _set_input("#input_start_freq", setup.get("start_freq_mhz"))
+        _set_input("#input_stop_freq", setup.get("stop_freq_mhz"))
+        _set_input("#input_points", setup.get("sweep_points"))
+        _set_input("#input_avg_count", setup.get("averaging_count"))
+        _set_checkbox("#check_set_freq", setup.get("set_freq_range"))
+        _set_checkbox("#check_set_points", setup.get("set_sweep_points"))
+        _set_checkbox("#check_averaging", setup.get("enable_averaging"))
+        _set_checkbox("#check_set_avg_count", setup.get("set_averaging_count"))
+
+        folder_template = setup.get("folder_template")
+        output_folder = setup.get("output_folder")
+        restored_folder_template = (
+            folder_template if isinstance(folder_template, str) else output_folder
+        )
+        _set_input("#input_folder_template", restored_folder_template)
+
+        filename_template = setup.get("filename_template")
+        filename_prefix = setup.get("filename_prefix")
+        restored_filename_template = (
+            filename_template if isinstance(filename_template, str) else filename_prefix
+        )
+        _set_input("#input_filename_template", restored_filename_template)
+
+        _set_checkbox("#check_export_s11", setup.get("export_s11"))
+        _set_checkbox("#check_export_s21", setup.get("export_s21"))
+        _set_checkbox("#check_export_s12", setup.get("export_s12"))
+        _set_checkbox("#check_export_s22", setup.get("export_s22"))
+        _set_checkbox("#check_export_bundle_s2p", setup.get("export_bundle_s2p"))
+        _set_checkbox("#check_export_bundle_csv", setup.get("export_bundle_csv"))
+        _set_checkbox("#check_export_bundle_png", setup.get("export_bundle_png"))
+        _set_checkbox("#check_export_bundle_svg", setup.get("export_bundle_svg"))
+
+        host = setup.get("host")
+        if isinstance(host, str):
+            self.settings.last_host = host
+            self.settings_manager.add_host_to_history(host)
+
+        port = setup.get("port")
+        if isinstance(port, str):
+            self.settings.last_port = port
+            self.settings_manager.add_port_to_history(port)
+
+        freq_unit = setup.get("freq_unit")
+        if isinstance(freq_unit, str):
+            self.settings.freq_unit = freq_unit
+
+        start_freq = setup.get("start_freq_mhz")
+        if isinstance(start_freq, (int, float)):
+            self.settings.start_freq_mhz = float(start_freq)
+
+        stop_freq = setup.get("stop_freq_mhz")
+        if isinstance(stop_freq, (int, float)):
+            self.settings.stop_freq_mhz = float(stop_freq)
+
+        sweep_points = setup.get("sweep_points")
+        if isinstance(sweep_points, int):
+            self.settings.sweep_points = sweep_points
+
+        averaging_count = setup.get("averaging_count")
+        if isinstance(averaging_count, int):
+            self.settings.averaging_count = averaging_count
+
+        for key in (
+            "set_freq_range",
+            "set_sweep_points",
+            "enable_averaging",
+            "set_averaging_count",
+            "export_s11",
+            "export_s21",
+            "export_s12",
+            "export_s22",
+            "export_bundle_s2p",
+            "export_bundle_csv",
+            "export_bundle_png",
+            "export_bundle_svg",
+        ):
+            value = setup.get(key)
+            if isinstance(value, bool):
+                setattr(self.settings, key, value)
+
+        if isinstance(restored_folder_template, str):
+            self.settings.output_folder = restored_folder_template
+            self.settings.folder_template = restored_folder_template
+
+        if isinstance(restored_filename_template, str):
+            self.settings.filename_template = restored_filename_template
+            self.settings.filename_prefix = restored_filename_template
+
+        self.settings_manager.save(self.settings)
+        setup_logic.refresh_export_template_validation(self)
+
+    def _restore_measurement_view_from_metadata(
+        self,
+        metadata: dict[str, object],
+        *,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
+    ) -> None:
+        """Restore Measurement tab plot state from imported metadata."""
+        measurement = metadata.get("measurement", {})
+        if not isinstance(measurement, dict):
+            measurement = {}
+
+        plot_type = measurement.get("plot_type")
+        if isinstance(plot_type, str):
+            self.query_one("#select_plot_type", Select).value = plot_type
+            self.settings.plot_type = plot_type
+
+        available_params = sparams or {}
+        for key, selector, fallback_name in (
+            ("plot_s11", "#check_plot_s11", "S11"),
+            ("plot_s21", "#check_plot_s21", "S21"),
+            ("plot_s12", "#check_plot_s12", "S12"),
+            ("plot_s22", "#check_plot_s22", "S22"),
+        ):
+            value = measurement.get(key)
+            checkbox = self.query_one(selector, Checkbox)
+            if isinstance(value, bool):
+                checkbox.value = value
+                setattr(self.settings, key, value)
+            else:
+                fallback = fallback_name in available_params
+                checkbox.value = fallback
+                setattr(self.settings, key, fallback)
+
+    def _activate_measurement_tab(self) -> None:
+        """Switch the UI to the Measurement tab."""
+        self.query_one(TabbedContent).active = "tab_results"
+
+    def _import_measurement_output(
+        self,
+        *,
+        restore_measurement: bool,
+    ) -> None:
+        """Import metadata from a measurement output, optionally restoring measurement state."""
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        try:
+            file_path = filedialog.askopenfilename(
+                title="Select Measurement Output",
+                filetypes=[
+                    ("Measurement Outputs", "*.s2p *.png *.svg"),
+                    ("Touchstone Files", "*.s2p"),
+                    ("PNG Images", "*.png"),
+                    ("SVG Images", "*.svg"),
+                    ("All Files", "*.*"),
+                ],
+                initialdir=(
+                    self.settings.output_folder if self.settings.output_folder else "."
+                ),
+            )
+        finally:
+            root.destroy()
+
+        if not file_path:
+            self.notify("Import cancelled", severity="warning", timeout=3)
+            return
+        VNAApp._start_measurement_import(self, file_path, restore_measurement)
 
     def _start_message_polling(self):
         """Start polling worker thread for messages."""
@@ -3112,7 +1455,12 @@ class VNAApp(App):
         returned a STATUS_UPDATE — prevents backlog when polls take longer than
         the polling interval.
         """
-        if self.connected and not self.measuring and not self._status_poll_in_flight:
+        if (
+            self.connected
+            and not self.measuring
+            and not self._import_in_flight
+            and not self._status_poll_in_flight
+        ):
             self._status_poll_in_flight = True
             self.worker.send_command(MessageType.STATUS_POLL)
 
@@ -3132,8 +1480,34 @@ class VNAApp(App):
             self.log_message(log_msg.message, log_msg.level)
 
         elif msg.type == MessageType.PROGRESS:
+            if isinstance(msg.data, BackgroundJob):
+                self._complete_background_job(msg.data.job_id)
+                self._handle_background_job_complete(msg.data)
+            else:
+                update: ProgressUpdate = msg.data
+                if update.job_id is not None:
+                    self._update_background_job_progress(
+                        update.job_id,
+                        update.message,
+                        update.progress_pct,
+                    )
+                else:
+                    self.set_progress(update.message, update.progress_pct)
+
+        elif msg.type == MessageType.IMPORT_PROGRESS:
             update: ProgressUpdate = msg.data
             self.set_progress(update.message, update.progress_pct)
+
+        elif msg.type == MessageType.IMPORT_COMPLETE:
+            import_result: ImportResult = msg.data
+            try:
+                self._apply_import_result(import_result)
+            except Exception as e:
+                self.log_message(f"Import failed: {e}", "error")
+            finally:
+                self.enable_buttons_for_state()
+                self.reset_progress()
+                self._import_in_flight = False
 
         elif msg.type == MessageType.CONNECTED:
             display_name = msg.data
@@ -3163,25 +1537,25 @@ class VNAApp(App):
             self._stop_status_polling()
 
         elif msg.type == MessageType.PARAMS_READ:
-            result: ParamsResult = msg.data
-            self._update_params_ui(result)
+            params_result: ParamsResult = msg.data
+            self._update_params_ui(params_result)
             self.log_message("Parameters retrieved successfully", "success")
             self.enable_buttons_for_state()
             self.reset_progress()
 
         elif msg.type == MessageType.MEASUREMENT_COMPLETE:
-            result: MeasurementResult = msg.data
+            measurement_result: MeasurementResult = msg.data
             self.log_message(
-                f"Received measurement complete with {len(result.frequencies)} points",
+                f"Received measurement complete with {len(measurement_result.frequencies)} points",
                 "debug",
             )
             # Schedule the async handler
-            asyncio.create_task(self._handle_measurement_complete(result))
+            asyncio.create_task(self._handle_measurement_complete(measurement_result))
 
         elif msg.type == MessageType.STATUS_UPDATE:
             self._status_poll_in_flight = False
-            result: StatusResult = msg.data
-            self.query_one(StatusFooter).update_status(result)
+            status_result: StatusResult = msg.data
+            self.query_one(StatusFooter).update_status(status_result)
 
         elif msg.type == MessageType.SCPI_ERROR_UPDATE:
             if self._debug_scpi:
@@ -3191,6 +1565,15 @@ class VNAApp(App):
 
         elif msg.type == MessageType.ERROR:
             self.log_message(msg.error, "error")
+            if isinstance(msg.data, dict):
+                job_id = msg.data.get("job_id")
+                if isinstance(job_id, int):
+                    tracked_job = self._background_jobs.get(job_id)
+                    if tracked_job is not None:
+                        future = tracked_job.get("future")
+                        if isinstance(future, asyncio.Future) and not future.done():
+                            future.set_exception(RuntimeError(msg.error))
+                    self._complete_background_job(job_id)
             if "Connection failed" in msg.error or "Disconnect failed" in msg.error:
                 self.connected = False
                 self.sub_title = ""
@@ -3200,31 +1583,75 @@ class VNAApp(App):
             self.enable_buttons_for_state()
             self.reset_progress()
             self.measuring = False
+            self._import_in_flight = False
+
+    def _handle_background_job_complete(self, job: BackgroundJob) -> None:
+        """Handle completion of a worker-managed background job."""
+        tracked_job = self._background_jobs.get(job.job_id)
+        if tracked_job is not None:
+            future = tracked_job.get("future")
+            if isinstance(future, asyncio.Future) and not future.done():
+                future.set_result(job.result)
+        if job.operation == "Tools render" and isinstance(job.result, dict):
+            result_cache_key = job.result.get("render_cache_key")
+            current_cache_key = self._current_tools_render_cache_key()
+            if result_cache_key == current_cache_key:
+                self._latest_tools_render_result = dict(job.result)
+                self._latest_tools_render_cache_key = current_cache_key
+                tool_result = job.result.get("tool_result")
+                # Keep compute cache in sync with fresh render results.
+                if isinstance(tool_result, dict):
+                    self._latest_tools_compute_result = {"tool_result": tool_result}
+                    self._latest_tools_compute_cache_key = current_cache_key
+            else:
+                self._invalidate_tools_render_result_cache()
+                tool_result = None
+            if tool_result is not None:
+                render_tools_computation_result(self, tool_result)
+        elif job.operation == "Tools compute" and isinstance(job.result, dict):
+            result_cache_key = job.result.get("compute_cache_key")
+            current_cache_key = self._current_tools_render_cache_key()
+            if result_cache_key == current_cache_key:
+                self._latest_tools_compute_result = dict(job.result)
+                self._latest_tools_compute_cache_key = current_cache_key
+        self.set_progress(f"{job.operation} complete", job.progress)
 
     @on(Select.Changed, "#sb_poll_interval")
     def on_poll_interval_change(self, event: Select.Changed) -> None:
         """Handle status poll interval change."""
-        if event.value == Select.BLANK:
+        if event.value == Select.BLANK or not isinstance(event.value, int):
             return
         self.settings.status_poll_interval = event.value
         if self.connected:
             self._start_status_polling(event.value)
 
-    @on(Checkbox.Changed, "#check_custom_filename")
-    def on_custom_filename_change(self, event: Checkbox.Changed) -> None:
-        """Enable/disable custom filename input based on checkbox."""
-        custom_input = self.query_one("#input_custom_filename", Input)
-        custom_input.disabled = not event.value
+    @on(Input.Changed, "#input_filename_template, #input_folder_template")
+    def on_export_template_change(self, event: Input.Changed) -> None:
+        """Refresh export-template validation when the template inputs change."""
+        del event
+        setup_logic.handle_export_template_change(self)
+
+    @on(Button.Pressed, "#btn_minimal_export")
+    def on_minimal_export_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Toggle minimal export mode from the Measurement tab button."""
+        del event
+        self._minimal_export_mode = not self._minimal_export_mode
+        self._refresh_export_button_labels()
 
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """
-        Handle tab activation events by updating the UI: scroll the log when the Log tab is opened and schedule plot redraws when Results or Tools tabs are opened.
+        Handle tab activation events by updating the UI: scroll the log when
+        the Log tab is opened and schedule plot redraws when Results or
+        Tools tabs are opened.
 
-        When the Log tab is activated, scroll the log widget to the end. When the Results or Tools tab is activated, schedule a delayed redraw (0.3 seconds) of the corresponding plot if a measurement is available.
+        When the Log tab is activated, scroll the log widget to the end. When
+        the Results or Tools tab is activated, schedule an after-refresh check
+        of the corresponding plot if a measurement is available.
 
         Parameters:
-            event (TabbedContent.TabActivated): The tab activation event containing the activated pane (used to check pane.id).
+            event (TabbedContent.TabActivated): The tab activation event
+                containing the activated pane (used to check pane.id).
         """
         if event.pane.id == "tab_log":
             # Scroll log to bottom when opening log tab
@@ -3233,109 +1660,189 @@ class VNAApp(App):
         elif event.pane.id == "tab_results":
             # Redraw plot with correct sizing when switching to results tab
             if self.last_measurement is not None:
-                self.set_timer(0.3, self._delayed_redraw_plot)
+                self.call_after_refresh(self._delayed_redraw_plot)
         elif event.pane.id == "tab_tools":
             # Redraw tools plot when switching to tools tab
             if self.last_measurement is not None:
-                self.set_timer(0.3, self._delayed_redraw_tools_plot)
+                self.call_after_refresh(self._delayed_redraw_tools_plot)
 
     @on(
         Checkbox.Changed,
-        "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, #check_log_success, #check_log_error, #check_log_debug, #check_log_poll",
+        (
+            "#check_log_tx, #check_log_rx, #check_log_info, #check_log_progress, "
+            "#check_log_success, #check_log_error, #check_log_debug, #check_log_poll"
+        ),
     )
     def on_log_filter_change(self, event: Checkbox.Changed) -> None:
         """Handle log filter checkbox changes."""
-        self._refresh_log_display()
+        del event
+        log_logic.handle_log_filter_change(self)
 
     # Cached level→(icon, Rich style) map; None means rebuild on next use.
     # Invalidated by on_app_theme_changed so colors always match the active theme.
     _cached_style_map: dict[str, tuple[str, str]] | None = None
 
-    def _build_style_map(self) -> dict[str, tuple[str, str]]:
-        """Build the level→(icon, style) map from current Textual theme variables."""
-        v = self.get_css_variables()
-        c_tx = v.get("accent", "#ffa62b")
-        c_rx = v.get("secondary", "#0178D4")
-        c_suc = v.get("success", "#4EBF71")
-        c_err = v.get("error", "#ba3c5b")
-        return {
-            "tx": ("↑", c_tx),
-            "rx": ("↓", c_rx),
-            "tx/poll": ("↑~", f"dim {c_tx}"),
-            "rx/poll": ("↓~", f"dim {c_rx}"),
-            "tx/debug": ("↑•", "dim"),
-            "rx/debug": ("↓•", "dim"),
-            "info": ("i", "default"),
-            "success": ("✓", f"bold {c_suc}"),
-            "error": ("✗", f"bold {c_err}"),
-            "progress": ("⋯", "dim italic"),
-            "debug": ("•", "dim"),
-        }
-
-    def _format_log_entry(self, entry: dict) -> str:
-        """Render a stored log entry to Rich markup.
-
-        The style map is cached after the first call and only rebuilt when the
-        theme changes, so ``get_css_variables()`` is not called per-entry
-        during a full log redraw.
-        """
-        if self._cached_style_map is None:
-            self._cached_style_map = self._build_style_map()
-        icon, style = self._cached_style_map.get(entry["level"], ("•", "default"))
-        safe_msg = rich_escape(entry["message"])
-        return f"[dim]{entry['timestamp']}[/dim] [{style}]{icon}[/] {safe_msg}"
-
     def log_message(self, message: str, level: str = "info"):
         """Add message to log."""
-        log_entry = {
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "level": level,
-            "message": message,
-        }
-        self.log_messages.append(log_entry)
+        log_logic.log_message(self, message, level)
 
-        if self._should_show_log(level):
-            log_content = self.query_one("#log_content", RichLog)
-            log_content.write(self._format_log_entry(log_entry))
-            log_content.scroll_end(animate=False)
+    def _next_background_job_id(self) -> int:
+        """Return the next monotonically increasing background job id."""
+        self._current_background_job_id += 1
+        return self._current_background_job_id
 
-    def _should_show_log(self, level: str) -> bool:
-        """Return True if *level* passes all active log filter checkboxes.
+    @staticmethod
+    def _supports_unified_background_jobs(app: object) -> bool:
+        """Return whether the object is a real app instance with job helpers."""
+        return hasattr(app, "_background_jobs") and hasattr(app, "worker")
 
-        Composite levels (e.g. ``"tx/poll"``) require both the primary and
-        secondary checkbox to be checked.  Unknown levels are shown by default.
-        """
+    @staticmethod
+    def _schedule_async(coro):
+        """Run a coroutine on the active loop or synchronously when none exists."""
         try:
-            if "/" in level:
-                primary, secondary = level.split("/", 1)
-                primary_id = self._LOG_FILTER_IDS.get(primary)
-                secondary_id = self._LOG_FILTER_IDS.get(secondary)
-                primary_ok = (
-                    self.query_one(primary_id, Checkbox).value if primary_id else True
-                )
-                secondary_ok = (
-                    self.query_one(secondary_id, Checkbox).value
-                    if secondary_id
-                    else True
-                )
-                return primary_ok and secondary_ok
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        return loop.create_task(coro)
 
-            checkbox_id = self._LOG_FILTER_IDS.get(level)
-            if checkbox_id:
-                return self.query_one(checkbox_id, Checkbox).value
-            return True  # Unknown levels are always shown
+    def _register_background_job(self, operation: str) -> int:
+        """Create and track a new background job entry."""
+        job_id = self._next_background_job_id()
+        future = asyncio.get_running_loop().create_future()
+        self._background_jobs[job_id] = {
+            "operation": operation,
+            "active": True,
+            "progress": 0.0,
+            "message": f"{operation} starting...",
+            "future": future,
+        }
+        return job_id
+
+    def _has_manual_export_job(self) -> bool:
+        """Return whether a manual export/save action is currently running."""
+        return int(getattr(self, "_manual_export_jobs_in_flight", 0)) > 0
+
+    def _has_save_back_target(self) -> bool:
+        """Return whether the current measurement has a file that supports save-back."""
+        lm = self.last_measurement
+        return lm is not None and bool(
+            lm.get("touchstone_path") or lm.get("png_path") or lm.get("svg_path")
+        )
+
+    def _set_measurement_action_disabled(self, selector: str, disabled: bool) -> None:
+        """Set a Measurement-tab button disabled state when mounted."""
+        try:
+            self.query_one(selector, Button).disabled = disabled
         except Exception:
-            # During initialization, show everything
-            return True
+            pass
 
-    def _refresh_log_display(self):
-        """Rebuild log display from stored entries using current theme colors and filters."""
-        log_content = self.query_one("#log_content", RichLog)
-        log_content.clear()
-        for entry in self.log_messages:
-            if self._should_show_log(entry["level"]):
-                log_content.write(self._format_log_entry(entry))
-        log_content.scroll_end(animate=False)
+    def _sync_measurement_action_buttons(self) -> None:
+        """Refresh export/save button state from measurement and busy state."""
+        measurement_loaded = self.last_measurement is not None
+        manual_export_busy = VNAApp._has_manual_export_job(self)
+
+        VNAApp._set_measurement_action_disabled(
+            self, "#btn_open_output", not bool(self.last_output_path)
+        )
+        for selector in (
+            "#btn_export_touchstone",
+            "#btn_export_csv",
+            "#btn_export_png",
+            "#btn_export_svg",
+        ):
+            VNAApp._set_measurement_action_disabled(
+                self, selector, (not measurement_loaded) or manual_export_busy
+            )
+        VNAApp._set_measurement_action_disabled(
+            self,
+            "#btn_save_notes",
+            (not VNAApp._has_save_back_target(self)) or manual_export_busy,
+        )
+
+    def _begin_manual_export_action(self) -> bool:
+        """Mark a manual export/save action active and disable related buttons."""
+        if VNAApp._has_manual_export_job(self):
+            return False
+        self._manual_export_jobs_in_flight = (
+            int(getattr(self, "_manual_export_jobs_in_flight", 0)) + 1
+        )
+        VNAApp._sync_measurement_action_buttons(self)
+        return True
+
+    def _end_manual_export_action(self) -> None:
+        """Mark a manual export/save action complete and restore button state."""
+        self._manual_export_jobs_in_flight = max(
+            0, int(getattr(self, "_manual_export_jobs_in_flight", 0)) - 1
+        )
+        VNAApp._sync_measurement_action_buttons(self)
+
+    def _schedule_manual_export_action(self, coro) -> None:
+        """Run a manual export/save coroutine while preventing duplicate actions."""
+        if not VNAApp._begin_manual_export_action(self):
+            return
+
+        async def runner() -> None:
+            try:
+                await coro
+            finally:
+                VNAApp._end_manual_export_action(self)
+
+        VNAApp._schedule_async(runner())
+
+    def _cancel_background_job(self, job_id: int) -> None:
+        """Cancel a tracked background job and invalidate the worker token."""
+        job = self._background_jobs.get(job_id)
+        if job is None:
+            return
+        job["active"] = False
+        future = job.get("future")
+        if isinstance(future, asyncio.Future) and not future.done():
+            future.cancel()
+        self.worker.cancel_job(job_id)
+
+    def _cancel_background_jobs_by_operation(self, operation: str) -> None:
+        """Cancel all active jobs for the provided logical operation."""
+        for job_id, job in list(self._background_jobs.items()):
+            if job.get("operation") == operation and bool(job.get("active", False)):
+                self._cancel_background_job(job_id)
+
+    def _complete_background_job(self, job_id: int) -> None:
+        """Mark a job complete and remove it from active tracking."""
+        job = self._background_jobs.get(job_id)
+        if job is not None:
+            job["active"] = False
+
+    def _update_background_job_progress(
+        self, job_id: int, message: str, progress: float
+    ) -> None:
+        """Persist and display unified progress for a tracked background job."""
+        job = self._background_jobs.get(job_id)
+        if job is None or not bool(job.get("active", False)):
+            return
+        job["message"] = message
+        job["progress"] = progress
+        self.set_progress(message, progress)
+
+    async def _run_background_worker_job(
+        self,
+        *,
+        msg_type: MessageType,
+        operation: str,
+        payload: dict[str, object],
+    ) -> object:
+        """Queue a worker-side background job with tracking metadata."""
+        job_id = self._register_background_job(operation)
+        future = self._background_jobs[job_id]["future"]
+        self._update_background_job_progress(job_id, f"{operation} starting...", 0)
+        self.worker.send_command(
+            msg_type,
+            {
+                "job_id": job_id,
+                "operation": operation,
+                **payload,
+            },
+        )
+        return await future
 
     def set_progress(self, label: str, progress: float = 0):
         """Update progress bar and label. Progress is 0-100."""
@@ -3363,6 +1870,8 @@ class VNAApp(App):
         self.query_one("#btn_connect", Button).disabled = False
         self.query_one("#btn_read_params", Button).disabled = not self.connected
         self.query_one("#btn_measure", Button).disabled = not self.connected
+        self._refresh_export_button_labels()
+        self._sync_measurement_action_buttons()
 
     def update_connect_button(self):
         """
@@ -3379,11 +1888,47 @@ class VNAApp(App):
             btn.label = "📡\nConnect"
             btn.variant = "primary"
 
+    def _refresh_export_button_labels(self) -> None:
+        """Update Measurement-tab export controls to reflect minimal export mode."""
+        toggle_button = self.query_one("#btn_minimal_export", Button)
+        minimal_export = self._minimal_export_mode
+        variant = "warning" if minimal_export else "success"
+
+        toggle_button.variant = "warning" if minimal_export else "default"
+        toggle_button.label = "▣\nMin" if minimal_export else "▢\nMin"
+        toggle_button.set_class(minimal_export, "-minimal-export")
+
+        show_button = self.query_one("#btn_open_output", Button)
+        # Prefer CSS class for button spacing so styles are centralized
+        show_button.set_class(True, "no-margin")
+
+        for selector in (
+            "#btn_export_touchstone",
+            "#btn_export_csv",
+            "#btn_export_png",
+            "#btn_export_svg",
+        ):
+            button = self.query_one(selector, Button)
+            button.variant = variant
+            button.set_class(minimal_export, "-minimal-export")
+
+    def _show_help_document(self, filename: str, title: str) -> None:
+        """Load a markdown help document from package resources and show it."""
+        try:
+            help_files = importlib.resources.files("tina") / "help"
+            content = (help_files / filename).read_text(encoding="utf-8")
+        except (OSError, FileNotFoundError, ModuleNotFoundError):
+            content = "_Help file not found._"
+        self.push_screen(HelpScreen(title, content))
+
     def action_show_tool_help(self) -> None:
         """
         Show the help viewer for the currently selected tool.
 
-        If no tool is active, notifies the user and returns. Otherwise loads the tool's markdown help file from the package's tina/help resources (falls back to a short "Help file not found." message on load failure) and opens a HelpScreen displaying the content.
+        If no tool is active, notifies the user and returns. Otherwise loads
+        the tool's markdown help file from the package's tina/help resources
+        (falls back to a short "Help file not found." message on load
+        failure) and opens a HelpScreen displaying the content.
         """
         active = self.settings.tools_active_tool
         help_map = {
@@ -3394,13 +1939,11 @@ class VNAApp(App):
             self.notify("Activate a tool to see its help.", timeout=2)
             return
         filename, title = help_map[active]
-        try:
-            # Use importlib.resources to load help files from installed package
-            help_files = importlib.resources.files("tina") / "help"
-            content = (help_files / filename).read_text(encoding="utf-8")
-        except (OSError, FileNotFoundError, ModuleNotFoundError):
-            content = "_Help file not found._"
-        self.push_screen(HelpScreen(title, content))
+        self._show_help_document(filename, title)
+
+    def action_show_output_help(self) -> None:
+        """Show help for output template rendering and validation."""
+        self._show_help_document("output.md", "Output Help")
 
     def action_copy_cell_value(self, value: str) -> None:
         """
@@ -3414,14 +1957,140 @@ class VNAApp(App):
 
     def action_copy_log(self) -> None:
         """Copy visible log entries as plain text to the system clipboard."""
-        style_map = self._cached_style_map or self._build_style_map()
-        lines = [
-            f"{e['timestamp']} {style_map.get(e['level'], ('•', ''))[0]} {e['message']}"
-            for e in self.log_messages
-            if self._should_show_log(e["level"])
-        ]
-        self.copy_to_clipboard("\n".join(lines))
-        self.notify("Log copied to clipboard", timeout=2)
+        log_logic.copy_log(self)
+
+    def action_copy_tool_results(self) -> None:
+        """Build a plain-text representation of the current tool results and copy to clipboard.
+
+        Handles both the cursor (measure) and distortion tools. Uses the same
+        computation functions as the UI but emits plain text without markup.
+        """
+        active = self.settings.tools_active_tool
+        if not active:
+            self.notify("Activate a tool to copy results", timeout=2)
+            return
+        if self.last_measurement is None:
+            self.notify("No measurement loaded", timeout=2)
+            return
+
+        freqs = self.last_measurement["freqs"]
+        sparams = self.last_measurement["sparams"]
+        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
+        multiplier = unit_multipliers.get(freq_unit, 1e6)
+
+        trace = self._get_tools_trace()
+        try:
+            plot_type = self.query_one("#select_tools_plot_type", Select).value
+        except Exception:
+            plot_type = self.settings.tools_plot_type or "magnitude"
+
+        try:
+            if active == "cursor":
+                result = MeasureTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    getattr(self, "_tools_cursor1_hz", None),
+                    getattr(self, "_tools_cursor2_hz", None),
+                )
+                lines: list[str] = []
+                # Cursor 1
+                if (
+                    result.cursor1_freq_hz is not None
+                    and result.cursor1_value is not None
+                ):
+                    f1 = result.cursor1_freq_hz / multiplier
+                    v1 = result.cursor1_value
+                    lines.append(
+                        f"Cursor 1: {f1:.4f} {freq_unit}   {v1:.4f} {result.unit_label}"
+                    )
+                # Cursor 2
+                if (
+                    result.cursor2_freq_hz is not None
+                    and result.cursor2_value is not None
+                ):
+                    f2 = result.cursor2_freq_hz / multiplier
+                    v2 = result.cursor2_value
+                    lines.append(
+                        f"Cursor 2: {f2:.4f} {freq_unit}   {v2:.4f} {result.unit_label}"
+                    )
+                # Delta
+                if result.delta_value is not None:
+                    # frequency delta if both freqs present
+                    if (
+                        result.cursor1_freq_hz is not None
+                        and result.cursor2_freq_hz is not None
+                    ):
+                        fd = (
+                            abs(
+                                float(result.cursor2_freq_hz)
+                                - float(result.cursor1_freq_hz)
+                            )
+                            / multiplier
+                        )
+                        fd_s = f"{fd:.4f} {freq_unit}"
+                    else:
+                        fd_s = ""
+                    dv = result.delta_value
+                    lines.append(f"Delta: {fd_s}   {dv:.4f} {result.unit_label}")
+
+                txt = "\n".join(lines) if lines else ""
+
+            elif active == "distortion":
+                result = DistortionTool().compute(
+                    freqs,
+                    sparams,
+                    trace,
+                    plot_type,
+                    getattr(self, "_tools_cursor1_hz", None),
+                    getattr(self, "_tools_cursor2_hz", None),
+                )
+                lines = []
+                # Header
+                unit = result.unit_label
+                lines.append(f"n, Component, c_n ({unit}), Δy_n ({unit})")
+                # Import component names locally to avoid top-level dependency
+                try:
+                    from tina.tools.distortion import COMPONENT_NAMES
+
+                    dist_names = COMPONENT_NAMES
+
+                except Exception:
+                    dist_names = [str(n) for n in range(6)]
+
+                ex = result.extra or {}
+                coeffs = ex.get("coeffs", [])
+                delta_y = ex.get("delta_y", [])
+                for n in range(max(len(dist_names), len(coeffs), len(delta_y))):
+                    name = dist_names[n] if n < len(dist_names) else f"Comp{n}"
+                    c = f"{coeffs[n]:.4f}" if n < len(coeffs) else ""
+                    if n == 0:
+                        dy = "—"
+                    else:
+                        dy = f"{delta_y[n]:.4f}" if n < len(delta_y) else ""
+                    lines.append(f"{n}, {name}, {c}, {dy}")
+
+                txt = "\n".join(lines)
+
+            else:
+                txt = ""
+        except Exception as e:
+            self.log_message(f"Failed to build tool results for copy: {e}", "error")
+            txt = ""
+
+        if not txt:
+            # Nothing to copy
+            self.notify("No tool results to copy", timeout=2)
+            return
+
+        try:
+            self.copy_to_clipboard(txt)
+            self.notify("Tool results copied to clipboard")
+        except Exception as e:
+            self.log_message(f"Copy to clipboard failed: {e}", "error")
+            self.notify("Failed to copy tool results", timeout=2)
 
     @on(Button.Pressed, "#btn_connect")
     def handle_connect(self) -> None:
@@ -3502,9 +2171,10 @@ class VNAApp(App):
         self.log_message("Reading VNA parameters...", "progress")
         self.worker.send_command(MessageType.READ_PARAMS)
 
-    def _update_params_ui(self, result):
+    def _update_params_ui(self, result: ParamsResult) -> None:
         """Update UI with parameters read from VNA."""
-        freq_unit = self.query_one("#select_freq_unit", Select).value
+        freq_unit_value = self.query_one("#select_freq_unit", Select).value
+        freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
         unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
         multiplier = unit_multipliers.get(freq_unit, 1e6)
 
@@ -3528,7 +2198,8 @@ class VNAApp(App):
 
         try:
             # Get frequency unit and convert to Hz
-            freq_unit = self.query_one("#select_freq_unit", Select).value
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
             unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
             multiplier = unit_multipliers.get(freq_unit, 1e6)
 
@@ -3558,8 +2229,9 @@ class VNAApp(App):
                 "#check_set_avg_count", Checkbox
             ).value
 
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             self.log_message(f"Invalid configuration: {e}", "error")
+            self.notify(f"Invalid configuration: {e}", severity="error")
             self.measuring = False
             self.enable_buttons_for_state()
             self.reset_progress()
@@ -3576,17 +2248,24 @@ class VNAApp(App):
 
     async def _handle_measurement_complete(self, result: MeasurementResult):
         """
-        Process a completed measurement: export selected S-parameters, cache the measurement, and update the UI and plots.
+        Process a completed measurement: export selected S-parameters, cache
+        the measurement, and update the UI and plots.
 
         Parameters:
-            result (MeasurementResult): Measurement outcome containing frequency array and S-parameter data.
+            result (MeasurementResult): Measurement outcome containing
+                frequency array and S-parameter data.
 
         Behavior:
-            - Exports the S-parameters selected in the UI to a Touchstone file.
-            - Updates `self.last_measurement` and `self.last_output_path` with the saved file and raw measurement data.
-            - Synchronizes plot selection checkboxes to match export selections.
-            - Triggers redraw of the main results plot and the Tools plot, then runs tool computations.
-            - Updates progress indicators, logs success or errors, and sets the app subtitle to reflect completion or failure.
+            - Exports the S-parameters selected in the UI to a Touchstone
+              file.
+            - Updates `self.last_measurement` and `self.last_output_path`
+              with the saved file and raw measurement data.
+            - Synchronizes plot selection checkboxes to match export
+              selections.
+            - Triggers redraw of the main results plot and the Tools plot,
+              then runs tool computations.
+            - Updates progress indicators, logs success or errors, and sets
+              the app subtitle to reflect completion or failure.
         """
         try:
             self.log_message("Processing measurement result...", "debug")
@@ -3628,47 +2307,209 @@ class VNAApp(App):
             self.set_progress("Exporting...", 80)
             self.log_message("Exporting to Touchstone format...", "progress")
 
-            freq_unit = self.query_one("#select_freq_unit", Select).value
-            exporter = TouchstoneExporter(freq_unit=freq_unit)
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
 
-            # Determine filename and prefix
-            use_custom = self.query_one("#check_custom_filename", Checkbox).value
-            prefix = self.query_one("#input_filename_prefix", Input).value.strip()
-            if not prefix:
-                prefix = "measurement"
+            filename_template = self.query_one(
+                "#input_filename_template", Input
+            ).value.strip()
+            if not filename_template:
+                filename_template = (
+                    self.settings.filename_template or "measurement_{date}_{time}"
+                )
 
-            if use_custom:
-                filename = self.query_one("#input_custom_filename", Input).value.strip()
-                if not filename:
-                    filename = None
-            else:
-                filename = None
+            folder_template = self.query_one(
+                "#input_folder_template", Input
+            ).value.strip()
+            if not folder_template:
+                folder_template = self.settings.folder_template or "measurement"
 
-            output_folder = self.query_one("#input_output_folder", Input).value.strip()
-            if not output_folder:
-                output_folder = "measurement"
-
-            output_path = await asyncio.get_event_loop().run_in_executor(
-                None,
-                exporter.export,
-                freqs,
-                export_params,
-                output_folder,
-                filename,
-                prefix,
+            filename_validation = setup_logic.validate_export_template_for_app(
+                filename_template,
+                allow_path_separators=False,
+            )
+            folder_validation = setup_logic.validate_export_template_for_app(
+                folder_template,
+                allow_path_separators=True,
             )
 
-            self.log_message(f"Saved: {output_path}", "success")
+            self._filename_template_validation = filename_validation
+            self._folder_template_validation = folder_validation
+            setup_logic.apply_template_input_state(
+                self,
+                "#input_filename_template",
+                filename_validation,
+                kind="filename template",
+            )
+            setup_logic.apply_template_input_state(
+                self,
+                "#input_folder_template",
+                folder_validation,
+                kind="folder template",
+            )
 
-            # Store measurement data with frequency unit
+            if filename_validation.has_errors or folder_validation.has_errors:
+                self.notify(
+                    "Export blocked: fix output template path errors first.",
+                    severity="error",
+                    timeout=3,
+                )
+                self.log_message(
+                    "Export blocked due to invalid output template characters.",
+                    "error",
+                )
+                self.sub_title = "Connected"
+                return
+
+            export_context = setup_logic.build_export_template_context_for_app(self)
+            rendered_filename = render_template(
+                filename_template,
+                context=export_context,
+                allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
+            )
+            rendered_folder = render_template(
+                folder_template,
+                context=export_context,
+                allowed_tags=set(DEFAULT_TEMPLATE_TAGS),
+                invalid_path_chars=set(PATH_INVALID_CHARS) - {"/", "\\"},
+            )
+
+            if rendered_filename.validation.has_warnings:
+                self.log_message(
+                    "Filename template contains unknown tags: "
+                    + ", ".join(rendered_filename.validation.unknown_tags),
+                    "info",
+                )
+            if rendered_folder.validation.has_warnings:
+                self.log_message(
+                    "Folder template contains unknown tags: "
+                    + ", ".join(rendered_folder.validation.unknown_tags),
+                    "info",
+                )
+
+            filename = rendered_filename.rendered.strip() or "measurement"
+            output_folder = rendered_folder.rendered.strip() or "measurement"
+
+            self.settings_manager.touch_template_history(
+                "filename_template_history",
+                filename_template,
+            )
+            self.settings_manager.touch_template_history(
+                "folder_template_history",
+                folder_template,
+            )
+            self.settings_manager.save(self.settings)
+
+            export_folder: str = output_folder
+            export_filename: str = filename
+            export_name: str = "measurement"
+            exported_trace_names = list(export_params.keys())
+            minimal_export = self._is_minimal_export_enabled()
+            touchstone_metadata = (
+                None
+                if minimal_export
+                else self._build_touchstone_export_metadata(
+                    exported_traces=exported_trace_names,
+                )
+            )
+            output_path = await VNAApp._run_touchstone_export_job(
+                self,
+                freqs=freqs,
+                sparams=export_params,
+                freq_unit=freq_unit,
+                output_folder=export_folder,
+                filename=export_filename,
+                output_name=export_name,
+                notes_markdown="" if minimal_export else self.measurement_notes,
+                metadata=touchstone_metadata,
+                operation="Measurement export",
+            )
+            if output_path is None:
+                raise RuntimeError("Measurement export returned no output path")
+
+            self.log_message(
+                f"Saved{self._minimal_export_suffix(minimal_export)}: {output_path}",
+                "success",
+            )
+            self._notify_export_result(
+                kind=f"Touchstone{self._minimal_export_suffix(minimal_export)}",
+                path=output_path,
+                exported_items=", ".join(exported_trace_names),
+            )
+
+            csv_path = None
+            if self.query_one("#check_export_bundle_csv", Checkbox).value:
+                csv_path = await VNAApp._run_csv_export_job(
+                    self,
+                    freqs=freqs,
+                    sparams=export_params,
+                    freq_unit=str(self.settings.freq_unit),
+                    output_folder=export_folder,
+                    filename=export_filename,
+                    output_name=export_name,
+                    operation="Measurement CSV export",
+                )
+                self.log_message(f"Saved: {csv_path}", "success")
+                self._notify_export_result(
+                    kind="CSV",
+                    path=csv_path,
+                    exported_items=", ".join(exported_trace_names),
+                )
+
+            # Store measurement data with frequency unit before launching image jobs
             freq_unit = self.query_one("#select_freq_unit", Select).value
+            abs_output_path = str(Path(output_path).resolve())
             self.last_measurement = {
                 "freqs": freqs,
                 "sparams": sparams,
-                "output_path": output_path,
+                "output_path": abs_output_path,
+                "touchstone_path": abs_output_path,
+                "csv_path": csv_path,
+                "png_path": None,
+                "svg_path": None,
                 "freq_unit": freq_unit,
+                "notes": self.measurement_notes,
             }
-            self.last_output_path = output_path
+            self.last_output_path = abs_output_path
+
+            png_path = None
+            image_export_tasks = []
+            if self.query_one("#check_export_bundle_png", Checkbox).value:
+                png_path = str(Path(export_folder) / f"{export_filename}.png")
+                self.last_measurement["png_path"] = png_path
+                image_export_tasks.append(
+                    asyncio.create_task(
+                        VNAApp._run_measurement_image_export(
+                            self,
+                            file_path=png_path,
+                            plot_type=str(self.settings.plot_type),
+                            plot_params=exported_trace_names,
+                            dpi=300,
+                            metadata_writer=embed_png_metadata,
+                            minimal_export=minimal_export,
+                            kind="PNG",
+                        )
+                    )
+                )
+
+            svg_path = None
+            if self.query_one("#check_export_bundle_svg", Checkbox).value:
+                svg_path = str(Path(export_folder) / f"{export_filename}.svg")
+                self.last_measurement["svg_path"] = svg_path
+                image_export_tasks.append(
+                    asyncio.create_task(
+                        VNAApp._run_measurement_image_export(
+                            self,
+                            file_path=svg_path,
+                            plot_type=str(self.settings.plot_type),
+                            plot_params=exported_trace_names,
+                            dpi=150,
+                            metadata_writer=embed_svg_metadata,
+                            minimal_export=minimal_export,
+                            kind="SVG",
+                        )
+                    )
+                )
 
             # Set plot checkboxes to match export parameters
             self.query_one("#check_plot_s11", Checkbox).value = self.query_one(
@@ -3711,67 +2552,230 @@ class VNAApp(App):
     def handle_import_results(self) -> None:
         """Import and display results from a Touchstone file."""
         try:
-            # Use tkinter file dialog (hidden root window)
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
+            self._import_measurement_output(restore_measurement=True)
+        except Exception as e:
+            self.log_message(f"Import failed: {e}", "error")
+            self.notify(f"Import failed: {e}", severity="error")
 
-            file_path = filedialog.askopenfilename(
-                title="Select Touchstone File",
-                filetypes=[
-                    ("Touchstone Files", "*.s2p"),
-                    ("All Files", "*.*"),
-                ],
+    def action_import_setup_from_measurement_output(self) -> None:
+        """Restore only the Setup tab from an exported measurement file."""
+        try:
+            self._import_measurement_output(restore_measurement=False)
+        except Exception as e:
+            self.log_message(f"Setup import failed: {e}", "error")
+            self.notify(f"Setup import failed: {e}", severity="error")
+
+    def action_restore_setup_from_path(self, path: str) -> None:
+        """Restore setup from the provided exported measurement path."""
+        try:
+            self._start_measurement_import(path, restore_measurement=False)
+        except Exception as e:
+            self.log_message(f"Setup import failed: {e}", "error")
+            self.notify(f"Setup import failed: {e}", severity="error")
+
+    def action_open_recent_measurement(self, path: str) -> None:
+        """Open/import a recent measurement (path) and restore measurement state."""
+        try:
+            self._start_measurement_import(path, restore_measurement=True)
+        except Exception as e:
+            self.log_message(f"Import failed: {e}", "error")
+            self.notify(f"Import failed: {e}", severity="error")
+
+    def _get_selected_export_params(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """Return the currently selected S-parameters available in cached data."""
+        if not self.last_measurement:
+            return {}
+
+        sparams = self.last_measurement["sparams"]
+        export_params: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+
+        if self.query_one("#check_export_s11", Checkbox).value and "S11" in sparams:
+            export_params["S11"] = sparams["S11"]
+        if self.query_one("#check_export_s21", Checkbox).value and "S21" in sparams:
+            export_params["S21"] = sparams["S21"]
+        if self.query_one("#check_export_s12", Checkbox).value and "S12" in sparams:
+            export_params["S12"] = sparams["S12"]
+        if self.query_one("#check_export_s22", Checkbox).value and "S22" in sparams:
+            export_params["S22"] = sparams["S22"]
+
+        return export_params
+
+    def _choose_measurement_export_path(
+        self,
+        *,
+        title: str,
+        extension: str,
+        filetypes: list[tuple[str, str]],
+        default_source: str | None,
+        fallback_name: str,
+    ) -> str:
+        """Open a save dialog for a measurement export and return the chosen path."""
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        if default_source:
+            default_name = Path(str(default_source)).stem + extension
+        else:
+            default_name = fallback_name
+
+        try:
+            return filedialog.asksaveasfilename(
+                title=title,
+                defaultextension=extension,
+                filetypes=filetypes,
                 initialdir=(
                     self.settings.output_folder if self.settings.output_folder else "."
                 ),
+                initialfile=default_name,
             )
+        finally:
             root.destroy()
 
-            if not file_path:
-                return  # User cancelled
+    @on(Button.Pressed, "#btn_export_touchstone")
+    def handle_export_touchstone(self, event: Button.Pressed | None = None) -> None:
+        """Export current measurement as a Touchstone file."""
+        del event
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_touchstone_async(self)
+        )
 
-            self.log_message(f"Importing: {file_path}", "progress")
+    async def _handle_export_touchstone_async(self) -> None:
+        """Async Touchstone export wrapper using the unified background job path."""
+        if not self.last_measurement:
+            self.log_message("No measurement data to export", "error")
+            return
 
-            # Import file using TouchstoneExporter
-            freqs, sparams = TouchstoneExporter.import_file(file_path)
-
-            self.log_message(
-                f"Imported {len(freqs)} points, {len(sparams)} S-parameters", "success"
+        try:
+            file_path = self._choose_measurement_export_path(
+                title="Export Measurement as Touchstone (SxP)",
+                extension=".s2p",
+                filetypes=[("Touchstone / SxP File", "*.s2p"), ("All Files", "*.*")],
+                default_source=(
+                    self.last_measurement.get("touchstone_path")
+                    or self.last_output_path
+                ),
+                fallback_name="measurement.s2p",
             )
 
-            # Store measurement data (imported files use MHz by default)
-            self.last_measurement = {
-                "freqs": freqs,
-                "sparams": sparams,
-                "output_path": file_path,
-                "freq_unit": "MHz",  # Touchstone files typically use MHz
-            }
-            self.last_output_path = file_path
+            if not file_path:
+                return
 
-            # Update plot checkboxes based on available parameters
-            self.query_one("#check_plot_s11", Checkbox).value = "S11" in sparams
-            self.query_one("#check_plot_s21", Checkbox).value = "S21" in sparams
-            self.query_one("#check_plot_s12", Checkbox).value = "S12" in sparams
-            self.query_one("#check_plot_s22", Checkbox).value = "S22" in sparams
+            export_params = self._get_selected_export_params()
+            if not export_params:
+                self.log_message(
+                    "No S-parameters selected for Touchstone export", "error"
+                )
+                return
 
-            # Display results
-            asyncio.create_task(self._update_results(freqs, sparams, file_path))
-            # Also refresh tools tab with imported data
-            asyncio.create_task(self._refresh_tools_plot())
-            self._run_tools_computation()
-            self.call_after_refresh(self._rebuild_tools_params)
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
+            exported_trace_names = list(export_params.keys())
+            minimal_export = self._is_minimal_export_enabled()
+            notes_markdown = (
+                "" if minimal_export else str(self.last_measurement.get("notes", ""))
+            )
+            metadata = (
+                None
+                if minimal_export
+                else self._build_touchstone_export_metadata(
+                    exported_traces=exported_trace_names,
+                    output_path=file_path,
+                )
+            )
+            await VNAApp._run_touchstone_export_job(
+                self,
+                freqs=self.last_measurement["freqs"],
+                sparams=export_params,
+                freq_unit=freq_unit,
+                output_folder=str(Path(file_path).parent),
+                filename=Path(file_path).name,
+                output_name="measurement",
+                notes_markdown=notes_markdown,
+                metadata=metadata,
+                operation="Export Touchstone",
+            )
 
-        except FileNotFoundError as e:
-            self.log_message(str(e), "error")
-        except ValueError as e:
-            self.log_message(f"Invalid file format: {e}", "error")
+            self.last_measurement["touchstone_path"] = file_path
+            self.log_message(
+                f"Exported Touchstone (SxP){self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
+            self._notify_export_result(
+                kind=f"Touchstone{self._minimal_export_suffix(minimal_export)}",
+                path=file_path,
+                exported_items=", ".join(exported_trace_names),
+            )
+
         except Exception as e:
-            self.log_message(f"Import failed: {e}", "error")
+            self.log_message(f"Touchstone export failed: {e}", "error")
+
+    @on(Button.Pressed, "#btn_export_csv")
+    def handle_export_csv(self, event: Button.Pressed | None = None) -> None:
+        """Export current measurement as a CSV file."""
+        del event
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_csv_async(self)
+        )
+
+    async def _handle_export_csv_async(self) -> None:
+        """Async CSV export wrapper using the unified background job path."""
+        if not self.last_measurement:
+            self.log_message("No measurement data to export", "error")
+            return
+
+        try:
+            file_path = self._choose_measurement_export_path(
+                title="Export Measurement as CSV",
+                extension=".csv",
+                filetypes=[("CSV File", "*.csv"), ("All Files", "*.*")],
+                default_source=self.last_measurement.get("csv_path")
+                or self.last_output_path,
+                fallback_name="measurement.csv",
+            )
+
+            if not file_path:
+                return
+
+            export_params = self._get_selected_export_params()
+            if not export_params:
+                self.log_message("No S-parameters selected for CSV export", "error")
+                return
+
+            freq_unit_value = self.query_one("#select_freq_unit", Select).value
+            freq_unit = freq_unit_value if isinstance(freq_unit_value, str) else "MHz"
+            await VNAApp._run_csv_export_job(
+                self,
+                freqs=self.last_measurement["freqs"],
+                sparams=export_params,
+                freq_unit=freq_unit,
+                output_folder=str(Path(file_path).parent),
+                filename=Path(file_path).name,
+                output_name="measurement",
+                operation="Export CSV",
+            )
+
+            self.last_measurement["csv_path"] = file_path
+            self.log_message(f"Exported CSV: {file_path}", "success")
+            self._notify_export_result(
+                kind="CSV",
+                path=file_path,
+                exported_items=", ".join(export_params.keys()),
+            )
+
+        except Exception as e:
+            self.log_message(f"CSV export failed: {e}", "error")
 
     @on(Button.Pressed, "#btn_export_png")
-    def handle_export_png(self) -> None:
+    def handle_export_png(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as PNG."""
+        del event
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_png_async(self)
+        )
+
+    async def _handle_export_png_async(self) -> None:
+        """Async PNG export wrapper using the unified background job path."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
             return
@@ -3814,35 +2818,37 @@ class VNAApp(App):
             if self.query_one("#check_plot_s22", Checkbox).value:
                 plot_params.append("S22")
 
-            # Generate plot
-            if plot_type == "smith":
-                _create_smith_chart(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    Path(file_path),
-                    dpi=300,  # High DPI for export
-                    colors=_get_plot_colors(self.get_css_variables()),
-                )
-            else:
-                _create_matplotlib_plot(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    plot_type,
-                    Path(file_path),
-                    dpi=300,  # High DPI for export
-                    colors=_get_plot_colors(self.get_css_variables()),
-                )
+            minimal_export = self._is_minimal_export_enabled()
 
-            self.log_message(f"Exported PNG: {file_path}", "success")
+            await VNAApp._run_measurement_image_export(
+                self,
+                file_path=file_path,
+                plot_type=str(plot_type),
+                plot_params=plot_params,
+                dpi=300,
+                metadata_writer=embed_png_metadata,
+                minimal_export=minimal_export,
+                kind="PNG",
+            )
+            self.last_measurement["png_path"] = file_path
+            self.log_message(
+                f"Exported PNG{self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
 
         except Exception as e:
             self.log_message(f"PNG export failed: {e}", "error")
 
     @on(Button.Pressed, "#btn_export_svg")
-    def handle_export_svg(self) -> None:
+    def handle_export_svg(self, event: Button.Pressed | None = None) -> None:
         """Export current plot as SVG."""
+        del event
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._handle_export_svg_async(self)
+        )
+
+    async def _handle_export_svg_async(self) -> None:
+        """Async SVG export wrapper using the unified background job path."""
         if not self.last_measurement:
             self.log_message("No measurement data to export", "error")
             return
@@ -3885,28 +2891,23 @@ class VNAApp(App):
             if self.query_one("#check_plot_s22", Checkbox).value:
                 plot_params.append("S22")
 
-            # SVG export - matplotlib will detect .svg and use SVG backend
-            if plot_type == "smith":
-                _create_smith_chart(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    Path(file_path),
-                    dpi=150,  # DPI doesn't matter much for vector
-                    colors=_get_plot_colors(self.get_css_variables()),
-                )
-            else:
-                _create_matplotlib_plot(
-                    self.last_measurement["freqs"],
-                    self.last_measurement["sparams"],
-                    plot_params,
-                    plot_type,
-                    Path(file_path),
-                    dpi=150,  # DPI doesn't matter much for vector
-                    colors=_get_plot_colors(self.get_css_variables()),
-                )
+            minimal_export = self._is_minimal_export_enabled()
 
-            self.log_message(f"Exported SVG: {file_path}", "success")
+            await VNAApp._run_measurement_image_export(
+                self,
+                file_path=file_path,
+                plot_type=str(plot_type),
+                plot_params=plot_params,
+                dpi=150,
+                metadata_writer=embed_svg_metadata,
+                minimal_export=minimal_export,
+                kind="SVG",
+            )
+            self.last_measurement["svg_path"] = file_path
+            self.log_message(
+                f"Exported SVG{self._minimal_export_suffix(minimal_export)}: {file_path}",
+                "success",
+            )
 
         except Exception as e:
             self.log_message(f"SVG export failed: {e}", "error")
@@ -4009,7 +3010,13 @@ class VNAApp(App):
         """
         Handle window resize events and schedule debounced UI updates.
 
-        If a measurement is loaded, cancels any pending main-plot timer and schedules a debounced redraw of the results plot after 300 milliseconds. If the Tools tab is active and a measurement exists, cancels any pending tools-plot timer and schedules a debounced tools-plot refresh after 300 milliseconds. If an output path is set, cancels any pending path-update timer and schedules a debounced update of the displayed output-file label after 300 milliseconds.
+        If a measurement is loaded, cancels any pending main-plot timer and
+        schedules a debounced redraw of the results plot after 150
+        milliseconds. If the Tools tab is active and a measurement exists,
+        cancels any pending tools-plot timer and schedules a debounced
+        tools-plot refresh after 150 milliseconds. If an output path is set,
+        cancels any pending path-update timer and schedules a debounced
+        update of the displayed output-file label after 300 milliseconds.
 
         Parameters:
             event: The resize event object provided by the Textual framework.
@@ -4018,14 +3025,14 @@ class VNAApp(App):
             # Cancel any pending resize timer
             if self._resize_timer is not None:
                 self._resize_timer.stop()
-            # Debounce: redraw only after 300ms of no resize events
-            self._resize_timer = self.set_timer(0.3, self._redraw_plot)
+            # Debounce: redraw only after resize activity settles briefly.
+            self._resize_timer = self.set_timer(0.15, self._redraw_plot)
 
         # Debounce tools plot redraw — only when Tools tab is visible
         if self.last_measurement is not None and self._is_tools_tab_active():
             if self._tools_resize_timer is not None:
                 self._tools_resize_timer.stop()
-            self._tools_resize_timer = self.set_timer(0.3, self._refresh_tools_plot)
+            self._tools_resize_timer = self.set_timer(0.15, self._delayed_tools_refresh)
 
         # Update output file path label
         if self.last_output_path is not None:
@@ -4037,12 +3044,7 @@ class VNAApp(App):
 
     async def _delayed_redraw_plot(self) -> None:
         """Delayed plot redraw to ensure proper container sizing."""
-        if self.last_measurement is not None:
-            await self._update_results(
-                self.last_measurement["freqs"],
-                self.last_measurement["sparams"],
-                self.last_measurement["output_path"],
-            )
+        await VNAApp._refresh_results_plot_if_needed(self)
 
     async def _redraw_plot(self) -> None:
         """
@@ -4050,660 +3052,511 @@ class VNAApp(App):
 
         If no last measurement is available this method does nothing.
         """
-        if self.last_measurement is not None:
-            await self._update_results(
-                self.last_measurement["freqs"],
-                self.last_measurement["sparams"],
-                self.last_measurement["output_path"],
-            )
+        await VNAApp._refresh_results_plot_if_needed(self)
+
+    def _schedule_plot_refresh(self) -> None:
+        """Schedule a debounced refresh of the results plot."""
+        if self.last_measurement is None:
+            return
+
+        if self._plot_refresh_timer is not None:
+            self._plot_refresh_timer.stop()
+
+        self._plot_refresh_timer = self.set_timer(0.15, self._redraw_plot)
 
     # ------------------------------------------------------------------ #
     # Tools tab helpers
     # ------------------------------------------------------------------ #
 
     def _get_tools_trace(self) -> str:
-        """
-        Get the currently selected S-parameter trace from the Tools radio buttons.
-
-        Checks the Tools RadioSet for a selected trace and returns its name; if no trace is selected or the widgets are unavailable, defaults to "S11".
-
-        Returns:
-            trace (str): One of "S11", "S21", "S12", or "S22" — the selected trace, or "S11" when none is selected.
-        """
-        for param in ("S11", "S21", "S12", "S22"):
-            try:
-                rb = self.query_one(f"#tools_radio_{param.lower()}", RadioButton)
-                if rb.value:
-                    return param
-            except Exception:
-                pass
-        return "S11"
+        """Return the currently selected tools trace."""
+        return get_tools_trace(self)
 
     def _apply_tool_ui(self) -> None:
-        """
-        Update the tool UI to reflect the currently selected tool.
-
-        Sets the visual variant of the Cursor and Distortion buttons according to
-        the current value of settings.tools_active_tool and schedules a rebuild of
-        the dynamic tool parameters panel after the UI refresh.
-        """
-        active = self.settings.tools_active_tool
-        try:
-            self.query_one("#btn_tool_measure", Button).variant = (
-                "success" if active == "cursor" else "primary"
-            )
-            self.query_one("#btn_tool_distortion", Button).variant = (
-                "success" if active == "distortion" else "primary"
-            )
-        except Exception:
-            pass
-        self.call_after_refresh(self._rebuild_tools_params)
+        """Update the tools button UI to reflect the active tool."""
+        apply_tool_ui(self)
 
     def _set_active_tool(self, tool_name: str) -> None:
-        """
-        Activate or deactivate a tools panel by name.
-
-        Parameters:
-            tool_name (str): Identifier of the tool to activate (for example "cursor" or "distortion").
-                If this tool is already active, it will be deactivated (cleared).
-                After changing the active tool the method updates the tool UI; if a measurement
-                is available it also runs tool computations and schedules a tools-plot refresh.
-        """
-        if self.settings.tools_active_tool == tool_name:
-            self.settings.tools_active_tool = ""
-        else:
-            self.settings.tools_active_tool = tool_name
-        self._apply_tool_ui()
-        if self.last_measurement is not None:
-            self._run_tools_computation()
-            self.call_after_refresh(self._refresh_tools_plot)
+        """Activate or deactivate a tools panel by name."""
+        set_active_tool(self, tool_name)
 
     def _get_distortion_comp_enabled(self) -> list[bool]:
-        """
-        Determine which of the six Legendre component overlays are enabled.
-
-        If a corresponding checkbox widget cannot be queried, a sensible default is used for that component (`[False, True, True, False, False, False]`).
-
-        Returns:
-            list[bool]: Six booleans where element `n` is `True` if Legendre component `n` overlay is enabled, `False` otherwise.
-        """
-        defaults = [False, True, True, False, False, False]
-        result = list(defaults)
-        for n in range(6):
-            try:
-                result[n] = self.query_one(
-                    f"#input_distortion_comp_{n}", Checkbox
-                ).value
-            except Exception:
-                pass
-        return result
+        """Return enabled state for distortion component overlays."""
+        return get_distortion_comp_enabled(self)
 
     async def _rebuild_tools_params(self) -> None:
-        """
-        Rebuild the tools parameter panel UI to reflect the currently selected tool.
-
-        When the active tool is "cursor" or "distortion", mounts input rows for Cursor 1 and Cursor 2 (with placeholders labeled by the current frequency unit) and, for "distortion", an additional row of six component checkboxes with appropriate default selections. When no tool is active, mounts a placeholder message prompting the user to activate a tool.
-        """
-        try:
-            container = self.query_one("#tools_params_container", Container)
-        except Exception:
-            return
-
-        await container.remove_children()
-
-        active = self.settings.tools_active_tool
-        freq_unit = (
-            self.last_measurement.get("freq_unit", "MHz")
-            if self.last_measurement
-            else "MHz"
-        )
-
-        if active in ("cursor", "distortion"):
-            unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-            mult = unit_multipliers.get(freq_unit, 1e6)
-            c1_val = (
-                str(round(self._tools_cursor1_hz / mult, 6))
-                if self._tools_cursor1_hz is not None
-                else ""
-            )
-            c2_val = (
-                str(round(self._tools_cursor2_hz / mult, 6))
-                if self._tools_cursor2_hz is not None
-                else ""
-            )
-            cursor1_row = Horizontal(classes="plot-controls")
-            cursor2_row = Horizontal(classes="plot-controls")
-            await container.mount(cursor1_row)
-            await container.mount(cursor2_row)
-            await cursor1_row.mount(
-                Label("Cursor 1:", classes="tools-cursor-1"),
-                Input(
-                    value=c1_val,
-                    placeholder=f"Frequency ({freq_unit})",
-                    id="input_tools_cursor1",
-                ),
-            )
-            await cursor2_row.mount(
-                Label("Cursor 2:", classes="tools-cursor-2"),
-                Input(
-                    value=c2_val,
-                    placeholder=f"Frequency ({freq_unit})",
-                    id="input_tools_cursor2",
-                ),
-            )
-            if active == "distortion":
-                comp_row = Horizontal(classes="distortion-comp-row")
-                await container.mount(comp_row)
-                for n in range(6):
-                    await comp_row.mount(
-                        Checkbox(
-                            _DISTORTION_COMPONENT_NAMES[n],
-                            value=(n in (1, 2)),
-                            id=f"input_distortion_comp_{n}",
-                            classes="distortion-comp-check",
-                        )
-                    )
-        else:
-            await container.mount(
-                Static(
-                    "[dim]Activate a tool below to see options.[/dim]",
-                    id="tools_params_placeholder",
-                    markup=True,
-                )
-            )
+        """Rebuild the tools parameter panel UI."""
+        await rebuild_tools_params(self)
 
     async def _delayed_redraw_tools_plot(self) -> None:
-        """
-        Trigger a tools-tab plot refresh after a deferred period to allow container sizing to settle.
-
-        If a cached measurement exists, refreshes the tools plot; otherwise does nothing.
-        """
-        if self.last_measurement is not None:
-            await self._refresh_tools_plot()
+        """Trigger a deferred tools plot refresh after layout settles."""
+        await delayed_redraw_tools_plot(self)
 
     async def _delayed_tools_refresh(self) -> None:
-        """Debounced handler: refresh tools plot then run computation."""
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+        """Debounced handler: compute and render tools concurrently."""
+        await delayed_tools_refresh(self)
 
     async def _refresh_results_plot(self) -> None:
         """Re-render the Measurement tab plot from cached data (e.g. after a theme change)."""
+        await VNAApp._refresh_results_plot_if_needed(self, force=True)
+
+    def _get_results_plot_display_key(self) -> tuple[int, int]:
+        """Return the current Results container size used for display decisions."""
+        try:
+            container = self.query_one("#results_container", Container)
+            return (
+                int(container.content_size.width or 0),
+                int(container.content_size.height or 0),
+            )
+        except Exception:
+            return (0, 0)
+
+    def _get_results_plot_cache_key(
+        self,
+        freqs: np.ndarray,
+        sparams: dict[str, tuple[np.ndarray, np.ndarray]],
+    ) -> tuple[object, ...]:
+        """Return a cache key describing the current Results plot inputs."""
+        plot_type_value = self.query_one("#select_plot_type", Select).value
+        plot_type = (
+            str(plot_type_value) if isinstance(plot_type_value, str) else "magnitude"
+        )
+        selected_traces = tuple(
+            param
+            for param in ("S11", "S21", "S12", "S22")
+            if param in sparams
+            and self.query_one(f"#check_plot_{param.lower()}", Checkbox).value
+        )
+        freq_min = self.query_one("#input_plot_freq_min", Input).value.strip()
+        freq_max = self.query_one("#input_plot_freq_max", Input).value.strip()
+        y_min = self.query_one("#input_plot_y_min", Input).value.strip()
+        y_max = self.query_one("#input_plot_y_max", Input).value.strip()
+        colors_signature = tools_logic._freeze_cache_value(
+            get_plot_colors(self.get_css_variables())
+        )
+        data_signature = (
+            id(freqs),
+            tuple(
+                (name, id(values[0]), id(values[1]))
+                for name, values in sorted(sparams.items())
+            ),
+        )
+        return (
+            self.settings.plot_backend,
+            plot_type,
+            selected_traces,
+            freq_min,
+            freq_max,
+            y_min,
+            y_max,
+            colors_signature,
+            data_signature,
+        )
+
+    async def _apply_cached_results_plot_display(self) -> bool:
+        """Reuse the already-rendered Results image when only layout changed."""
+        if self.settings.plot_backend != "image" or not self.last_plot_path:
+            return False
+
+        plot_file = Path(self.last_plot_path)
+        if not plot_file.exists():
+            return False
+
+        try:
+            results_container = self.query_one("#results_container", Container)
+        except Exception:
+            return False
+
+        async def ensure_results_widget(widget_class, *args, **kwargs):
+            existing_children = list(results_container.children)
+            existing_widget = existing_children[0] if existing_children else None
+
+            if existing_widget is not None and isinstance(
+                existing_widget, widget_class
+            ):
+                for child in existing_children[1:]:
+                    await child.remove()
+                return existing_widget, True
+
+            await results_container.remove_children()
+            widget = widget_class(*args, **kwargs)
+            await results_container.mount(widget)
+            return widget, False
+
+        try:
+            if not TEXTUAL_IMAGE_AVAILABLE:
+                raise ImportError("textual-image not available")
+
+            pixel_size = self._results_plot_pixel_size
+            if pixel_size is None:
+                plot_type_value = self.query_one("#select_plot_type", Select).value
+                plot_type = (
+                    str(plot_type_value)
+                    if isinstance(plot_type_value, str)
+                    else "magnitude"
+                )
+                pixel_size = (1920, 1920) if plot_type == "smith" else (1920, 1080)
+            px_w, px_h = pixel_size
+
+            img_widget, _ = await ensure_results_widget(ImageWidget, str(plot_file))
+            img_widget.image = str(plot_file)
+            container_w = results_container.content_size.width
+
+            if container_w and container_w > 10 and px_w and px_h:
+                img_widget.set_class(False, "main-image-fallback")
+                img_widget.set_class(True, "main-image-display")
+            else:
+                img_widget.set_class(False, "main-image-display")
+                img_widget.set_class(True, "main-image-fallback")
+
+            img_widget.refresh()
+            self._results_plot_display_key = VNAApp._get_results_plot_display_key(self)
+            return True
+        except Exception as e:
+            self.log_message(f"Failed to reuse cached plot image: {e}", "error")
+            return False
+
+    async def _refresh_results_plot_if_needed(self, *, force: bool = False) -> None:
+        """Refresh the Results plot only when data or visible layout changed."""
         if self.last_measurement is None:
             return
+
+        try:
+            cache_key = VNAApp._get_results_plot_cache_key(
+                self,
+                self.last_measurement["freqs"],
+                self.last_measurement["sparams"],
+            )
+            display_key = VNAApp._get_results_plot_display_key(self)
+        except Exception:
+            await self._update_results(
+                self.last_measurement["freqs"],
+                self.last_measurement["sparams"],
+                self.last_measurement["output_path"],
+            )
+            return
+
+        if not force and cache_key == self._results_plot_cache_key:
+            if display_key == self._results_plot_display_key:
+                return
+            if await VNAApp._apply_cached_results_plot_display(self):
+                return
+
         await self._update_results(
             self.last_measurement["freqs"],
             self.last_measurement["sparams"],
             self.last_measurement["output_path"],
         )
 
-    async def _refresh_tools_plot(self) -> None:
-        """
-        Render the Tools tab plot for the currently selected trace, including optional cursor and distortion overlays.
+    def _sync_measurement_notes_from_editor(self) -> None:
+        """Copy the current notes editor contents into app and measurement state."""
+        editor = self.query_one("#measurement_notes_editor", TextArea)
+        self.measurement_notes = editor.text
+        if self.last_measurement is not None:
+            self.last_measurement["notes"] = self.measurement_notes
 
-        This uses the cached measurement in self.last_measurement and the current tool/plot settings to choose data (magnitude, unwrapped phase, or raw phase), compute an automatic y-range, and draw the trace using either the terminal backend (textual_plotext) or the image backend (matplotlib). If cursor or distortion tools are active, corresponding horizontal/vertical markers and markers or distortion component overlays are added. The rendered plot is mounted into the "#tools_plot_container" in the UI; when using the image backend a PNG is written to the app's temporary plot directory and displayed if pixel image support is available. If no measurement or plot container is available, the function exits without error.
-        """
-        if self.last_measurement is None:
-            return
+    def _load_measurement_notes_into_editor(self) -> None:
+        """Load cached measurement notes into the notes editor."""
+        editor = self.query_one("#measurement_notes_editor", TextArea)
+        notes = self.measurement_notes
+        if self.last_measurement is not None:
+            notes = str(self.last_measurement.get("notes", notes))
+        self.measurement_notes = notes
+        editor.text = notes
+        self._refresh_measurement_notes_preview()
 
-        try:
-            container = self.query_one("#tools_plot_container", Container)
-        except Exception:
-            return
-
-        freqs = self.last_measurement["freqs"]
-        sparams = self.last_measurement["sparams"]
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-
-        trace = self._get_tools_trace()
-
-        try:
-            plot_type = self.query_one("#select_tools_plot_type", Select).value
-        except Exception:
-            plot_type = "magnitude"
-
-        if trace not in sparams:
-            await container.remove_children()
-            await container.mount(
-                Static(
-                    f"[yellow]Trace {trace} not available in current measurement.[/yellow]",
-                    markup=True,
-                )
-            )
-            return
-
-        mag, phase = sparams[trace]
-        if plot_type == "magnitude":
-            data = mag
-            y_label = "Magnitude (dB)"
-            plot_title = f"{trace} Magnitude"
-        elif plot_type == "phase":
-            data = _unwrap_phase(phase)
-            y_label = "Phase (°)"
-            plot_title = f"{trace} Phase (Unwrapped)"
+    def _refresh_measurement_notes_preview(self) -> None:
+        """Render the current raw markdown notes into the preview pane."""
+        editor = self.query_one("#measurement_notes_editor", TextArea)
+        preview = self.query_one("#measurement_notes_preview", Markdown)
+        notes = editor.text.strip()
+        self.measurement_notes = editor.text
+        if self.last_measurement is not None:
+            self.last_measurement["notes"] = self.measurement_notes
+        if notes:
+            preview.set_class(False, "notes-empty")
+            preview.update(self.measurement_notes)
         else:
-            data = phase
-            y_label = "Phase (°)"
-            plot_title = f"{trace} Phase (Raw)"
+            preview.set_class(True, "notes-empty")
+            preview.update("No notes yet")
 
-        auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
-            data, outlier_percentile=1.0, safety_margin=0.05
+    def action_save_back(self) -> None:
+        """Save measurement notes/metadata back into the original source file (Ctrl+S).
+
+        Only supported for imported measurement outputs where a touchstone_path
+        exists and the file is a .s2p. Rewrites TINA comment blocks (notes and
+        machine-readable metadata) while preserving the numeric Touchstone data.
+        """
+        VNAApp._schedule_manual_export_action(
+            self, VNAApp._action_save_back_async(self)
         )
-        freq_axis = freqs / multiplier
-        plot_colors = _get_plot_colors(self.get_css_variables())
-        trace_color_rgb = plot_colors["traces_rgb"].get(trace, (255, 255, 255))
-        trace_color_hex = plot_colors["traces"].get(trace, "#ffffff")
 
-        cursor1_hz = self._tools_cursor1_hz
-        cursor2_hz = self._tools_cursor2_hz
-        active_tool = self.settings.tools_active_tool
-        marker_symbol = self.settings.cursor_marker_style
+    async def _action_save_back_async(self) -> None:
+        """Async save-back wrapper using the unified background job path."""
+        try:
+            # Sync editor contents first
+            self._sync_measurement_notes_from_editor()
 
-        cursor1_hex = plot_colors["cursor1"]
-        cursor2_hex = plot_colors["cursor2"]
-        cursor1_rgb = plot_colors["cursor1_rgb"]
-        cursor2_rgb = plot_colors["cursor2_rgb"]
+            if not self.last_measurement:
+                self.notify(
+                    "No measurement loaded to save", severity="error", timeout=2
+                )
+                return
 
-        # Map Unicode marker to matplotlib marker code
-        mpl_markers = {"▼": "v", "✕": "x", "○": "o"}
-        mpl_marker = mpl_markers.get(marker_symbol, "v")
+            # Prefer touchstone path for save-back metadata storage, but allow
+            # saving back into PNG or SVG images as well when present.
+            s2p_path = self.last_measurement.get("touchstone_path")
+            png_path = self.last_measurement.get("png_path")
+            svg_path = self.last_measurement.get("svg_path")
+            # Log the configured path and whether it currently exists so we can
+            # diagnose save-back failures. Resolve to absolute path to avoid
+            # issues when cwd changes or relative paths are used.
+            # (Removed debug logging; embedding will correctly include notes)
+            # If we have an s2p path and it exists, use the existing save-back
+            # behavior that rewrites the touchstone file. Otherwise, if a PNG or
+            # SVG path exists, embed the metadata into the image file.
+            target_for_history = None
 
-        plot_backend = self.settings.plot_backend
-
-        if plot_backend == "terminal":
-            from textual_plotext import PlotextPlot
-
-            # Reuse an existing PlotextPlot to avoid a blank-container flash
-            existing = container.query(PlotextPlot)
-            if existing:
-                pw = existing.first()
-                for child in list(container.children):
-                    if child is not pw:
-                        await child.remove()
-            else:
-                await container.remove_children()
-                pw = PlotextPlot()
-                await container.mount(pw)
-            plt_term = pw.plt
-            plt_term.clf()
-
-            plt_term.plot(
-                freq_axis.tolist(),
-                data.tolist(),
-                label=trace,
-                marker="braille",
-                color=trace_color_rgb,
+            # Build new metadata payload based on current app state
+            exported_traces = list(self._get_selected_export_params().keys()) or list(
+                self.last_measurement.get("sparams", {}).keys()
             )
-            plt_term.ylim(auto_y_min, auto_y_max)
-
-            if active_tool in ("cursor", "distortion"):
-                freq_min, freq_max = freqs[0], freqs[-1]
-                if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max:
-                    v1 = float(np.interp(cursor1_hz, freqs, data))
-                    c1_axis = cursor1_hz / multiplier
-                    plt_term.plot(
-                        freq_axis.tolist(),
-                        [v1] * len(freq_axis),
-                        marker="·",
-                        color=cursor1_rgb,
-                    )
-                    plt_term.vline(c1_axis, color=cursor1_rgb)
-                    plt_term.scatter(
-                        [c1_axis], [v1], marker=marker_symbol, color=cursor1_rgb
-                    )
-
-                if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max:
-                    v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c2_axis = cursor2_hz / multiplier
-                    plt_term.plot(
-                        freq_axis.tolist(),
-                        [v2] * len(freq_axis),
-                        marker="·",
-                        color=cursor2_rgb,
-                    )
-                    plt_term.vline(c2_axis, color=cursor2_rgb)
-                    plt_term.scatter(
-                        [c2_axis], [v2], marker=marker_symbol, color=cursor2_rgb
-                    )
-
-                if (
-                    active_tool == "distortion"
-                    and cursor1_hz is not None
-                    and cursor2_hz is not None
-                ):
-                    _dist = DistortionTool().compute(
-                        freqs, sparams, trace, plot_type, cursor1_hz, cursor2_hz
-                    )
-                    if _dist.extra:
-                        _ex = _dist.extra
-                        _coeffs = _ex["coeffs"]
-                        _x = np.array(_ex["x_norm"])
-                        _f_band_axis = np.array(_ex["f_band_hz"]) / multiplier
-                        _comp_enabled = self._get_distortion_comp_enabled()
-                        _ov_rgb = plot_colors["distortion_overlays_rgb"]
-                        for _n in range(6):
-                            if not _comp_enabled[_n]:
-                                continue
-                            _cum = np.zeros(_n + 1)
-                            _cum[:] = _coeffs[: _n + 1]
-                            _cum_y = np.polynomial.legendre.legval(_x, _cum).tolist()
-                            plt_term.plot(
-                                _f_band_axis.tolist(),
-                                _cum_y,
-                                marker=".",
-                                color=_ov_rgb[_n],
-                            )
-
-            plt_term.title(plot_title)
-            plt_term.xlabel(f"Frequency ({freq_unit})")
-            plt_term.ylabel(y_label)
-            plt_term.theme("clear")
-            pw.refresh()
-
-        else:
-            # Image backend — matplotlib
-            plot_file = self.plot_temp_dir / "tools_plot.png"
-            dpi = 150
-            fixed_width_px = 1920
-            fixed_height_px = 1080
-
-            fig, ax = plt.subplots(
-                figsize=(fixed_width_px / dpi, fixed_height_px / dpi), dpi=dpi
+            new_touchstone_metadata = self._build_touchstone_export_metadata(
+                exported_traces=exported_traces,
             )
-            fg = plot_colors["fg"]
-            fig.patch.set_alpha(0.0)
-            ax.set_facecolor("none")
 
-            ax.plot(freq_axis, data, label=trace, color=trace_color_hex, linewidth=1.5)
-            ax.set_ylim(auto_y_min, auto_y_max)
-
-            if active_tool in ("cursor", "distortion"):
-                freq_min, freq_max = freqs[0], freqs[-1]
-                if cursor1_hz is not None and freq_min <= cursor1_hz <= freq_max:
-                    v1 = float(np.interp(cursor1_hz, freqs, data))
-                    c1_axis = cursor1_hz / multiplier
-                    ax.axhline(
-                        y=v1, color=cursor1_hex, linestyle=":", linewidth=1, alpha=0.6
-                    )
-                    ax.axvline(
-                        x=c1_axis,
-                        color=cursor1_hex,
-                        linestyle="--",
-                        linewidth=1,
-                        alpha=0.8,
-                    )
-                    ax.plot(
-                        [c1_axis],
-                        [v1],
-                        marker=mpl_marker,
-                        color=cursor1_hex,
-                        markersize=10,
-                        linestyle="none",
-                        zorder=5,
-                    )
-
-                if cursor2_hz is not None and freq_min <= cursor2_hz <= freq_max:
-                    v2 = float(np.interp(cursor2_hz, freqs, data))
-                    c2_axis = cursor2_hz / multiplier
-                    ax.axhline(
-                        y=v2, color=cursor2_hex, linestyle=":", linewidth=1, alpha=0.6
-                    )
-                    ax.axvline(
-                        x=c2_axis,
-                        color=cursor2_hex,
-                        linestyle="--",
-                        linewidth=1,
-                        alpha=0.8,
-                    )
-                    ax.plot(
-                        [c2_axis],
-                        [v2],
-                        marker=mpl_marker,
-                        color=cursor2_hex,
-                        markersize=10,
-                        linestyle="none",
-                        zorder=5,
-                    )
-
-                if (
-                    active_tool == "distortion"
-                    and cursor1_hz is not None
-                    and cursor2_hz is not None
-                ):
-                    _dist = DistortionTool().compute(
-                        freqs, sparams, trace, plot_type, cursor1_hz, cursor2_hz
-                    )
-                    if _dist.extra:
-                        _ex = _dist.extra
-                        _coeffs = _ex["coeffs"]
-                        _x = np.array(_ex["x_norm"])
-                        _f_band_axis = np.array(_ex["f_band_hz"]) / multiplier
-                        _c0 = _coeffs[0]
-                        _f_lo_axis = min(cursor1_hz, cursor2_hz) / multiplier
-                        _f_hi_axis = max(cursor1_hz, cursor2_hz) / multiplier
-                        # Shade the selected band
-                        ax.axvspan(
-                            _f_lo_axis,
-                            _f_hi_axis,
-                            alpha=0.08,
-                            color=fg,
-                            zorder=0,
-                        )
-                        _comp_enabled = self._get_distortion_comp_enabled()
-                        _ov_hex = plot_colors["distortion_overlays"]
-                        for _n in range(6):
-                            if not _comp_enabled[_n]:
-                                continue
-                            _cum = np.zeros(_n + 1)
-                            _cum[:] = _coeffs[: _n + 1]
-                            _cum_y = np.polynomial.legendre.legval(_x, _cum)
-                            ax.plot(
-                                _f_band_axis,
-                                _cum_y,
-                                color=_ov_hex[_n],
-                                linestyle=_DISTORTION_OVERLAY_STYLES[_n],
-                                linewidth=1.5,
-                                label=_DISTORTION_OVERLAY_LABELS[_n],
-                                zorder=4,
-                            )
-
-            _font_family, _base_size = _get_terminal_font()
-            _base_size = _base_size or 10.0
-            ax.set_xlabel(f"Frequency ({freq_unit})", color=fg, fontsize=_base_size)
-            ax.set_ylabel(y_label, color=fg, fontsize=_base_size)
-            ax.set_title(plot_title, color=fg, fontsize=_base_size * 1.2, pad=15)
-            ax.tick_params(colors=fg, labelsize=_base_size * 0.85)
-            ax.grid(
-                True, alpha=0.2, color=plot_colors["grid"], linestyle="-", linewidth=0.5
-            )
-            legend = ax.legend(
-                edgecolor=plot_colors["grid"],
-                labelcolor=fg,
-                fontsize=_base_size * 0.9,
-            )
-            legend.get_frame().set_alpha(1.0)
-            legend.get_frame().set_facecolor("none")
-            for spine in ax.spines.values():
-                spine.set_edgecolor(plot_colors["grid"])
-                spine.set_linewidth(1)
-            plt.tight_layout()
-            plt.savefig(
-                plot_file,
-                dpi=dpi,
-                facecolor="none",
-                edgecolor="none",
-                bbox_inches="tight",
-            )
-            plt.close(fig)
-
-            if plot_file.exists() and TEXTUAL_IMAGE_AVAILABLE:
+            save_back_payload: dict[str, object] | None = None
+            if s2p_path:
                 try:
-                    img_widget = ImageWidget(str(plot_file))
-                    container_w = container.content_size.width
-                    if container_w and container_w > 10:
-                        display_w = max(40, container_w - 4)
-                        aspect = (fixed_width_px / 8) / (fixed_height_px / 16)
-                        img_widget.styles.width = display_w
-                        img_widget.styles.height = max(10, int(display_w / aspect))
-                    else:
-                        img_widget.styles.width = 120
-                        img_widget.styles.height = 60
-                    # Mount new widget first, then remove stale ones to avoid blank flash
-                    await container.mount(img_widget)
-                    for child in list(container.children[:-1]):
-                        await child.remove()
+                    s2p_resolved = str(Path(s2p_path).resolve())
+                except Exception:
+                    s2p_resolved = s2p_path
+                if (
+                    os.path.exists(s2p_resolved)
+                    and Path(s2p_resolved).suffix.lower() == ".s2p"
+                ):
+                    save_back_payload = {
+                        "target_kind": "touchstone",
+                        "target_path": s2p_resolved,
+                        "measurement_notes": self.measurement_notes,
+                        "metadata": new_touchstone_metadata,
+                    }
+                    target_for_history = s2p_resolved
+                else:
+                    # s2p path not available; will try image embedding below
+                    pass
+
+            # If we reach here, no valid s2p save-back occurred; try embedding into PNG or SVG
+            if save_back_payload is None and png_path and os.path.exists(png_path):
+                try:
+                    try:
+                        png_resolved = str(Path(png_path).resolve())
+                    except Exception:
+                        png_resolved = png_path
+                    save_back_payload = {
+                        "target_kind": "png",
+                        "target_path": png_resolved,
+                        "measurement_notes": self.measurement_notes,
+                        "metadata": self._build_touchstone_export_metadata(
+                            exported_traces=list(
+                                self.last_measurement.get("sparams", {}).keys()
+                            ),
+                        ),
+                    }
+                    target_for_history = png_resolved
                 except Exception as e:
-                    await container.remove_children()
-                    await container.mount(
-                        Static(f"[red]Image display error: {e}[/red]", markup=True)
+                    self.log_message(f"Failed to embed PNG metadata: {e}", "error")
+                    self.notify(
+                        f"PNG save-back failed: {e}", severity="error", timeout=3
                     )
-            elif not TEXTUAL_IMAGE_AVAILABLE:
-                await container.remove_children()
-                await container.mount(
-                    Static(
-                        f"[dim]Plot saved to: {plot_file}[/dim]",
-                        markup=True,
+                    return
+
+            elif save_back_payload is None and svg_path and os.path.exists(svg_path):
+                try:
+                    try:
+                        svg_resolved = str(Path(svg_path).resolve())
+                    except Exception:
+                        svg_resolved = svg_path
+                    save_back_payload = {
+                        "target_kind": "svg",
+                        "target_path": svg_resolved,
+                        "measurement_notes": self.measurement_notes,
+                        "metadata": self._build_touchstone_export_metadata(
+                            exported_traces=list(
+                                self.last_measurement.get("sparams", {}).keys()
+                            ),
+                        ),
+                    }
+                    target_for_history = svg_resolved
+                except Exception as e:
+                    self.log_message(f"Failed to embed SVG metadata: {e}", "error")
+                    self.notify(
+                        f"SVG save-back failed: {e}", severity="error", timeout=3
                     )
+                    return
+
+            elif save_back_payload is None:
+                self.notify(
+                    "No original file available to save",
+                    severity="error",
+                    timeout=2,
                 )
-            else:
-                await container.remove_children()
-                await container.mount(
-                    Static("[red]Could not generate tools plot.[/red]", markup=True)
-                )
+                return
+
+            saved_path = await VNAApp._run_save_back_job(self, save_back_payload)
+            self.log_message(f"Saved notes back to: {saved_path}", "success")
+            self.notify(
+                f"Saved notes to {Path(saved_path).name}",
+                severity="information",
+                timeout=3,
+            )
+
+            # Update setup restore history if we saved into an image
+            try:
+                if target_for_history:
+                    self.settings_manager.touch_setup_restore_history(
+                        str(target_for_history)
+                    )
+                    self.settings_manager.save(self.settings)
+            except Exception:
+                pass
+
+        except Exception as e:
+            self.log_message(f"Save-back failed: {e}", "error")
+            self.notify(f"Save-back failed: {e}", severity="error", timeout=4)
+
+    @on(Button.Pressed, "#btn_save_notes")
+    def handle_save_notes(self) -> None:
+        """Handler called from measurement notes panel save affordance.
+
+        Delegates to action_save_back so the same save-back logic is used.
+        """
+        try:
+            self.action_save_back()
+        except Exception as e:
+            self.log_message(f"Save notes handler failed: {e}", "error")
+
+    async def _refresh_tools_plot(self) -> None:
+        """Render the Tools tab plot for the currently selected trace."""
+        if self.last_measurement is None:
+            self._invalidate_tools_render_result_cache()
+            return
+
+        if self.settings.plot_backend == "terminal":
+            # Ensure the compute cache is warm so the terminal renderer can
+            # draw cursor markers and distortion overlays just like the image backend.
+            compute_cache_key = tools_logic.get_tools_plot_cache_key(self)
+            if (
+                self._latest_tools_compute_cache_key != compute_cache_key
+                or self._latest_tools_compute_result is None
+            ):
+                try:
+                    result = await self._run_tools_compute_job()
+                    if result.get("compute_cache_key") == compute_cache_key:
+                        self._latest_tools_compute_result = dict(result)
+                        self._latest_tools_compute_cache_key = compute_cache_key
+                except Exception:
+                    pass
+            tool_result = (
+                dict(self._latest_tools_compute_result.get("tool_result") or {})
+                if isinstance(self._latest_tools_compute_result, dict)
+                else None
+            )
+            await refresh_tools_plot(self, tool_result=tool_result)
+            return
+
+        cache_key = tools_logic.get_tools_plot_cache_key(self)
+        display_key = tools_logic.get_tools_plot_display_key(self)
+        plot_file = self.plot_temp_dir / "tools_plot.png"
+        if (
+            cache_key == self._tools_plot_cache_key
+            and plot_file.exists()
+            and display_key == self._tools_plot_display_key
+        ):
+            return
+        if (
+            cache_key == self._tools_plot_cache_key
+            and cache_key == self._latest_tools_render_cache_key
+            and plot_file.exists()
+            and display_key == self._tools_plot_display_key
+        ):
+            await apply_tools_render_result(self)
+            self._tools_plot_display_key = display_key
+            return
+
+        try:
+            self.set_progress("Tools plot: queued", 0)
+            result = await self._run_tools_render_job()
+            await apply_tools_render_result(self, result)
+            self._tools_plot_generation += 1
+            self._tools_plot_cache_key = cache_key
+            self._tools_plot_display_key = display_key
+            self._latest_tools_render_result = dict(result)
+            self._latest_tools_render_cache_key = cache_key
+        except Exception as exc:
+            self._tools_plot_cache_key = None
+            self._tools_plot_display_key = None
+            self._invalidate_tools_render_result_cache()
+            await apply_tools_render_result(self, error=str(exc))
+            self.reset_progress()
 
     def _run_tools_computation(self) -> None:
-        """
-        Run the currently selected tools module (cursor or distortion) and populate the #tools_results_display widget with computed results.
+        """Run the currently selected tools module and populate the results display."""
+        asyncio.create_task(self._run_tools_computation_async())
 
-        If no tool is active or there is no cached measurement, shows a brief prompt. For the "cursor" tool, displays cursor frequencies, values, and deltas (clickable cells copy the raw numeric text). For the "distortion" tool, displays Legendre component rows with coefficients and delta-y values; disabled components are dimmed and enabled components are color-highlighted, and numeric cells are clickable to copy. The widget is updated in-place; errors locating the display widget are silently ignored.
-        """
-        active = self.settings.tools_active_tool
-        try:
-            display = self.query_one("#tools_results_display", Static)
-        except Exception:
+    async def _run_tools_computation_async(self) -> None:
+        """Compute tools output through the unified worker job path."""
+        if self.last_measurement is None:
+            self._invalidate_tools_render_result_cache()
+            run_tools_computation(self)
             return
-
-        if active == "" or self.last_measurement is None:
-            display.update("[dim]No tool active.[/dim]")
-            return
-
-        freqs = self.last_measurement["freqs"]
-        sparams = self.last_measurement["sparams"]
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-
-        trace = self._get_tools_trace()
         try:
-            plot_type = self.query_one("#select_tools_plot_type", Select).value
-        except Exception:
-            plot_type = "magnitude"
-
-        if active == "cursor":
-            result = MeasureTool().compute(
-                freqs,
-                sparams,
-                trace,
-                plot_type,
-                self._tools_cursor1_hz,
-                self._tools_cursor2_hz,
-            )
-            if result.cursor1_value is None and result.cursor2_value is None:
-                display.update("[dim]Enter cursor frequencies above.[/dim]")
+            current_cache_key = self._current_tools_render_cache_key()
+            # Prefer the dedicated compute cache; fall back to any tool_result
+            # embedded in the last render result if that's still current.
+            cached_compute = self._latest_tools_compute_result
+            if (
+                isinstance(cached_compute, dict)
+                and self._latest_tools_compute_cache_key == current_cache_key
+            ):
+                render_tools_computation_result(self, cached_compute.get("tool_result"))
                 return
-            _pc = _get_plot_colors(self.get_css_variables())
-            c1col = _pc["cursor1"]
-            c2col = _pc["cursor2"]
-            labelw, valw = 8, 9
-            hdr = (
-                f"[dim]{'':>{labelw}}  "
-                f"{'Freq (' + freq_unit + ')':>{valw}}  "
-                f"{result.unit_label:>{valw}}[/dim]"
-            )
-            sep = f"[dim]{'─' * (labelw + 2 + valw + 2 + valw)}[/dim]"
-            lines = [hdr, sep]
-            if result.cursor1_freq_hz is not None and result.cursor1_value is not None:
-                f1_raw = f"{result.cursor1_freq_hz / multiplier:.4f}"
-                v1_raw = f"{result.cursor1_value:.4f}"
-                lines.append(
-                    f"[bold {c1col}]{'Cursor 1':>{labelw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{f1_raw}\")']{f1_raw:>{valw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{v1_raw}\")']{v1_raw:>{valw}}[/]"
-                )
-            if result.cursor2_freq_hz is not None and result.cursor2_value is not None:
-                f2_raw = f"{result.cursor2_freq_hz / multiplier:.4f}"
-                v2_raw = f"{result.cursor2_value:.4f}"
-                lines.append(
-                    f"[bold {c2col}]{'Cursor 2':>{labelw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{f2_raw}\")']{f2_raw:>{valw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{v2_raw}\")']{v2_raw:>{valw}}[/]"
-                )
-            if result.delta_value is not None:
-                fd_raw = f"{abs(result.cursor2_freq_hz - result.cursor1_freq_hz) / multiplier:.4f}"
-                dv_raw = f"{result.delta_value:.4f}"
-                lines.append(
-                    f"[dim]{'Δ':>{labelw}}[/dim]  "
-                    f"[@click='app.copy_cell_value(\"{fd_raw}\")']{fd_raw:>{valw}}[/]  "
-                    f"[@click='app.copy_cell_value(\"{dv_raw}\")']{dv_raw:>{valw}}[/]"
-                )
-            display.update("\n".join(lines))
-
-        elif active == "distortion":
-            result = DistortionTool().compute(
-                freqs,
-                sparams,
-                trace,
-                plot_type,
-                self._tools_cursor1_hz,
-                self._tools_cursor2_hz,
-            )
-            if not result.extra:
-                display.update("[dim]Enter both cursor frequencies above.[/dim]")
-                return
-            ex = result.extra
-            coeffs = ex["coeffs"]
-            delta_y = ex["delta_y"]
-            unit = result.unit_label
-            _ov_hex = _get_plot_colors(self.get_css_variables())["distortion_overlays"]
-            _comp_enabled = self._get_distortion_comp_enabled()
-            nw, namew, valw = 1, 10, 9
-            hdr = (
-                f"[dim]{'n':>{nw}}  {'Component':<{namew}}  "
-                f"{'cₙ (' + unit + ')':>{valw}}  {'Δyₙ (' + unit + ')':>{valw}}[/dim]"
-            )
-            sep = f"[dim]{'─' * (nw + 2 + namew + 2 + valw + 2 + valw)}[/dim]"
-            lines = [hdr, sep]
-            for n, name in enumerate(_DISTORTION_COMPONENT_NAMES):
-                c_raw = f"{coeffs[n]:.4f}"
-                color = _ov_hex[n] if _comp_enabled[n] else None
-                name_cell = (
-                    f"[bold {color}]{name:<{namew}}[/]"
-                    if color
-                    else f"[dim]{name:<{namew}}[/dim]"
-                )
-                c_cell = (
-                    f"[@click='app.copy_cell_value(\"{c_raw}\")']{c_raw:>{valw}}[/]"
-                )
-                if n == 0:
-                    dy_cell = f"{'—':>{valw}}"
-                else:
-                    dy_raw = f"{delta_y[n]:.4f}"
-                    dy_cell = f"[@click='app.copy_cell_value(\"{dy_raw}\")']{dy_raw:>{valw}}[/]"
-                lines.append(
-                    f"[dim]{str(n):>{nw}}[/dim]  {name_cell}  {c_cell}  {dy_cell}"
-                )
-            display.update("\n".join(lines))
+            cached_render = self._latest_tools_render_result
+            if (
+                isinstance(cached_render, dict)
+                and self._latest_tools_render_cache_key == current_cache_key
+            ):
+                tool_result = cached_render.get("tool_result")
+                if tool_result is not None:
+                    render_tools_computation_result(self, tool_result)
+                    return
+            self.set_progress("Tools: computing...", 0)
+            result = await self._run_tools_compute_job()
+            result_cache_key = result.get("compute_cache_key")
+            if result_cache_key == current_cache_key:
+                self._latest_tools_compute_result = dict(result)
+                self._latest_tools_compute_cache_key = current_cache_key
+            render_tools_computation_result(self, result.get("tool_result"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.log_message(f"Tools compute failed: {exc}", "error")
+            self.notify(f"Tools compute failed: {exc}", severity="error")
+            self.reset_progress()
 
     def _update_output_path_label(self) -> None:
         """
-        Update the output file label in the UI to a truncated path that fits the available container width.
+        Update the output file label in the UI to a truncated path that fits
+        the available container width.
 
-        If `self.last_output_path` is None the method returns immediately. The method measures the widths of
-        the output container and the three export/show buttons (#btn_open_output, #btn_export_png, #btn_export_svg),
-        computes the remaining width, and uses `_truncate_path_intelligently` to produce a shortened path
-        prefixed with "📁 ". If the computed available width is too small (<= 10) the label is not updated.
-        The method ignores exceptions raised while querying widgets (e.g., widgets not yet mounted).
+        If `self.last_output_path` is None the method returns immediately. The
+        method measures the widths of the output container and the export/show
+        buttons (#btn_open_output, #btn_export_touchstone, #btn_export_csv,
+        #btn_export_png, #btn_export_svg), computes the remaining width, and
+        uses `truncate_path_intelligently` to produce a shortened path
+        prefixed with "📁 ". If the computed available width is too small
+        (<= 10) the label is not updated. The method ignores exceptions
+        raised while querying widgets (e.g., widgets not yet mounted).
         """
         if self.last_output_path is None:
             return
@@ -4714,22 +3567,26 @@ class VNAApp(App):
 
             # Calculate actual button widths
             btn_show = self.query_one("#btn_open_output", Button)
+            btn_touchstone = self.query_one("#btn_export_touchstone", Button)
+            btn_csv = self.query_one("#btn_export_csv", Button)
             btn_png = self.query_one("#btn_export_png", Button)
             btn_svg = self.query_one("#btn_export_svg", Button)
 
             # Sum of button widths + margins (each button has margin-left: 1)
             buttons_width = (
                 btn_show.size.width
+                + btn_touchstone.size.width
+                + btn_csv.size.width
                 + btn_png.size.width
                 + btn_svg.size.width
-                + 6  # 3 buttons × 2 margin (left+right spacing)
+                + 10  # 5 buttons × 2 margin (left+right spacing)
             )
 
             # Available width for path = container width - buttons - buffer
             available_width = container.size.width - buttons_width - 4
 
             if available_width > 10:
-                truncated_path = _truncate_path_intelligently(
+                truncated_path = truncate_path_intelligently(
                     str(self.last_output_path), available_width
                 )
                 output_file_label.update(f"📁 {truncated_path}")
@@ -4743,35 +3600,91 @@ class VNAApp(App):
     )
     async def on_plot_param_change(self, event: Checkbox.Changed) -> None:
         """Handle S-parameter plot checkbox change."""
+        del event
         if self.last_measurement is None:
             return
 
-        # Redraw plot with selected parameters
-        await self._update_results(
-            self.last_measurement["freqs"],
-            self.last_measurement["sparams"],
-            self.last_measurement["output_path"],
-        )
+        self._schedule_plot_refresh()
 
     @on(Select.Changed, "#select_plot_type")
     async def on_plot_type_change(self, event: Select.Changed) -> None:
-        """Handle plot type selection change."""
+        """Handle plot type change."""
+        del event
         if self.last_measurement is None:
             return
 
-        # Redraw plot with new plot type
-        await self._update_results(
-            self.last_measurement["freqs"],
-            self.last_measurement["sparams"],
-            self.last_measurement["output_path"],
-        )
+        self._schedule_plot_refresh()
+
+    @on(TextArea.Changed, "#measurement_notes_editor")
+    def handle_measurement_notes_change(self, event: TextArea.Changed) -> None:
+        """Track raw markdown notes entered for the current measurement."""
+        del event
+        self._sync_measurement_notes_from_editor()
+        self._refresh_measurement_notes_preview()
+
+    @on(Key)
+    def handle_notes_key(self, event: Key) -> None:
+        """Intercept Ctrl+S in the notes editor to trigger save-back."""
+        # Only handle key events originating from the notes editor
+        try:
+            sender_id = getattr(event.sender, "id", None)
+        except Exception:
+            sender_id = None
+        # Debug/log the incoming event so we can see how Textual reports it
+        try:
+            self.log_message(
+                f"handle_notes_key: sender={sender_id}, key={getattr(event, 'key', None)}, character={getattr(event, 'character', None)}, event={str(event)}",
+                "debug",
+            )
+        except Exception:
+            pass
+
+        if sender_id != "measurement_notes_editor":
+            return
+
+        # Textual Key events differ between versions; try multiple matches.
+        is_ctrl_s = False
+        # Preferred: use event.matches("ctrl+s") when available
+        matches = getattr(event, "matches", None)
+        if callable(matches):
+            try:
+                is_ctrl_s = matches("ctrl+s")
+            except Exception:
+                is_ctrl_s = False
+
+        # Fallbacks: check key name, modifier flags, or character (ASCII 0x13)
+        if not is_ctrl_s:
+            key = getattr(event, "key", None)
+            char = getattr(event, "character", None)
+            # Common cases: event.key may be "ctrl+s" or just "s" with ctrl flag
+            if key in ("ctrl+s", "C-s", "c-s"):
+                is_ctrl_s = True
+            elif key in ("s", "S") and getattr(event, "ctrl", False):
+                is_ctrl_s = True
+            elif char == "\x13":
+                # ASCII DC3 (Ctrl+S)
+                is_ctrl_s = True
+
+        if is_ctrl_s:
+            try:
+                event.prevent_default()
+            except Exception:
+                pass
+            self.log_message(
+                "handle_notes_key: detected Ctrl+S — invoking action_save_back", "debug"
+            )
+            self.action_save_back()
 
     @on(Button.Pressed, "#btn_apply_limits")
     async def handle_apply_limits(self) -> None:
         """
-        Reapply the current frequency and Y-axis limits to the cached measurement and refresh the results plot.
+        Reapply the current frequency and Y-axis limits to the cached
+        measurement and refresh the results plot.
 
-        If a cached measurement exists in self.last_measurement, calls _update_results with its frequencies, S-parameters, and output path to redraw the plot using the UI's current limit settings. Does nothing when no cached measurement is available.
+        If a cached measurement exists in self.last_measurement, calls
+        _update_results with its frequencies, S-parameters, and output path to
+        redraw the plot using the UI's current limit settings. Does nothing
+        when no cached measurement is available.
         """
         if self.last_measurement is None:
             return
@@ -4787,116 +3700,204 @@ class VNAApp(App):
     # Tools tab event handlers
     # ------------------------------------------------------------------ #
 
+    # FrequencyEntry is used by the Tools UI to provide cursor inputs with
+    # explicit prev/next and mode toggles (fallback for unreliable modifier keys).
+    from .gui.components.frequency_entry import FrequencyEntry
+
     @on(Button.Pressed, "#btn_tool_measure")
     def handle_tool_measure_pressed(self) -> None:
-        """
-        Activate or deactivate the cursor tool.
-
-        Toggles the application's active tool state to the cursor tool, updating the UI and triggering any associated plot/metric refresh.
-        """
-        self._set_active_tool("cursor")
+        """Activate or deactivate the cursor tool."""
+        tools_logic.handle_tool_measure_pressed(self)
 
     @on(Button.Pressed, "#btn_tool_distortion")
     def handle_tool_distortion_pressed(self) -> None:
         """Toggle the Distortion tool."""
-        self._set_active_tool("distortion")
+        tools_logic.handle_tool_distortion_pressed(self)
 
     @on(Input.Changed, "#input_tools_cursor1, #input_tools_cursor2")
     def handle_tools_cursor_change(self, event: Input.Changed) -> None:
-        """
-        Update internal cursor frequencies from the tools input fields and schedule a debounced refresh.
-
-        Reads text values from widgets "#input_tools_cursor1" and "#input_tools_cursor2", interprets them according to the last measurement's frequency unit (Hz, kHz, MHz, GHz), and stores parsed frequencies in Hz on self._tools_cursor1_hz and self._tools_cursor2_hz (sets to None on empty or failed parse). Starts or restarts a 200 ms debounce timer that will invoke self._delayed_tools_refresh.
-        """
-        if self.last_measurement is None:
-            return
-
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
-        unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
-        multiplier = unit_multipliers.get(freq_unit, 1e6)
-
-        def _parse(widget_id: str) -> float | None:
-            """
-            Parse the numeric value from an Input widget identified by `widget_id` and scale it by the surrounding `multiplier`.
-
-            Parameters:
-                widget_id (str): The selector/ID of an `Input` widget to query.
-
-            Returns:
-                float | None: The parsed numeric value multiplied by `multiplier` when the widget contains a valid number; `None` if the widget is empty or parsing fails.
-            """
-            try:
-                val = self.query_one(widget_id, Input).value.strip()
-                return float(val) * multiplier if val else None
-            except Exception:
-                return None
-
-        self._tools_cursor1_hz = _parse("#input_tools_cursor1")
-        self._tools_cursor2_hz = _parse("#input_tools_cursor2")
-
-        # Debounce: only redraw after 200 ms of no further input changes
-        if self._tools_input_timer is not None:
-            self._tools_input_timer.stop()
-        self._tools_input_timer = self.set_timer(0.2, self._delayed_tools_refresh)
+        """Update internal cursor frequencies from the tools input fields."""
+        del event
+        tools_logic.handle_tools_cursor_change(self)
 
     @on(Checkbox.Changed, ".distortion-comp-check")
     def handle_distortion_comp_change(self, event: Checkbox.Changed) -> None:
         """Refresh tools plot when a distortion component overlay checkbox changes."""
-        if self.last_measurement is None:
-            return
-        if self._tools_input_timer is not None:
-            self._tools_input_timer.stop()
-        self._tools_input_timer = self.set_timer(0.2, self._delayed_tools_refresh)
+        del event
+        tools_logic.handle_distortion_comp_change(self)
 
     @on(RadioSet.Changed, "#tools_trace_radioset")
     async def handle_tools_trace_changed(self, event: RadioSet.Changed) -> None:
         """Update tools plot and results when the trace selection changes."""
-        if self.last_measurement is None:
-            return
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+        del event
+        await tools_logic.handle_tools_trace_changed(self)
 
     @on(Select.Changed, "#select_tools_plot_type")
     async def on_tools_plot_type_change(self, event: Select.Changed) -> None:
-        """
-        Handle changes to the tools plot type by refreshing the tools plot and recomputing results.
+        """Handle changes to the tools plot type by refreshing the tools plot and recomputing results."""
+        del event
+        await tools_logic.on_tools_plot_type_change(self)
 
-        If no measurement is loaded, the handler returns without action.
+    # ------------------------------------------------------------------ #
+    # FrequencyEntry message handlers
+    # ------------------------------------------------------------------ #
 
-        Parameters:
-            event (Select.Changed): The selection change event triggering the update.
-        """
-        if self.last_measurement is None:
-            return
-        await self._refresh_tools_plot()
-        self._run_tools_computation()
+    @on(Button.Pressed, "#btn_freq1_prev")
+    def handle_btn_freq1_prev(self, event: Button.Pressed) -> None:
+        """Navigate to previous extrema for cursor 1 (prev button)."""
+        del event
+        minima = getattr(self, "_tools_cursor1_minima", False)
+        smoothing = getattr(self, "_tools_cursor1_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 1, -1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq1_next")
+    def handle_btn_freq1_next(self, event: Button.Pressed) -> None:
+        """Navigate to next extrema for cursor 1 (next button)."""
+        del event
+        minima = getattr(self, "_tools_cursor1_minima", False)
+        smoothing = getattr(self, "_tools_cursor1_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 1, 1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq2_prev")
+    def handle_btn_freq2_prev(self, event: Button.Pressed) -> None:
+        """Navigate to previous extrema for cursor 2 (prev button)."""
+        del event
+        minima = getattr(self, "_tools_cursor2_minima", False)
+        smoothing = getattr(self, "_tools_cursor2_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 2, -1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq2_next")
+    def handle_btn_freq2_next(self, event: Button.Pressed) -> None:
+        """Navigate to next extrema for cursor 2 (next button)."""
+        del event
+        minima = getattr(self, "_tools_cursor2_minima", False)
+        smoothing = getattr(self, "_tools_cursor2_smoothing", False)
+        tools_logic.handle_frequency_extrema_navigate(self, 2, 1, minima, smoothing)
+
+    @on(Button.Pressed, "#btn_freq1_toggle_min")
+    def handle_btn_freq1_toggle_min(self, event: Button.Pressed) -> None:
+        """Toggle minima mode for cursor 1 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor1_minima", False)
+        new = not cur
+        setattr(self, "_tools_cursor1_minima", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (▲/▼) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 1, new, getattr(self, "_tools_cursor1_smoothing", False)
+        )
+
+    @on(Button.Pressed, "#btn_freq1_toggle_smooth")
+    def handle_btn_freq1_toggle_smooth(self, event: Button.Pressed) -> None:
+        """Toggle smoothing mode for cursor 1 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor1_smoothing", False)
+        new = not cur
+        setattr(self, "_tools_cursor1_smoothing", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (∿/⎍) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 1, getattr(self, "_tools_cursor1_minima", False), new
+        )
+
+    @on(Button.Pressed, "#btn_freq2_toggle_min")
+    def handle_btn_freq2_toggle_min(self, event: Button.Pressed) -> None:
+        """Toggle minima mode for cursor 2 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor2_minima", False)
+        new = not cur
+        setattr(self, "_tools_cursor2_minima", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (▲/▼) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 2, new, getattr(self, "_tools_cursor2_smoothing", False)
+        )
+
+    @on(Button.Pressed, "#btn_freq2_toggle_smooth")
+    def handle_btn_freq2_toggle_smooth(self, event: Button.Pressed) -> None:
+        """Toggle smoothing mode for cursor 2 and update visual state."""
+        del event
+        cur = getattr(self, "_tools_cursor2_smoothing", False)
+        new = not cur
+        setattr(self, "_tools_cursor2_smoothing", new)
+        # Do not change `button.variant` here; keep the color identity static.
+        # The button icon indicates state (∿/⎍) so we avoid dynamic variant changes
+        # which cause layout/color flicker. Leaving visual updates to the component
+        # and the theme keeps look consistent.
+        pass
+        tools_logic.handle_frequency_mode_change(
+            self, 2, getattr(self, "_tools_cursor2_minima", False), new
+        )
 
     # ------------------------------------------------------------------ #
 
     async def _update_results(self, freqs, sparams, output_path):
         """
-        Render measurement results into the Results tab and update related UI state.
+        Render measurement results into the Results tab and update related UI
+        state.
 
-        Renders the provided frequency and S-parameter measurement data into the Results
-        panel using the currently selected plot backend and UI options. Updates input
-        placeholders, applies optional frequency and Y-axis filtering from the UI,
-        generates and displays either a terminal or image plot (Smith or magnitude/phase),
-        updates cached plot/output paths, and enables export/open controls.
+        Renders the provided frequency and S-parameter measurement data into
+        the Results panel using the currently selected plot backend and UI
+        options. Updates input placeholders, applies optional frequency and
+        Y-axis filtering from the UI, generates and displays either a terminal
+        or image plot (Smith or magnitude/phase), updates cached plot/output
+        paths, and enables export/open controls.
 
         Parameters:
-            freqs (array-like): Frequencies in Hz for each measurement point, in ascending order.
-            sparams (dict): Mapping from S-parameter name (e.g., "S11") to a tuple
-                (magnitude_db_array, phase_deg_array), where arrays are aligned with `freqs`.
-            output_path (pathlike | str): Path where measurement results (Touchstone or related)
-                were written; used to update the output file display and export controls.
+            freqs (array-like): Frequencies in Hz for each measurement point,
+                in ascending order.
+            sparams (dict): Mapping from S-parameter name (e.g., "S11") to a
+                tuple (magnitude_db_array, phase_deg_array), where arrays are
+                aligned with `freqs`.
+            output_path (pathlike | str): Path where measurement results
+                (Touchstone or related) were written; used to update the
+                output file display and export controls.
         """
         self.log_message(
             f"_update_results called with {len(freqs)} freqs, {len(sparams)} sparams",
             "debug",
         )
 
-        # Get frequency unit from measurement data
-        freq_unit = self.last_measurement.get("freq_unit", "MHz")
+        results_cache_key = self._get_results_plot_cache_key(freqs, sparams)
+
+        def mark_results_rendered(
+            *,
+            pixel_size: tuple[int, int] | None = None,
+            generation: int | None = None,
+        ) -> None:
+            """Record the currently rendered Results plot state for reuse checks."""
+            if generation is None:
+                self._results_plot_generation += 1
+            else:
+                self._results_plot_generation = generation
+            self._results_plot_cache_key = results_cache_key
+            self._results_plot_display_key = self._get_results_plot_display_key()
+            self._results_plot_pixel_size = pixel_size
+
+        # Get frequency unit from the current measurement snapshot
+        measurement = self.last_measurement or {}
+        # Use id of the actual measurement dict to detect when a new measurement
+        # is loaded; freqs/sparams are derived from it so they change together.
+        measurement_id = (
+            id(measurement) if measurement is self.last_measurement else None
+        )
+        if measurement_id != self._measurement_plot_cache_measurement_id:
+            self._measurement_plot_cache = {}
+            self._measurement_plot_cache_measurement_id = measurement_id
+
+        measurement_freq_unit = measurement.get("freq_unit", "MHz")
+        freq_unit = (
+            measurement_freq_unit if isinstance(measurement_freq_unit, str) else "MHz"
+        )
         unit_multipliers = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}
         multiplier = unit_multipliers.get(freq_unit, 1e6)
 
@@ -4949,6 +3950,8 @@ class VNAApp(App):
         freq_range = (
             f"{filtered_freqs[0] / 1e6:.1f} - {filtered_freqs[-1] / 1e6:.1f} MHz"
         )
+        freq_start_hz = float(filtered_freqs[0])
+        freq_stop_hz = float(filtered_freqs[-1])
 
         # Calculate min, max, avg for all S-parameters (using filtered data)
         stats = {}
@@ -4980,9 +3983,25 @@ class VNAApp(App):
         ):
             plot_params.append("S22")
 
-        # Clear and rebuild results container
+        # Reuse the existing results widget when the widget type stays the same.
+        # This avoids unnecessary unmount/mount churn and reduces visual flicker.
         results_container = self.query_one("#results_container", Container)
-        await results_container.remove_children()
+
+        async def ensure_results_widget(widget_class, *args, **kwargs):
+            existing_children = list(results_container.children)
+            existing_widget = existing_children[0] if existing_children else None
+
+            if existing_widget is not None and isinstance(
+                existing_widget, widget_class
+            ):
+                for child in existing_children[1:]:
+                    await child.remove()
+                return existing_widget, True
+
+            await results_container.remove_children()
+            widget = widget_class(*args, **kwargs)
+            await results_container.mount(widget)
+            return widget, False
 
         # Update Results panel title with measurement info
         # Show filtered point count and original count if different
@@ -4998,6 +4017,26 @@ class VNAApp(App):
             # Get plot settings from UI
             plot_type = self.query_one("#select_plot_type", Select).value
             plot_backend = self.settings.plot_backend
+            selected_traces = tuple(plot_params)
+
+            def get_plot_data(param: str):
+                if plot_type != "phase":
+                    if plot_type == "magnitude":
+                        return filtered_sparams[param][0]
+                    return filtered_sparams[param][1]
+
+                cache_key = (
+                    measurement_id,
+                    param,
+                    freq_start_hz,
+                    freq_stop_hz,
+                    plot_type,
+                )
+                cached_data = self._measurement_plot_cache.get(cache_key)
+                if cached_data is None:
+                    cached_data = unwrap_phase(filtered_sparams[param][1])
+                    self._measurement_plot_cache[cache_key] = cached_data
+                return cached_data
 
             # Determine plot title
             if plot_type == "magnitude":
@@ -5035,22 +4074,27 @@ class VNAApp(App):
 
             # Calculate auto Y-axis limits for placeholders
             # Collect all data based on plot type (use filtered data)
-            all_y_data = []
-            for param in plot_params:
-                if plot_type == "magnitude":
-                    param_data = filtered_sparams[param][0]
-                elif plot_type == "phase":
-                    param_data = _unwrap_phase(filtered_sparams[param][1])
-                else:  # phase_raw
-                    param_data = filtered_sparams[param][1]
-                all_y_data.append(param_data)
+            all_y_data = [get_plot_data(param) for param in plot_params]
 
             # Calculate auto limits
+            auto_y_min = None
+            auto_y_max = None
             if all_y_data and plot_type != "smith":
-                combined_data = np.concatenate(all_y_data)
-                auto_y_min, auto_y_max = _calculate_plot_range_with_outlier_filtering(
-                    combined_data, outlier_percentile=1.0, safety_margin=0.05
+                auto_range_key = (
+                    measurement_id,
+                    selected_traces,
+                    freq_start_hz,
+                    freq_stop_hz,
+                    f"auto_range:{plot_type}",
                 )
+                cached_auto_range = self._measurement_plot_cache.get(auto_range_key)
+                if cached_auto_range is None:
+                    combined_data = np.concatenate(all_y_data)
+                    cached_auto_range = calculate_plot_range_with_outlier_filtering(
+                        combined_data, outlier_percentile=1.0, safety_margin=0.05
+                    )
+                    self._measurement_plot_cache[auto_range_key] = cached_auto_range
+                auto_y_min, auto_y_max = cached_auto_range
 
                 # Update input placeholders with auto-detected values
                 if user_y_min is None:
@@ -5077,30 +4121,33 @@ class VNAApp(App):
             # Check if smith chart is selected
             if plot_type == "smith" and plot_backend == "terminal":
                 # Smith chart not supported in terminal mode
-                await results_container.mount(
-                    Static(
-                        "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
-                        "[dim]Please switch to Image backend to view Smith charts.[/dim]",
-                        markup=True,
-                    )
+                plot_widget, _ = await ensure_results_widget(
+                    Static,
+                    "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
+                    "[dim]Please switch to Image backend to view Smith charts.[/dim]",
+                    markup=True,
                 )
+                plot_widget.update(
+                    "\n[bold yellow]Smith Chart not available in terminal mode[/bold yellow]\n"
+                    "[dim]Please switch to Image backend to view Smith charts.[/dim]"
+                )
+                mark_results_rendered()
             elif plot_backend == "terminal":
                 # Use plotext for terminal-based plotting
                 from textual_plotext import PlotextPlot
 
-                plot_widget = PlotextPlot()
-                await results_container.mount(plot_widget)
+                plot_widget, _ = await ensure_results_widget(PlotextPlot)
 
                 # Configure the plot using the plt property
                 plt_term = plot_widget.plt
-                plt_term.clf()
+                plt_term.clear_data()
 
                 # Plot data as line with braille markers (use filtered data)
                 freq_mhz = filtered_freqs / 1e6
-                plot_colors = _get_plot_colors(self.get_css_variables())
+                plot_colors = get_plot_colors(self.get_css_variables())
 
                 # Calculate Y limits first (before plotting)
-                if all_y_data:
+                if all_y_data and auto_y_min is not None and auto_y_max is not None:
                     y_min = user_y_min if user_y_min is not None else auto_y_min
                     y_max = user_y_max if user_y_max is not None else auto_y_max
                 else:
@@ -5109,13 +4156,7 @@ class VNAApp(App):
 
                 # Plot each parameter, filtering out traces with no visible data
                 for param in plot_params:
-                    # Select data based on plot type (use filtered data)
-                    if plot_type == "magnitude":
-                        param_data = filtered_sparams[param][0]
-                    elif plot_type == "phase":
-                        param_data = _unwrap_phase(filtered_sparams[param][1])
-                    else:  # phase_raw
-                        param_data = filtered_sparams[param][1]
+                    param_data = get_plot_data(param)
 
                     # Skip empty traces (can happen if all data filtered out)
                     if len(param_data) == 0:
@@ -5150,11 +4191,15 @@ class VNAApp(App):
 
                 # Refresh the plot widget to display
                 plot_widget.refresh()
+                mark_results_rendered()
 
             else:  # image backend
+                self._plot_render_generation += 1
+                plot_generation = self._plot_render_generation
+
                 # Generate matplotlib plot at fixed high resolution
                 # This avoids regenerating on resize and ensures quality
-                plot_file = self.plot_temp_dir / "current_plot.png"
+                plot_file = self.plot_temp_dir / f"current_plot_{plot_generation}.png"
 
                 # Log for debugging
                 self.log_message(f"Generating plot at: {plot_file}", "debug")
@@ -5178,53 +4223,85 @@ class VNAApp(App):
                 px_w = fixed_width_px
                 px_h = fixed_height_px
 
-                plot_colors = _get_plot_colors(self.get_css_variables())
+                plot_colors_snapshot = {
+                    key: dict(value) if isinstance(value, dict) else value
+                    for key, value in get_plot_colors(self.get_css_variables()).items()
+                }
+                freqs_snapshot = np.array(filtered_freqs, copy=True)
+                plot_data_snapshot = None
+                if plot_type != "smith":
+                    plot_data_snapshot = {
+                        param: np.array(get_plot_data(param), copy=True)
+                        for param in plot_params
+                    }
+                sparams_snapshot = {
+                    param: (
+                        np.array(filtered_sparams[param][0], copy=True),
+                        np.array(filtered_sparams[param][1], copy=True),
+                    )
+                    for param in plot_params
+                }
+                y_min_for_render = user_y_min if user_y_min is not None else auto_y_min
+                y_max_for_render = user_y_max if user_y_max is not None else auto_y_max
 
-                # Use Smith chart plotter if smith type selected (use filtered data)
-                if plot_type == "smith":
-                    _create_smith_chart(
-                        filtered_freqs,
-                        filtered_sparams,
-                        plot_params,
-                        plot_file,
+                try:
+                    await self._run_results_plot_render_job(
+                        freqs=freqs_snapshot,
+                        sparams=sparams_snapshot,
+                        plot_params=plot_params,
+                        plot_type=str(plot_type),
+                        output_path=plot_file,
                         dpi=dpi,
                         pixel_width=px_w,
                         pixel_height=px_h,
-                        transparent=True,
                         render_scale=render_scale,
-                        colors=plot_colors,
+                        colors=plot_colors_snapshot,
+                        y_min=y_min_for_render,
+                        y_max=y_max_for_render,
+                        plot_data=plot_data_snapshot,
                     )
-                else:
-                    _create_matplotlib_plot(
-                        filtered_freqs,
-                        filtered_sparams,
-                        plot_params,
-                        plot_type,
-                        plot_file,
-                        dpi=dpi,
-                        pixel_width=px_w,
-                        pixel_height=px_h,
-                        transparent=True,
-                        render_scale=render_scale,
-                        colors=plot_colors,
-                        y_min=user_y_min,
-                        y_max=user_y_max,
+                except Exception as e:
+                    if plot_generation != self._plot_render_generation:
+                        self.log_message(
+                            f"Discarding stale plot render failure for generation {plot_generation}",
+                            "debug",
+                        )
+                        return
+                    self.log_message(f"Failed to render plot image: {e}", "error")
+                    plot_widget, _ = await ensure_results_widget(
+                        Static,
+                        f"[red]Failed to generate plot image[/red]\n[dim]Error: {e}[/dim]",
+                        markup=True,
                     )
+                    plot_widget.update(
+                        f"[red]Failed to generate plot image[/red]\n[dim]Error: {e}[/dim]"
+                    )
+                    plot_file = None
+
+                if plot_generation != self._plot_render_generation:
+                    self.log_message(
+                        f"Discarding stale plot render generation {plot_generation}",
+                        "debug",
+                    )
+                    return
 
                 # Store plot path for export
                 self.last_plot_path = plot_file
 
                 # Verify file was created
-                if not plot_file.exists():
+                if plot_file is None or not plot_file.exists():
                     self.log_message(
                         f"Error: Plot file not created at {plot_file}", "error"
                     )
-                    await results_container.mount(
-                        Static(
-                            "[red]Failed to generate plot image[/red]",
-                            markup=True,
-                        )
+                    self._results_plot_cache_key = None
+                    self._results_plot_display_key = None
+                    self._results_plot_pixel_size = None
+                    plot_widget, _ = await ensure_results_widget(
+                        Static,
+                        "[red]Failed to generate plot image[/red]",
+                        markup=True,
                     )
+                    plot_widget.update("[red]Failed to generate plot image[/red]")
                 else:
                     self.log_message(
                         f"Plot file created: {plot_file.stat().st_size} bytes", "debug"
@@ -5241,8 +4318,14 @@ class VNAApp(App):
                         term_program = os.environ.get("TERM_PROGRAM", "")
                         kitty_window_id = os.environ.get("KITTY_WINDOW_ID", "")
 
+                        # Log terminal detection details in a readable, multi-line
+                        # message to avoid an overly long single-line f-string.
                         self.log_message(
-                            f"Terminal detection: TERM='{terminal}', TERM_PROGRAM='{term_program}', KITTY_WINDOW_ID='{kitty_window_id}'",
+                            (
+                                f"Terminal detection: TERM='{terminal}',"
+                                f" TERM_PROGRAM='{term_program}',"
+                                f" KITTY_WINDOW_ID='{kitty_window_id}'"
+                            ),
                             "debug",
                         )
 
@@ -5260,29 +4343,11 @@ class VNAApp(App):
                             f"Creating image widget for: {plot_file}", "debug"
                         )
 
-                        img_widget = ImageWidget(str(plot_file))
-
-                        # Debug protocol detection
-                        if hasattr(img_widget, "_protocol"):
-                            self.log_message(
-                                f"Image widget using protocol: {img_widget._protocol}",
-                                "debug",
-                            )
-
-                        # Try to detect available protocols
-                        try:
-                            import textual_image.widget as tiw
-
-                            if hasattr(tiw, "_detect_image_support"):
-                                protocols = tiw._detect_image_support()
-                                self.log_message(
-                                    f"Available image protocols: {protocols}", "debug"
-                                )
-                        except (ImportError, AttributeError) as e:
-                            self.log_message(
-                                f"Could not detect available image protocols: {e}",
-                                "debug",
-                            )
+                        img_widget, _ = await ensure_results_widget(
+                            ImageWidget,
+                            str(plot_file),
+                        )
+                        img_widget.image = str(plot_file)
 
                         # Calculate display size based on available container width
                         # and preserve the actual aspect ratio of the generated plot
@@ -5309,8 +4374,8 @@ class VNAApp(App):
                             # Derive height from width to preserve aspect ratio
                             display_h = int(display_w / aspect_ratio)
 
-                            img_widget.styles.width = display_w
-                            img_widget.styles.height = display_h
+                            img_widget.set_class(False, "main-image-fallback")
+                            img_widget.set_class(True, "main-image-display")
 
                             self.log_message(
                                 f"Using proper sizing: {display_w}x{display_h}", "debug"
@@ -5319,38 +4384,53 @@ class VNAApp(App):
                             # Fallback if container size unknown - use better fallback
                             fallback_w = 120
                             fallback_h = 60
-                            img_widget.styles.width = fallback_w
-                            img_widget.styles.height = fallback_h
+                            img_widget.set_class(False, "main-image-display")
+                            img_widget.set_class(True, "main-image-fallback")
 
+                            # Split long sizing message across two f-strings so it
+                            # remains within line-length limits while preserving
+                            # the original content.
                             self.log_message(
-                                f"Using fallback sizing: {fallback_w}x{fallback_h} (container_w={container_w}, px_w={px_w}, px_h={px_h})",
+                                f"Using fallback sizing: {fallback_w}x{fallback_h} "
+                                f"(container_w={container_w}, px_w={px_w}, px_h={px_h})",
                                 "debug",
                             )
 
                         self.log_message(
-                            "Mounting image widget...",
+                            "Updating image widget...",
                             "debug",
                         )
-                        await results_container.mount(img_widget)
-                        self.log_message("Image widget mounted successfully", "debug")
+                        img_widget.refresh()
+                        self.log_message("Image widget ready", "debug")
                     except Exception as e:
                         self.log_message(f"Failed to display image: {e}", "error")
                         # Fallback: show file location
-                        await results_container.mount(
-                            Static(
-                                f"[yellow]Plot generated but display failed[/yellow]\n"
-                                f"[cyan]File: {plot_file}[/cyan]\n"
-                                f"[dim]Error: {e}[/dim]",
-                                markup=True,
-                            )
+                        plot_widget, _ = await ensure_results_widget(
+                            Static,
+                            f"[yellow]Plot generated but display failed[/yellow]\n"
+                            f"[cyan]File: {plot_file}[/cyan]\n"
+                            f"[dim]Error: {e}[/dim]",
+                            markup=True,
                         )
+                        plot_widget.update(
+                            f"[yellow]Plot generated but display failed[/yellow]\n"
+                            f"[cyan]File: {plot_file}[/cyan]\n"
+                            f"[dim]Error: {e}[/dim]"
+                        )
+                    mark_results_rendered(
+                        pixel_size=(px_w, px_h),
+                        generation=plot_generation,
+                    )
         else:
-            await results_container.mount(
-                Static(
-                    "\n[bold yellow]No parameters selected for plotting[/bold yellow]",
-                    markup=True,
-                )
+            plot_widget, _ = await ensure_results_widget(
+                Static,
+                "\n[bold yellow]No parameters selected for plotting[/bold yellow]",
+                markup=True,
             )
+            plot_widget.update(
+                "\n[bold yellow]No parameters selected for plotting[/bold yellow]"
+            )
+            mark_results_rendered()
 
         # S-Parameters statistics using DataTable (after plot)
         # Disabled for now - feels redundant with plot data
@@ -5377,10 +4457,9 @@ class VNAApp(App):
         self.last_output_path = output_path
         self._update_output_path_label()
 
-        # Enable export buttons
-        self.query_one("#btn_open_output", Button).disabled = False
-        self.query_one("#btn_export_png", Button).disabled = False
-        self.query_one("#btn_export_svg", Button).disabled = False
+        self._sync_measurement_action_buttons()
+        self.query_one("#btn_minimal_export", Button).disabled = False
+        self._refresh_export_button_labels()
 
 
 def run_gui(test_updates: bool = False, dev_mode: bool = False):

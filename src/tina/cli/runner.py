@@ -2,11 +2,14 @@
 
 import argparse
 import os
+import sys
 
 from ..config.migration import migrate_legacy_config
 from ..config.settings import AppSettings, SettingsManager
 from ..drivers import HPE5071B as VNA
 from ..drivers import VNAConfig
+from ..export import DEFAULT_TEMPLATE_TAGS
+from ..export.templates import build_export_template_context, render_template
 from ..utils import TouchstoneExporter
 from .parser import apply_cli_settings
 from .plotting import export_plots_cli
@@ -30,6 +33,7 @@ def create_vna_config(settings: AppSettings) -> VNAConfig:
 
 def run_cli_measurement(args: argparse.Namespace) -> int:
     """Run measurement in CLI mode."""
+    vna = None
     try:
         migration_msg = migrate_legacy_config()
         if migration_msg:
@@ -42,9 +46,31 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         # Apply CLI arguments to settings
         settings = apply_cli_settings(args, settings)
 
+        # Expand {date}/{time} templates in output paths so CLI behaviour
+        # matches the GUI (e.g. --output-folder ./data/{date} is rendered).
+        export_context = build_export_template_context()
+        allowed = set(DEFAULT_TEMPLATE_TAGS)
+        if settings.output_folder:
+            rendered_folder = render_template(
+                settings.output_folder, context=export_context, allowed_tags=allowed
+            )
+            settings.output_folder = (
+                rendered_folder.rendered.strip() or settings.output_folder
+            )
+        if settings.filename_prefix:
+            rendered_prefix = render_template(
+                settings.filename_prefix, context=export_context, allowed_tags=allowed
+            )
+            settings.filename_prefix = (
+                rendered_prefix.rendered.strip() or settings.filename_prefix
+            )
+
         # Validate required settings
         if not settings.last_host:
-            print("Error: No host IP configured. Use --host option or run GUI first.")
+            print(
+                "Error: No host IP configured. Use --host option or run GUI first.",
+                file=sys.stderr,
+            )
             return 1
 
         print(f"Connecting to VNA at {settings.last_host}...")
@@ -60,13 +86,14 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         vna.connect(progress_callback)
         print(f"Connected: {vna.idn}")
 
-        # Perform measurement
-        print("Starting measurement...")
-        frequencies, s_parameters = vna.perform_measurement()
-        print(f"Measurement complete: {len(frequencies)} points")
-
-        # Disconnect
-        vna.disconnect()
+        try:
+            # Perform measurement
+            print("Starting measurement...")
+            frequencies, s_parameters = vna.perform_measurement()
+            print(f"Measurement complete: {len(frequencies)} points")
+        finally:
+            vna.disconnect()
+            vna = None
 
         # Prepare export parameters
         export_params = {}
@@ -88,15 +115,10 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
             freq_unit=settings.freq_unit, reference_impedance=50.0
         )
 
-        filename = None
-        if settings.use_custom_filename and settings.custom_filename:
-            filename = settings.custom_filename
-
         s2p_path = exporter.export(
             frequencies,
             export_params,
             settings.output_folder,
-            filename=filename,
             prefix=settings.filename_prefix,
         )
         print(f"S2P file saved: {s2p_path}")
@@ -116,5 +138,14 @@ def run_cli_measurement(args: argparse.Namespace) -> int:
         return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
+    finally:
+        if vna is not None:
+            try:
+                vna.disconnect()
+            except Exception as cleanup_err:
+                print(
+                    f"Warning: VNA disconnect failed during cleanup: {cleanup_err}",
+                    file=sys.stderr,
+                )

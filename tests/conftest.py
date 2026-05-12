@@ -10,9 +10,6 @@ from unittest.mock import MagicMock
 import pytest
 import pyvisa
 
-from src.tina.drivers.base import VNAConfig
-from src.tina.worker import MessageType
-
 # Import fixtures from our fixtures module
 from tests.fixtures.mock_visa import MockResourceManager, MockVisaResource
 from tests.fixtures.mock_vna import MockE5071B, MockVNA
@@ -20,6 +17,8 @@ from tests.fixtures.sample_data import (
     generate_sample_frequencies,
     generate_sample_sparameters,
 )
+from tina.drivers.base import VNAConfig
+from tina.worker import MessageType
 
 # ===== Configuration Fixtures =====
 
@@ -169,8 +168,8 @@ def consume_worker_messages_until(
     Args:
         worker: MeasurementWorker instance
         target_type: MessageType to wait for
-        timeout: Timeout per message in seconds
-        max_messages: Maximum messages to consume
+        timeout: Total wall-clock budget in seconds (not per-message)
+        max_messages: Maximum messages to consume within the budget
 
     Returns:
         Message of target_type, or None if not found
@@ -180,18 +179,19 @@ def consume_worker_messages_until(
         assert msg is not None
         assert msg.type == MessageType.CONNECTED
     """
+    import time
+
+    deadline = time.monotonic() + timeout
     for _ in range(max_messages):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            msg = worker.get_response(timeout=timeout)
+            msg = worker.get_response(timeout=remaining)
             if msg.type == target_type:
                 return msg
             elif msg.type == MessageType.ERROR:
-                # Return error immediately
                 return msg
         except queue.Empty:
-            return None
+            break
     return None
-
-
-# Make helper available to tests
-pytest.consume_worker_messages_until = consume_worker_messages_until

@@ -180,11 +180,13 @@ class TestDataEdgeCases:
     def test_nan_in_data(self):
         """Test handling NaN values in measurement data."""
         freqs = np.array([1e9, 2e9, 3e9])
+        nan_mag = np.array([np.nan, -10.0, -20.0])
+        nan_phase = np.array([0.0, np.nan, 180.0])
         sparams = {
-            "S11": (
-                np.array([np.nan, -10.0, -20.0]),
-                np.array([0.0, np.nan, 180.0]),
-            ),
+            "S11": (nan_mag.copy(), nan_phase.copy()),
+            "S21": (nan_mag.copy(), nan_phase.copy()),
+            "S12": (nan_mag.copy(), nan_phase.copy()),
+            "S22": (nan_mag.copy(), nan_phase.copy()),
         }
 
         exporter = TouchstoneExporter()
@@ -200,11 +202,13 @@ class TestDataEdgeCases:
     def test_inf_in_data(self):
         """Test handling infinity values in measurement data."""
         freqs = np.array([1e9, 2e9, 3e9])
+        inf_mag = np.array([np.inf, -10.0, -np.inf])
+        inf_phase = np.array([0.0, 180.0, -180.0])
         sparams = {
-            "S11": (
-                np.array([np.inf, -10.0, -np.inf]),
-                np.array([0.0, 180.0, -180.0]),
-            ),
+            "S11": (inf_mag.copy(), inf_phase.copy()),
+            "S21": (inf_mag.copy(), inf_phase.copy()),
+            "S12": (inf_mag.copy(), inf_phase.copy()),
+            "S22": (inf_mag.copy(), inf_phase.copy()),
         }
 
         exporter = TouchstoneExporter()
@@ -220,11 +224,13 @@ class TestDataEdgeCases:
     def test_very_large_values(self):
         """Test handling very large values."""
         freqs = np.array([1e15, 2e15])  # Very high frequency
+        large_mag = np.array([1e10, -1e10])  # Very large dB values
+        large_phase = np.array([1e6, -1e6])  # Very large phase
         sparams = {
-            "S11": (
-                np.array([1e10, -1e10]),  # Very large dB values
-                np.array([1e6, -1e6]),  # Very large phase
-            ),
+            "S11": (large_mag.copy(), large_phase.copy()),
+            "S21": (large_mag.copy(), large_phase.copy()),
+            "S12": (large_mag.copy(), large_phase.copy()),
+            "S22": (large_mag.copy(), large_phase.copy()),
         }
 
         exporter = TouchstoneExporter()

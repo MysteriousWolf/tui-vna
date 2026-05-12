@@ -8,10 +8,14 @@ Provides cross-platform configuration storage following OS conventions:
 
 Settings are stored as YAML so the file is human-readable and comments
 are preserved across saves.
+
+This module owns persistence, normalization, and MRU history management for
+application settings. UI-specific presentation helpers should live closer to
+the UI layer rather than in this persistence module.
 """
 
 import warnings
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import get_type_hints
 
@@ -87,8 +91,18 @@ class AppSettings:
     # Output / export
     output_folder: str = "measurement"
     filename_prefix: str = "measurement"
-    use_custom_filename: bool = False
-    custom_filename: str = ""
+    filename_template: str = "measurement_{date}_{time}"
+    folder_template: str = "measurement"
+    filename_template_history: list[str] = field(default_factory=list)
+    folder_template_history: list[str] = field(default_factory=list)
+    # Command-palette / MRU histories
+    setup_restore_history: list[str] = field(default_factory=list)
+    recent_exported_measurements: list[str] = field(default_factory=list)
+    recent_imported_measurements: list[str] = field(default_factory=list)
+    export_bundle_s2p: bool = True
+    export_bundle_csv: bool = False
+    export_bundle_png: bool = True
+    export_bundle_svg: bool = False
     export_s11: bool = True
     export_s21: bool = True
     export_s12: bool = True
@@ -102,17 +116,17 @@ class AppSettings:
 
     last_host: str = ""
     last_port: str = "inst0"
-    host_history: list[str] | None = None
-    port_history: list[str] | None = None
+    host_history: list[str] = field(default_factory=list)
+    port_history: list[str] = field(default_factory=list)
     last_acknowledged_version: str = ""
     notified_prerelease: str = ""
 
     def __post_init__(self):
-        """Initialize mutable defaults."""
-        if self.host_history is None:
-            self.host_history = []
-        if self.port_history is None:
-            self.port_history = []
+        """Initialize mutable defaults and ensure current templates are present."""
+        if not self.filename_template_history:
+            self.filename_template_history = [self.filename_template]
+        if not self.folder_template_history:
+            self.folder_template_history = [self.folder_template]
 
 
 class SettingsManager:
@@ -126,6 +140,8 @@ class SettingsManager:
     DEFAULT_PORTS = ["inst0", "inst1", "inst2", "inst3", "hislip0", "gpib0,16"]
     MAX_PORT_HISTORY = 10
     MAX_HOST_HISTORY = 10
+    MAX_TEMPLATE_HISTORY = 20
+    MAX_COMMAND_HISTORY = 10
 
     def __init__(self):
         """Initialize settings manager."""
@@ -163,12 +179,20 @@ class SettingsManager:
             for k, v in data.items():
                 if k not in valid:
                     continue
-                if k in ("host_history", "port_history"):
+                if k in (
+                    "host_history",
+                    "port_history",
+                    "filename_template_history",
+                    "folder_template_history",
+                    "setup_restore_history",
+                    "recent_exported_measurements",
+                    "recent_imported_measurements",
+                ):
                     if isinstance(v, list):
                         filtered[k] = [str(x) for x in v if x is not None]
                     elif isinstance(v, str) and v:
                         filtered[k] = [v]
-                    # else: omit; __post_init__ will set to []
+                    # else: omit; __post_init__ will set defaults
                 else:
                     expected = hints.get(k)
                     if v is None:
@@ -195,6 +219,14 @@ class SettingsManager:
             self.settings = AppSettings(**filtered)
             self._load_failed = False
             self._merge_port_history()
+            self._normalize_template_history(
+                "filename_template_history",
+                self.settings.filename_template,
+            )
+            self._normalize_template_history(
+                "folder_template_history",
+                self.settings.folder_template,
+            )
             return self.settings
 
         except Exception:
@@ -209,6 +241,14 @@ class SettingsManager:
             self.settings = settings
 
         self._merge_port_history()
+        self._normalize_template_history(
+            "filename_template_history",
+            self.settings.filename_template,
+        )
+        self._normalize_template_history(
+            "folder_template_history",
+            self.settings.folder_template,
+        )
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         if self._load_failed and self.config_file.exists():
@@ -301,13 +341,6 @@ class SettingsManager:
 
         self._merge_port_history()
 
-    def get_port_options(self) -> list[tuple[str, str]]:
-        """Get port options for the dropdown as (value, label) tuples."""
-        return [
-            (port, port) if port in self.DEFAULT_PORTS else (port, f"{port} (recent)")
-            for port in self.settings.port_history
-        ]
-
     def add_host_to_history(self, host: str) -> None:
         """Add a host IP to history (most recent first)."""
         if not host or not host.strip():
@@ -325,6 +358,74 @@ class SettingsManager:
                 : self.MAX_HOST_HISTORY
             ]
 
-    def get_host_options(self) -> list[tuple[str, str]]:
-        """Get host options for the dropdown as (value, label) tuples."""
-        return [(host, host) for host in self.settings.host_history]
+    def _normalize_template_history(self, field_name: str, current_value: str) -> None:
+        """Normalize a template-history field into MRU order with the current value first."""
+        raw_history = getattr(self.settings, field_name) or []
+        normalized: list[str] = []
+
+        current = current_value.strip()
+        if current:
+            normalized.append(current)
+
+        for item in raw_history:
+            candidate = str(item).strip()
+            if candidate and candidate not in normalized:
+                normalized.append(candidate)
+
+        setattr(self.settings, field_name, normalized[: self.MAX_TEMPLATE_HISTORY])
+
+    def touch_template_history(self, field_name: str, value: str) -> None:
+        """Move a template value to the top of the selected MRU history."""
+        normalized = value.strip()
+        if not normalized:
+            return
+
+        history = list(getattr(self.settings, field_name) or [])
+        if normalized in history:
+            history.remove(normalized)
+        history.insert(0, normalized)
+        setattr(self.settings, field_name, history[: self.MAX_TEMPLATE_HISTORY])
+
+    def touch_setup_restore_history(self, value: str) -> None:
+        """Move a setup-restore path to the top of the MRU history."""
+        normalized = value.strip()
+        if not normalized:
+            return
+
+        history = list(getattr(self.settings, "setup_restore_history") or [])
+        if normalized in history:
+            history.remove(normalized)
+        history.insert(0, normalized)
+        setattr(
+            self.settings, "setup_restore_history", history[: self.MAX_COMMAND_HISTORY]
+        )
+
+    def add_recent_exported_measurement(self, path: str) -> None:
+        """Record a recently exported measurement path (most recent first)."""
+        p = str(path).strip()
+        if not p:
+            return
+        history = list(getattr(self.settings, "recent_exported_measurements") or [])
+        if p in history:
+            history.remove(p)
+        history.insert(0, p)
+        setattr(
+            self.settings,
+            "recent_exported_measurements",
+            history[: self.MAX_COMMAND_HISTORY],
+        )
+
+    def add_recent_imported_measurement(self, path: str) -> None:
+        """Record a recently imported measurement path (most recent first)."""
+        p = str(path).strip()
+        if not p:
+            return
+        history = list(getattr(self.settings, "recent_imported_measurements") or [])
+        if p in history:
+            history.remove(p)
+        history.insert(0, p)
+        setattr(
+            self.settings,
+            "recent_imported_measurements",
+            history[: self.MAX_COMMAND_HISTORY],
+        )

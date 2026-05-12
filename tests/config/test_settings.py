@@ -79,6 +79,14 @@ class TestAppSettings:
         assert settings.plot_type == "magnitude"
         assert settings.plot_backend == "terminal"
 
+    def test_template_history_defaults(self):
+        """Test template defaults and history initialization."""
+        settings = AppSettings()
+        assert settings.filename_template == "measurement_{date}_{time}"
+        assert settings.folder_template == "measurement"
+        assert settings.filename_template_history == ["measurement_{date}_{time}"]
+        assert settings.folder_template_history == ["measurement"]
+
 
 @pytest.mark.unit
 class TestSettingsManager:
@@ -210,19 +218,6 @@ class TestSettingsManager:
 
         assert len(settings_manager.settings.port_history) == original_length
 
-    def test_get_port_options(self, settings_manager):
-        """Test getting port options for UI."""
-        settings_manager.settings.port_history = ["inst0", "inst1", "custom_port"]
-        options = settings_manager.get_port_options()
-
-        assert len(options) >= 3
-        assert all(isinstance(opt, tuple) and len(opt) == 2 for opt in options)
-
-        # Check that custom ports are labeled
-        custom_options = [opt for opt in options if "custom_port" in opt[0]]
-        assert len(custom_options) == 1
-        assert "(recent)" in custom_options[0][1]
-
     def test_add_host_to_history_new(self, settings_manager):
         """Test adding new host to history."""
         settings_manager.add_host_to_history("192.168.1.100")
@@ -256,15 +251,6 @@ class TestSettingsManager:
 
         assert len(settings_manager.settings.host_history) == 0
 
-    def test_get_host_options(self, settings_manager):
-        """Test getting host options for UI."""
-        settings_manager.settings.host_history = ["192.168.1.100", "192.168.1.101"]
-        options = settings_manager.get_host_options()
-
-        assert len(options) == 2
-        assert all(isinstance(opt, tuple) and len(opt) == 2 for opt in options)
-        assert options[0] == ("192.168.1.100", "192.168.1.100")
-
     def test_settings_persistence_with_history(self, settings_manager):
         """Test that history is properly persisted."""
         settings_manager.add_host_to_history("192.168.1.100")
@@ -296,13 +282,234 @@ class TestSettingsManager:
         """Test output-related settings."""
         settings_manager.settings.output_folder = "custom_output"
         settings_manager.settings.filename_prefix = "my_measurement"
-        settings_manager.settings.use_custom_filename = True
+        settings_manager.settings.filename_template = "my_measurement_{date}"
+        settings_manager.settings.folder_template = "custom_output/{date}"
         settings_manager.save()
 
         loaded = settings_manager.load()
         assert loaded.output_folder == "custom_output"
         assert loaded.filename_prefix == "my_measurement"
-        assert loaded.use_custom_filename is True
+        assert loaded.filename_template == "my_measurement_{date}"
+        assert loaded.folder_template == "custom_output/{date}"
+
+    def test_touch_template_history_moves_existing_item_to_front(
+        self, settings_manager
+    ):
+        """Test touching an existing template keeps it unique and moves it to the front."""
+        settings_manager.settings.filename_template_history = [
+            "alpha_{date}",
+            "beta_{time}",
+            "gamma",
+        ]
+
+        settings_manager.touch_template_history(
+            "filename_template_history", "beta_{time}"
+        )
+
+        assert settings_manager.settings.filename_template_history == [
+            "beta_{time}",
+            "alpha_{date}",
+            "gamma",
+        ]
+
+    def test_touch_template_history_ignores_empty_values(self, settings_manager):
+        """Test touching empty template values does nothing."""
+        settings_manager.settings.folder_template_history = ["measurement"]
+
+        settings_manager.touch_template_history("folder_template_history", "")
+        settings_manager.touch_template_history("folder_template_history", "   ")
+
+        assert settings_manager.settings.folder_template_history == ["measurement"]
+
+    def test_save_normalizes_template_history_with_current_values(
+        self, settings_manager
+    ):
+        """Test saving keeps current templates at the top of normalized MRU history."""
+        settings_manager.settings.filename_template = "current_{date}"
+        settings_manager.settings.folder_template = "exports/{model}"
+        settings_manager.settings.filename_template_history = [
+            "older_{time}",
+            "current_{date}",
+            "older_{time}",
+            "  ",
+        ]
+        settings_manager.settings.folder_template_history = [
+            "measurement",
+            "exports/{model}",
+            "",
+        ]
+
+        settings_manager.save()
+        loaded = settings_manager.load()
+
+        assert loaded.filename_template_history == [
+            "current_{date}",
+            "older_{time}",
+        ]
+        assert loaded.folder_template_history == [
+            "exports/{model}",
+            "measurement",
+        ]
+
+    def test_load_restores_default_filename_history_when_empty(self, settings_manager):
+        """Test loading normalizes an empty filename template history to sane defaults."""
+        settings_manager.config_file.write_text(
+            "config_version: 1\n"
+            "filename_template: measurement_{date}_{time}\n"
+            "filename_template_history: []\n",
+            encoding="utf-8",
+        )
+
+        loaded = settings_manager.load()
+
+        assert loaded.filename_template_history == ["measurement_{date}_{time}"]
+
+    def test_load_restores_default_folder_history_when_empty(self, settings_manager):
+        """Test loading normalizes an empty folder template history to sane defaults."""
+        settings_manager.config_file.write_text(
+            "config_version: 1\n"
+            "folder_template: measurement\n"
+            "folder_template_history: []\n",
+            encoding="utf-8",
+        )
+
+        loaded = settings_manager.load()
+
+        assert loaded.folder_template_history == ["measurement"]
+
+    def test_touch_filename_template_history_preserves_current_before_selection(
+        self, settings_manager
+    ):
+        """Test current filename template is preserved before selecting another history item."""
+        settings_manager.settings.filename_template_history = [
+            "measurement_{date}_{time}",
+            "run_{host}",
+        ]
+
+        current_value = "both_frontends_tuned"
+        selected_value = "run_{host}"
+
+        settings_manager.touch_template_history(
+            "filename_template_history",
+            current_value,
+        )
+
+        assert settings_manager.settings.filename_template_history == [
+            "both_frontends_tuned",
+            "measurement_{date}_{time}",
+            "run_{host}",
+        ]
+
+        settings_manager.touch_template_history(
+            "filename_template_history",
+            selected_value,
+        )
+
+        assert settings_manager.settings.filename_template_history[0] == selected_value
+        assert current_value in settings_manager.settings.filename_template_history
+
+    def test_touch_folder_template_history_preserves_current_before_selection(
+        self, settings_manager
+    ):
+        """Test current folder template is preserved before selecting another history item."""
+        settings_manager.settings.folder_template_history = [
+            "measurement",
+            "exports/{vend}_{model}",
+        ]
+
+        current_value = "exports/custom_run"
+        selected_value = "measurement"
+
+        settings_manager.touch_template_history(
+            "folder_template_history",
+            current_value,
+        )
+
+        assert settings_manager.settings.folder_template_history == [
+            "exports/custom_run",
+            "measurement",
+            "exports/{vend}_{model}",
+        ]
+
+        settings_manager.touch_template_history(
+            "folder_template_history",
+            selected_value,
+        )
+
+        assert settings_manager.settings.folder_template_history[0] == selected_value
+        assert current_value in settings_manager.settings.folder_template_history
+
+    def test_touch_setup_restore_history_deduplicates_and_trims(self, settings_manager):
+        """touch_setup_restore_history should deduplicate, move to front, and trim to max."""
+        settings_manager.settings.setup_restore_history = ["/a", "/b", "/c"]
+        settings_manager.touch_setup_restore_history("/b")
+        assert settings_manager.settings.setup_restore_history == ["/b", "/a", "/c"]
+
+        max_items = settings_manager.MAX_COMMAND_HISTORY
+        overflow = [f"/path{i}" for i in range(max_items + 2)]
+        settings_manager.settings.setup_restore_history = overflow[:]
+        settings_manager.touch_setup_restore_history("/new")
+        result = settings_manager.settings.setup_restore_history
+        assert len(result) == max_items
+        assert result[0] == "/new"
+
+    def test_touch_setup_restore_history_ignores_empty(self, settings_manager):
+        """touch_setup_restore_history should ignore blank values."""
+        settings_manager.settings.setup_restore_history = ["/a"]
+        settings_manager.touch_setup_restore_history("   ")
+        assert settings_manager.settings.setup_restore_history == ["/a"]
+
+    def test_touch_setup_restore_history_save_load(self, settings_manager):
+        """setup_restore_history should survive a save/load round-trip."""
+        settings_manager.touch_setup_restore_history("/runs/sweep1")
+        settings_manager.save()
+        loaded = settings_manager.load()
+        assert "/runs/sweep1" in loaded.setup_restore_history
+
+    def test_add_recent_exported_measurement_deduplicates(self, settings_manager):
+        """add_recent_exported_measurement should move duplicates to front."""
+        settings_manager.settings.recent_exported_measurements = ["/a.s2p", "/b.s2p"]
+        settings_manager.add_recent_exported_measurement("/b.s2p")
+        assert settings_manager.settings.recent_exported_measurements == [
+            "/b.s2p",
+            "/a.s2p",
+        ]
+
+    def test_add_recent_exported_measurement_ignores_empty(self, settings_manager):
+        """add_recent_exported_measurement should ignore blank paths."""
+        settings_manager.settings.recent_exported_measurements = ["/a.s2p"]
+        settings_manager.add_recent_exported_measurement("")
+        settings_manager.add_recent_exported_measurement("  ")
+        assert settings_manager.settings.recent_exported_measurements == ["/a.s2p"]
+
+    def test_add_recent_exported_measurement_save_load(self, settings_manager):
+        """recent_exported_measurements should survive a save/load round-trip."""
+        settings_manager.add_recent_exported_measurement("/out/run1.s2p")
+        settings_manager.save()
+        loaded = settings_manager.load()
+        assert "/out/run1.s2p" in loaded.recent_exported_measurements
+
+    def test_add_recent_imported_measurement_deduplicates(self, settings_manager):
+        """add_recent_imported_measurement should move duplicates to front."""
+        settings_manager.settings.recent_imported_measurements = ["/x.s2p", "/y.s2p"]
+        settings_manager.add_recent_imported_measurement("/y.s2p")
+        assert settings_manager.settings.recent_imported_measurements == [
+            "/y.s2p",
+            "/x.s2p",
+        ]
+
+    def test_add_recent_imported_measurement_ignores_empty(self, settings_manager):
+        """add_recent_imported_measurement should ignore blank paths."""
+        settings_manager.settings.recent_imported_measurements = ["/x.s2p"]
+        settings_manager.add_recent_imported_measurement("")
+        assert settings_manager.settings.recent_imported_measurements == ["/x.s2p"]
+
+    def test_add_recent_imported_measurement_save_load(self, settings_manager):
+        """recent_imported_measurements should survive a save/load round-trip."""
+        settings_manager.add_recent_imported_measurement("/imports/run1.s2p")
+        settings_manager.save()
+        loaded = settings_manager.load()
+        assert "/imports/run1.s2p" in loaded.recent_imported_measurements
 
     def test_plot_settings_persistence(self, settings_manager):
         """Test plot settings are persisted."""
