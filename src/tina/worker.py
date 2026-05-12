@@ -197,6 +197,7 @@ def _render_plot_image_snapshot(
             transparent=True,
             render_scale=render_scale,
             colors=colors,
+            plot_data=plot_data,
         )
     else:
         create_matplotlib_plot(

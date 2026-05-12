@@ -35,8 +35,37 @@ def create_smith_chart(
     colors: dict | None = None,
     font_family: str | None = None,
     font_size: float | None = None,
+    plot_data: dict | None = None,
 ) -> None:
-    """Create a Smith chart using scikit-rf with dark theme matching terminal UI."""
+    """Create a Smith chart using scikit-rf with dark theme matching terminal UI.
+
+    Args:
+        freqs: 1-D array of frequencies in Hz, length N, monotonically increasing.
+        sparams: Dict mapping S-parameter names (e.g. ``"s11"``, ``"s21"``) to
+            arrays of complex numbers with shape ``(N,)``, frequency-aligned with
+            *freqs*.
+        plot_params: List of S-parameter names to render on the chart.
+        output_path: File path where the chart image will be written (PNG).
+        dpi: Dots per inch for the output image (default 150).
+        pixel_width: Desired output width in pixels.  Must be provided together
+            with *pixel_height*; omit both to use the default 10×10-inch canvas.
+        pixel_height: Desired output height in pixels (see *pixel_width*).
+        transparent: If ``True`` the figure background is transparent.
+        render_scale: Integer multiplier applied to *dpi* before rendering, used
+            to produce higher-resolution outputs without changing the logical size.
+        colors: Dict supplying theme colours.  Expected keys include ``"fg"``
+            (foreground/text) and ``"grid"`` (gridline colour); if ``None`` the
+            defaults returned by :func:`get_plot_colors` are used.
+        font_family: Matplotlib font-family string; falls back to the terminal
+            font when ``None``.
+        font_size: Font size in points; falls back to the terminal font size when
+            ``None``.
+        plot_data: Optional pre-computed complex S-parameter series keyed by
+            parameter name (e.g. ``"s11"``).  When a key matching *param* is
+            present its value is used directly as the complex reflection
+            coefficient array, bypassing the magnitude+phase conversion from
+            *sparams*.  Pass ``None`` (default) to always derive from *sparams*.
+    """
     if font_family is None or font_size is None:
         detected_family, detected_size = get_terminal_font()
         font_family = font_family or detected_family
@@ -135,12 +164,14 @@ def create_smith_chart(
         )
 
         for param in plot_params:
-            mag_db = sparams[param][0]
-            phase_deg = sparams[param][1]
-
-            mag_linear = 10 ** (mag_db / 20)
-            phase_rad = np.deg2rad(phase_deg)
-            s_complex = mag_linear * np.exp(1j * phase_rad)
+            if plot_data is not None and param in plot_data:
+                s_complex = plot_data[param]
+            else:
+                mag_db = sparams[param][0]
+                phase_deg = sparams[param][1]
+                mag_linear = 10 ** (mag_db / 20)
+                phase_rad = np.deg2rad(phase_deg)
+                s_complex = mag_linear * np.exp(1j * phase_rad)
 
             network = rf.Network(
                 frequency=rf.Frequency.from_f(freqs, unit="Hz"),
