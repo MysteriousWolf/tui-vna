@@ -13,11 +13,17 @@ from tina.gui.mixins.worker_messages import WorkerMessagesMixin
 
 class TestBackgroundJobsMixin:
     @pytest.mark.unit
-    def test_is_subclass_of_gui_app_typing_mixin(self):
-        """BackgroundJobsMixin must subclass GUIAppTypingMixin for the compat shim to work."""
-        assert issubclass(BackgroundJobsMixin, GUIAppTypingMixin)
-        assert issubclass(NotesMixin, GUIAppTypingMixin)
-        assert issubclass(ToolsTabMixin, GUIAppTypingMixin)
-        assert issubclass(ImportExportMixin, GUIAppTypingMixin)
-        assert issubclass(SetupStateMixin, GUIAppTypingMixin)
-        assert issubclass(WorkerMessagesMixin, GUIAppTypingMixin)
+    @pytest.mark.parametrize(
+        "mixin",
+        [
+            BackgroundJobsMixin,
+            NotesMixin,
+            ToolsTabMixin,
+            ImportExportMixin,
+            SetupStateMixin,
+            WorkerMessagesMixin,
+        ],
+    )
+    def test_is_subclass_of_gui_app_typing_mixin(self, mixin):
+        """Each mixin must subclass GUIAppTypingMixin for the compat shim to work."""
+        assert issubclass(mixin, GUIAppTypingMixin)
