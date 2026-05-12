@@ -720,7 +720,9 @@ def handle_frequency_extrema_navigate(
 
     if app._tools_input_timer is not None:
         app._tools_input_timer.stop()
-    app._tools_input_timer = app.set_timer(0.2, app._delayed_tools_refresh)
+        app._tools_input_timer = None
+    if app._is_tools_tab_active():
+        app._tools_input_timer = app.set_timer(0.2, app._delayed_tools_refresh)
 
 
 def handle_frequency_mode_change(
@@ -788,6 +790,7 @@ def get_tools_plot_cache_key(app) -> tuple[object, ...] | None:
         trace,
         plot_type,
         app.settings.tools_active_tool,
+        app.settings.cursor_marker_style,
         app._tools_cursor1_hz,
         app._tools_cursor2_hz,
         distortion_components,
@@ -971,6 +974,8 @@ async def refresh_tools_plot(app, *, tool_result: dict | None = None) -> None:
         )
         plt_term.ylim(auto_y_min, auto_y_max)
 
+        _CURSOR_MARKER_MAP = {"▼": "v", "✕": "x", "○": "o"}
+        term_marker = _CURSOR_MARKER_MAP.get(app.settings.cursor_marker_style, "x")
         if cursor1_hz is not None:
             x1 = cursor1_hz / multiplier
             plt_term.vline(x1, color=cursor1_rgb)
@@ -979,10 +984,7 @@ async def refresh_tools_plot(app, *, tool_result: dict | None = None) -> None:
                 "distortion",
             ):
                 y1 = float(np.interp(cursor1_hz, freqs, data))
-                # plotext scatter only accepts its own named marker tokens (e.g.
-                # "x", "dot", "braille"), not the Unicode symbols stored in
-                # app.settings.cursor_marker_style ("▼", "✕", "○").
-                plt_term.scatter([x1], [y1], color=cursor1_rgb, marker="x")
+                plt_term.scatter([x1], [y1], color=cursor1_rgb, marker=term_marker)
         if cursor2_hz is not None:
             x2 = cursor2_hz / multiplier
             plt_term.vline(x2, color=cursor2_rgb)
@@ -991,7 +993,7 @@ async def refresh_tools_plot(app, *, tool_result: dict | None = None) -> None:
                 "distortion",
             ):
                 y2 = float(np.interp(cursor2_hz, freqs, data))
-                plt_term.scatter([x2], [y2], color=cursor2_rgb, marker="x")
+                plt_term.scatter([x2], [y2], color=cursor2_rgb, marker=term_marker)
 
         # Distortion overlay curves
         if (
@@ -1180,7 +1182,9 @@ def handle_tools_cursor_change(app) -> None:
 
     if app._tools_input_timer is not None:
         app._tools_input_timer.stop()
-    app._tools_input_timer = app.set_timer(0.2, app._delayed_tools_refresh)
+        app._tools_input_timer = None
+    if app._is_tools_tab_active():
+        app._tools_input_timer = app.set_timer(0.2, app._delayed_tools_refresh)
 
 
 def handle_distortion_comp_change(app) -> None:

@@ -184,7 +184,9 @@ class _FakeApp:
         self.measurement_notes = (
             str(measurement.get("notes", "")) if measurement is not None else ""
         )
-        self.settings = SimpleNamespace(output_folder=output_folder)
+        self.settings = SimpleNamespace(
+            output_folder=output_folder, cursor_marker_style="▼"
+        )
         self._minimal_export_button = _FakeButton(
             "▢\nMin",
             variant="default",
@@ -2676,6 +2678,7 @@ class TestPlotRedrawCaching:
         app.settings.plot_backend = "image"
         app.settings.tools_plot_type = "magnitude"
         app.settings.tools_active_tool = None
+        app.settings.cursor_marker_style = "▼"
         app._tools_cursor1_hz = None
         app._tools_cursor2_hz = None
         app.plot_temp_dir = tmp_path

@@ -65,6 +65,10 @@ class _FakeApp:
             return self._cursor2_input
         raise AssertionError(f"Unexpected selector: {selector}")
 
+    def _is_tools_tab_active(self) -> bool:
+        """Stub: always report the Tools tab as active."""
+        return True
+
     def set_timer(self, _delay: float, _callback):
         """Return a timer stub so debounce logic can proceed."""
         return _FakeTimer()
