@@ -192,7 +192,7 @@ class TouchstoneExporter:
             payload.update(metadata)
             incoming = metadata.get("metadata_version")
             payload["metadata_version"] = (
-                incoming if isinstance(incoming, int) else _METADATA_VERSION
+                incoming if type(incoming) is int else _METADATA_VERSION
             )
         return payload
 
@@ -325,7 +325,7 @@ class TouchstoneExporter:
 
         if isinstance(machine_settings, dict):
             version = machine_settings.get("metadata_version")
-            if isinstance(version, int):
+            if type(version) is int:
                 metadata_version = version
 
         return TouchstoneMetadata(
@@ -448,7 +448,7 @@ class TouchstoneExporter:
 
             if line.startswith("#"):
                 parts = line.split()
-                if len(parts) < 6:
+                if len(parts) != 6:
                     raise ValueError(f"Invalid Touchstone option line: {line!r}")
                 unit_map = {k.lower(): k for k in _FREQ_UNIT_FACTORS}
                 unit_token = parts[1].lower()
