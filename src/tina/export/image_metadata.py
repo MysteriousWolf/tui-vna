@@ -310,9 +310,7 @@ def embed_svg_metadata(
         machine_settings=metadata.machine_settings,
     )
 
-    insert_at = svg_open_match.end() - 1
+    insert_at = svg_open_match.end()
 
-    updated_svg = (
-        svg_text[: insert_at + 1] + "\n" + comment_block + svg_text[insert_at + 1 :]
-    )
+    updated_svg = svg_text[:insert_at] + "\n" + comment_block + svg_text[insert_at:]
     _atomic_write_text(path, updated_svg)
