@@ -472,10 +472,10 @@ class TouchstoneExporter:
                     )
                 try:
                     ref_impedance = float(parts[5])
-                except ValueError:
+                except ValueError as exc:
                     raise ValueError(
                         f"Invalid reference impedance in Touchstone option line: {parts[5]!r}"
-                    )
+                    ) from exc
                 if ref_impedance <= 0:
                     raise ValueError(
                         f"Reference impedance must be greater than 0, got {ref_impedance}"
