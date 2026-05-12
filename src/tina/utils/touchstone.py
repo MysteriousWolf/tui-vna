@@ -74,6 +74,8 @@ class TouchstoneExporter:
                 f"Unsupported frequency unit: {freq_unit!r}. "
                 f"Valid options: {list(_FREQ_UNIT_FACTORS)}"
             )
+        if reference_impedance <= 0:
+            raise ValueError("reference_impedance must be greater than 0")
         self.freq_unit = normalized
         self.reference_impedance = reference_impedance
 
@@ -446,7 +448,7 @@ class TouchstoneExporter:
 
             if line.startswith("#"):
                 parts = line.split()
-                if len(parts) < 5:
+                if len(parts) < 6:
                     raise ValueError(f"Invalid Touchstone option line: {line!r}")
                 unit_map = {k.lower(): k for k in _FREQ_UNIT_FACTORS}
                 unit_token = parts[1].lower()
@@ -463,6 +465,20 @@ class TouchstoneExporter:
                     raise ValueError(
                         "Only DB-format Touchstone files are supported; "
                         f"got format {parts[3]!r}"
+                    )
+                if parts[4].upper() != "R":
+                    raise ValueError(
+                        f"Expected 'R' token in Touchstone option line, got {parts[4]!r}"
+                    )
+                try:
+                    ref_impedance = float(parts[5])
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid reference impedance in Touchstone option line: {parts[5]!r}"
+                    )
+                if ref_impedance <= 0:
+                    raise ValueError(
+                        f"Reference impedance must be greater than 0, got {ref_impedance}"
                     )
                 freq_unit = unit_map[unit_token]
                 saw_option_line = True
