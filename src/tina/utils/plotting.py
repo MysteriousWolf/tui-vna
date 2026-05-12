@@ -283,12 +283,13 @@ def get_terminal_font() -> tuple[str, float | None]:
                 if result.returncode == 0:
                     raw = result.stdout.strip()
                     parts = raw.rsplit(" ", 1)
-                    font_name = parts[0].replace("-Regular", "")
-                    if len(parts) == 2:
-                        try:
-                            font_size = float(parts[1])
-                        except ValueError:
-                            pass
+                    if parts[0].strip():
+                        font_name = parts[0].replace("-Regular", "")
+                        if len(parts) == 2:
+                            try:
+                                font_size = float(parts[1])
+                            except ValueError:
+                                pass
 
         elif platform.system() == "Windows":
             local_app = os.environ.get("LOCALAPPDATA", "")
@@ -312,7 +313,10 @@ def get_terminal_font() -> tuple[str, float | None]:
                                 break
 
     except Exception as exc:
-        _log.debug("Terminal font detection failed: %s", exc, exc_info=True)
+        if isinstance(exc, (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError)):
+            _log.debug("Terminal font detection failed: %s", exc, exc_info=True)
+        else:
+            _log.warning("Terminal font detection failed: %s", exc, exc_info=True)
 
     resolved_name = "monospace"
     if font_name:
@@ -437,16 +441,17 @@ def create_matplotlib_plot(
         ax.set_title(title, color=fg_color, fontsize=base_size * 1.2, pad=15)
         ax.tick_params(colors=fg_color, labelsize=base_size * 0.85)
         ax.grid(True, alpha=0.2, color=grid_color, linestyle="-", linewidth=0.5)
-        legend = ax.legend(
-            edgecolor=grid_color,
-            labelcolor=fg_color,
-            fontsize=base_size * 0.9,
-        )
-        legend.get_frame().set_alpha(0.5 if transparent else 1.0)
-        if not transparent:
-            legend.get_frame().set_facecolor(colors["bg"])
-        else:
-            legend.get_frame().set_facecolor("none")
+        if plot_params:
+            legend = ax.legend(
+                edgecolor=grid_color,
+                labelcolor=fg_color,
+                fontsize=base_size * 0.9,
+            )
+            legend.get_frame().set_alpha(0.5 if transparent else 1.0)
+            if not transparent:
+                legend.get_frame().set_facecolor(colors["bg"])
+            else:
+                legend.get_frame().set_facecolor("none")
 
         for spine in ax.spines.values():
             spine.set_edgecolor(grid_color)

@@ -47,13 +47,25 @@ def create_smith_chart(
     fg_color = colors["fg"]
     grid_color = colors["grid"]
 
-    if pixel_width and pixel_height:
+    if (pixel_width is None) != (pixel_height is None):
+        raise ValueError("pixel_width and pixel_height must both be provided or both omitted")
+    if pixel_width is not None and pixel_height is not None:
         square_size_px = min(pixel_width, pixel_height)
         fig_width = square_size_px / dpi
         fig_height = square_size_px / dpi
     else:
         fig_width = 10
         fig_height = 10
+
+    if len(freqs) == 0:
+        raise ValueError("Empty sweep data")
+    for param in plot_params:
+        mag_db, phase_deg = sparams[param]
+        if len(mag_db) != len(freqs) or len(phase_deg) != len(freqs):
+            raise ValueError(
+                f"Mismatched sweep array lengths for {param}: "
+                f"freqs={len(freqs)}, mag_db={len(mag_db)}, phase_deg={len(phase_deg)}"
+            )
 
     with rc_context({"font.family": font_family}):
         base_size = (font_size if font_size else 10.0) / render_scale
@@ -64,16 +76,6 @@ def create_smith_chart(
             fig.patch.set_facecolor(colors["bg"])
         ax.set_facecolor("none" if transparent else colors["bg"])
         ax.set_aspect("equal")
-
-        if len(freqs) == 0:
-            raise ValueError("Empty sweep data")
-        for param in plot_params:
-            mag_db, phase_deg = sparams[param]
-            if len(mag_db) != len(freqs) or len(phase_deg) != len(freqs):
-                raise ValueError(
-                    f"Mismatched sweep array lengths for {param}: "
-                    f"freqs={len(freqs)}, mag_db={len(mag_db)}, phase_deg={len(phase_deg)}"
-                )
 
         freq_start_mhz = freqs[0] / 1e6
         freq_end_mhz = freqs[-1] / 1e6
