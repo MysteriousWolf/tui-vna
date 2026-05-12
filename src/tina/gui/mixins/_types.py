@@ -315,6 +315,10 @@ class GUIAppTypingMixin:
         """Trigger a synchronous tools computation pass and update the display."""
         ...
 
+    async def _run_tools_computation_async(self) -> None:
+        """Compute tools output asynchronously and update the results display."""
+        ...
+
     async def _rebuild_tools_params(self) -> None:
         """Asynchronously rebuild the dynamic Tools-parameter widgets."""
         ...

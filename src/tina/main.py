@@ -3032,7 +3032,7 @@ class VNAApp(App):
         if self.last_measurement is not None and self._is_tools_tab_active():
             if self._tools_resize_timer is not None:
                 self._tools_resize_timer.stop()
-            self._tools_resize_timer = self.set_timer(0.15, self._refresh_tools_plot)
+            self._tools_resize_timer = self.set_timer(0.15, self._delayed_tools_refresh)
 
         # Update output file path label
         if self.last_output_path is not None:
@@ -3093,7 +3093,7 @@ class VNAApp(App):
         await delayed_redraw_tools_plot(self)
 
     async def _delayed_tools_refresh(self) -> None:
-        """Debounced handler: refresh tools plot then run computation."""
+        """Debounced handler: compute and render tools concurrently."""
         await delayed_tools_refresh(self)
 
     async def _refresh_results_plot(self) -> None:

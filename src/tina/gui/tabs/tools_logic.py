@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
@@ -804,11 +805,17 @@ def get_tools_plot_cache_key(app) -> tuple[object, ...] | None:
 
 
 async def delayed_tools_refresh(app) -> None:
-    """Debounced tools refresh: redraw plot then recompute results."""
+    """Debounced tools refresh: compute and render concurrently, both awaited."""
     if not app._is_tools_tab_active():
         return
-    await app._refresh_tools_plot()
-    app._run_tools_computation()
+    # Run both jobs concurrently. _run_tools_computation_async is listed first
+    # so its worker message (TOOLS_COMPUTE) reaches the worker queue before the
+    # render message, giving the render job the best chance of finding a warm
+    # compute cache. Both coroutines are awaited — no fire-and-forget orphans.
+    await asyncio.gather(
+        app._run_tools_computation_async(),
+        app._refresh_tools_plot(),
+    )
 
 
 async def apply_tools_render_result(
