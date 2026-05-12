@@ -99,6 +99,8 @@ class UpdateNotificationScreen(ModalScreen):
 
 def _build_release_url(version: str, fallback_url: str | None = None) -> str:
     """Return the specific GitHub release URL when the release tag is known."""
+    if fallback_url:
+        return fallback_url
     normalized_version = version.strip()
     if normalized_version:
         tag = (
@@ -107,8 +109,6 @@ def _build_release_url(version: str, fallback_url: str | None = None) -> str:
             else f"v{normalized_version}"
         )
         return f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/{tag}"
-    if fallback_url:
-        return fallback_url
     return DEFAULT_GITHUB_RELEASE_LATEST_URL
 
 

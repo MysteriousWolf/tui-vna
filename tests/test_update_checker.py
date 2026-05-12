@@ -17,7 +17,17 @@ from tina.utils.update_checker import ReleaseInfo, _fetch_releases
 
 
 def _mock_urlopen_payload(payload: object) -> MagicMock:
-    """Return a context-manager mock response yielding JSON for *payload*."""
+    """Return a context-manager MagicMock simulating a urllib response.
+
+    Args:
+        payload: Any JSON-serialisable object; encoded to bytes and returned by
+            ``response.read()``.
+
+    Returns:
+        A ``MagicMock`` configured as a context manager whose ``__enter__``
+        returns itself and whose ``read()`` yields the JSON-encoded bytes of
+        *payload*.
+    """
     response = MagicMock()
     response.read.return_value = json.dumps(payload).encode()
     response.__enter__.return_value = response
@@ -37,12 +47,29 @@ def test_fetch_releases_rejects_non_list_payloads(payload: object) -> None:
 
 
 def test_update_modal_opens_release_specific_url() -> None:
-    """The update modal should open the shown release tag URL when available."""
+    """The modal should use the API-provided html_url when present."""
+    api_url = f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/v1.2.3"
     release = ReleaseInfo(
         version="1.2.3",
         is_prerelease=False,
         changelog="Bug fixes.",
-        html_url="https://github.com/MysteriousWolf/tui-vna/releases/latest",
+        html_url=api_url,
+    )
+    screen = build_update_screen(release)
+
+    with patch("tina.gui.modals.update_notification.webbrowser.open") as open_browser:
+        screen.open_github_release()
+
+    open_browser.assert_called_once_with(api_url)
+
+
+def test_update_modal_constructs_tag_url_when_html_url_absent() -> None:
+    """Without an API-provided URL, the modal should construct a tag URL from the version."""
+    release = ReleaseInfo(
+        version="1.2.3",
+        is_prerelease=False,
+        changelog="Bug fixes.",
+        html_url="",
     )
     screen = build_update_screen(release)
 
