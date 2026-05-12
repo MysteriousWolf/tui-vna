@@ -48,7 +48,9 @@ def create_smith_chart(
     grid_color = colors["grid"]
 
     if (pixel_width is None) != (pixel_height is None):
-        raise ValueError("pixel_width and pixel_height must both be provided or both omitted")
+        raise ValueError(
+            "pixel_width and pixel_height must both be provided or both omitted"
+        )
     if pixel_width is not None and pixel_height is not None:
         square_size_px = min(pixel_width, pixel_height)
         fig_width = square_size_px / dpi

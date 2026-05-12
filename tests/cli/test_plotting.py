@@ -26,7 +26,9 @@ class TestExportPlotsCli:
     def test_all_exports_succeed(self, sparams, tmp_path):
         """No exception when create_matplotlib_plot succeeds for both plot types."""
         freqs, sp = sparams
-        settings = AppSettings(plot_s11=True, plot_s21=True, plot_s12=False, plot_s22=False)
+        settings = AppSettings(
+            plot_s11=True, plot_s21=True, plot_s12=False, plot_s22=False
+        )
 
         with patch("tina.cli.plotting.create_matplotlib_plot") as mock_plot:
             mock_plot.return_value = None
@@ -37,7 +39,9 @@ class TestExportPlotsCli:
     def test_partial_failure_raises_runtime_error(self, sparams, tmp_path):
         """RuntimeError raised when at least one plot export fails."""
         freqs, sp = sparams
-        settings = AppSettings(plot_s11=True, plot_s21=True, plot_s12=False, plot_s22=False)
+        settings = AppSettings(
+            plot_s11=True, plot_s21=True, plot_s12=False, plot_s22=False
+        )
 
         call_count = 0
 

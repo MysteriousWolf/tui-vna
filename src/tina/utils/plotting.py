@@ -313,7 +313,9 @@ def get_terminal_font() -> tuple[str, float | None]:
                                 break
 
     except Exception as exc:
-        if isinstance(exc, (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError)):
+        if isinstance(
+            exc, (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError)
+        ):
             _log.debug("Terminal font detection failed: %s", exc, exc_info=True)
         else:
             _log.warning("Terminal font detection failed: %s", exc, exc_info=True)

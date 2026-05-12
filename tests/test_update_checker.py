@@ -49,7 +49,9 @@ def test_update_modal_opens_release_specific_url() -> None:
     with patch("tina.gui.modals.update_notification.webbrowser.open") as open_browser:
         screen.open_github_release()
 
-    open_browser.assert_called_once_with(f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/v1.2.3")
+    open_browser.assert_called_once_with(
+        f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/v1.2.3"
+    )
 
 
 def test_update_modal_falls_back_when_release_url_missing() -> None:

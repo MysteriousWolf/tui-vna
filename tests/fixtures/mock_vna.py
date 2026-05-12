@@ -8,8 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from tina.drivers.base import VNABase, VNAConfig
 from tests.fixtures.mock_visa import MockVisaResource
+from tina.drivers.base import VNABase, VNAConfig
 
 
 class MockVNA(VNABase):

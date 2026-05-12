@@ -7,6 +7,7 @@ import inspect
 
 import pytest
 
+from tests.fixtures.mock_vna import MockVNA as DummyVNA
 from tina.drivers.base import (
     IDNInfo,
     VNABase,
@@ -15,7 +16,6 @@ from tina.drivers.base import (
     discover_drivers,
     list_available_drivers,
 )
-from tests.fixtures.mock_vna import MockVNA as DummyVNA
 
 
 class TestIDNInfo:

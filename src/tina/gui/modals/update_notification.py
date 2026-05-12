@@ -15,7 +15,9 @@ from ...utils.update_checker import ReleaseInfo
 
 ButtonVariantName = Literal["default", "primary", "success", "warning", "error"]
 DEFAULT_GITHUB_RELEASES_LIST_URL = "https://github.com/MysteriousWolf/tui-vna/releases"
-DEFAULT_GITHUB_RELEASE_LATEST_URL = "https://github.com/MysteriousWolf/tui-vna/releases/latest"
+DEFAULT_GITHUB_RELEASE_LATEST_URL = (
+    "https://github.com/MysteriousWolf/tui-vna/releases/latest"
+)
 
 
 class UpdateNotificationScreen(ModalScreen):
