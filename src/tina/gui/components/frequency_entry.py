@@ -210,24 +210,26 @@ class FrequencyEntry(Static):
             return None
 
     def _update_toggle_visual(self, btn_id: str, active: bool) -> None:
-        """Update toggle label and the ``--active`` CSS class; never mutates variant.
+        """Update toggle label and ``toggle-active`` class; never mutates variant.
 
         Sets the button icon (triangle/sine/no-sine) to reflect ``active`` and
-        toggles the ``--active`` semantic class so CSS selectors can style the
-        state. The Button.variant is intentionally left unchanged to preserve
-        color/size set at compose time.
+        toggles the ``toggle-active`` semantic class for CSS targeting. Uses
+        ``toggle-active`` rather than Textual's internal ``--active`` to avoid
+        triggering the built-in pressed-state styling. Variant is left unchanged.
         """
         try:
             btn = self.query_one(f"#{btn_id}", Button)
-            # Update label for known toggles and reflect active state with a
-            # semantic class so CSS selectors matching .--active can apply.
-            # We intentionally do not change the Button.variant here.
+            # Update label for known toggles. Use the custom "toggle-active"
+            # class (not Textual's internal "--active") so the toggled-on state
+            # can be targeted by CSS without triggering Textual's built-in
+            # pressed-state styling, which changes padding/background and
+            # causes layout shifts on every toggle.
             if btn_id == self.minima_toggle_id:
                 btn.label = "▼" if active else "▲"
-                btn.set_class(bool(active), "--active")
+                btn.set_class(bool(active), "toggle-active")
             elif btn_id == self.smooth_toggle_id:
                 btn.label = "∿" if active else "⎍"
-                btn.set_class(bool(active), "--active")
+                btn.set_class(bool(active), "toggle-active")
         except (NoMatches, WrongType):
             pass
 
