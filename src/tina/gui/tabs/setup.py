@@ -13,7 +13,30 @@ if TYPE_CHECKING:
 
 
 def compose_setup_tab(app: VNAApp) -> ComposeResult:
-    """Compose the Setup tab contents."""
+    """Compose the Setup tab contents.
+
+    Args:
+        app: The running VNAApp instance; initial widget values are read from
+            ``app.settings`` and action targets in border-title markup resolve
+            against the app.
+
+    Returns:
+        ComposeResult containing a VerticalScroll with three panels:
+
+        - **Connection** panel: ``#input_host``, ``#input_port``,
+          ``#sb_poll_interval``.
+        - **Measurement Parameters** panel: ``#select_freq_unit``,
+          ``#input_start_freq``, ``#input_stop_freq``, ``#check_set_freq``,
+          ``#input_points``, ``#check_set_points``, ``#input_avg_count``,
+          ``#check_averaging``, ``#check_set_avg_count``.
+        - **Output** panel (``#output_settings_panel``):
+          ``#input_filename_template``, ``#preview_filename_template``,
+          ``#input_folder_template``, ``#preview_folder_template``, trace export
+          checkboxes (``#check_export_s11``, ``#check_export_s21``,
+          ``#check_export_s12``, ``#check_export_s22``), and bundle-format
+          checkboxes (``#check_export_bundle_s2p``, ``#check_export_bundle_csv``,
+          ``#check_export_bundle_png``, ``#check_export_bundle_svg``).
+    """
     with VerticalScroll():
         # Connection Settings
         with Container(classes="panel") as panel:
