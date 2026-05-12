@@ -167,7 +167,7 @@ class TemplateAutoComplete(AutoComplete):
         new_target_state = self._get_target_state()
         self.rebuild_options(new_target_state)
 
-    def rebuild_options(self, target_state=None) -> None:
+    def rebuild_options(self, target_state: TargetState | None = None) -> None:
         """Rebuild the dropdown options for the current or given target state.
 
         Wraps the upstream private _rebuild_options so callers use a stable method.
@@ -181,6 +181,8 @@ class TemplateAutoComplete(AutoComplete):
         """Hide the dropdown and refresh dependent previews after completion."""
         super().post_completion()
         app = self.app
-        if hasattr(app, "_refresh_export_template_validation"):
+        if hasattr(app, "_refresh_export_template_validation") and hasattr(
+            app, "call_after_refresh"
+        ):
             typed_app = cast(_TemplateRefreshApp, app)
             typed_app.call_after_refresh(typed_app._refresh_export_template_validation)

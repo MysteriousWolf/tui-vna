@@ -122,7 +122,9 @@ def handle_log_filter_change(app) -> None:
 
 def copy_log(app) -> None:
     """Copy visible log entries as plain text to the system clipboard."""
-    style_map = app._cached_style_map or build_style_map(app)
+    if not app._cached_style_map:
+        app._cached_style_map = build_style_map(app)
+    style_map = app._cached_style_map
     lines = [
         f"{entry['timestamp']} {style_map.get(entry['level'], ('•', ''))[0]} {entry['message']}"
         for entry in app.log_messages

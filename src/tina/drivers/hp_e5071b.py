@@ -310,47 +310,46 @@ class HPE5071B(VNABase):
         )
 
         status = {}
-        _visa_exc = _VISA_EXC
 
         try:
             raw = self._query(CMD_GET_CORRECTION_STATE).strip()
             status["cal_enabled"] = raw in ("1", "ON")
-        except _visa_exc:
+        except _VISA_EXC:
             status["cal_enabled"] = None
 
         try:
             raw = self._query(CMD_GET_CORRECTION_TYPE).strip()
             # Response may contain extra comma-separated fields; take first token only
             status["cal_type"] = raw.split(",")[0].strip()
-        except _visa_exc:
+        except _VISA_EXC:
             status["cal_type"] = None
 
         try:
             raw = self._query(CMD_GET_SMOOTHING_STATE).strip()
             status["smoothing_enabled"] = raw in ("1", "ON")
-        except _visa_exc:
+        except _VISA_EXC:
             status["smoothing_enabled"] = None
 
         try:
             status["smoothing_aperture"] = float(
                 self._query(CMD_GET_SMOOTHING_APERTURE).strip()
             )
-        except _visa_exc:
+        except _VISA_EXC:
             status["smoothing_aperture"] = None
 
         try:
             status["if_bandwidth_hz"] = float(self._query(CMD_GET_IF_BANDWIDTH).strip())
-        except _visa_exc:
+        except _VISA_EXC:
             status["if_bandwidth_hz"] = None
 
         try:
             status["port_power_dbm"] = float(self._query(CMD_GET_PORT_POWER).strip())
-        except _visa_exc:
+        except _VISA_EXC:
             status["port_power_dbm"] = None
 
         try:
             status["trigger_source"] = self._query(CMD_GET_TRIGGER_SOURCE).strip()
-        except _visa_exc:
+        except _VISA_EXC:
             status["trigger_source"] = None
 
         return status

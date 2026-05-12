@@ -14,8 +14,8 @@ from textual.widgets import Button, Label, Markdown, Static
 from ...utils.update_checker import ReleaseInfo
 
 ButtonVariantName = Literal["default", "primary", "success", "warning", "error"]
-DEFAULT_GITHUB_RELEASES_URL = "https://github.com/MysteriousWolf/tui-vna/releases"
-DEFAULT_GITHUB_RELEASE_URL = "https://github.com/MysteriousWolf/tui-vna/releases/latest"
+DEFAULT_GITHUB_RELEASES_LIST_URL = "https://github.com/MysteriousWolf/tui-vna/releases"
+DEFAULT_GITHUB_RELEASE_LATEST_URL = "https://github.com/MysteriousWolf/tui-vna/releases/latest"
 
 
 class UpdateNotificationScreen(ModalScreen):
@@ -46,7 +46,7 @@ class UpdateNotificationScreen(ModalScreen):
         self._button_variant = button_variant
         self._badge = badge
         self._badge_class = badge_class
-        self._github_url = github_url or DEFAULT_GITHUB_RELEASE_URL
+        self._github_url = github_url or DEFAULT_GITHUB_RELEASE_LATEST_URL
         if welcome:
             self.add_class("--welcome")
 
@@ -104,10 +104,10 @@ def _build_release_url(version: str, fallback_url: str | None = None) -> str:
             if normalized_version.startswith("v")
             else f"v{normalized_version}"
         )
-        return f"{DEFAULT_GITHUB_RELEASES_URL}/tag/{tag}"
+        return f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/{tag}"
     if fallback_url:
         return fallback_url
-    return DEFAULT_GITHUB_RELEASE_URL
+    return DEFAULT_GITHUB_RELEASE_LATEST_URL
 
 
 def _display_version(version: str) -> str:

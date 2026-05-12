@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tina.gui.modals.update_notification import (
-    DEFAULT_GITHUB_RELEASE_URL,
-    DEFAULT_GITHUB_RELEASES_URL,
+    DEFAULT_GITHUB_RELEASE_LATEST_URL,
+    DEFAULT_GITHUB_RELEASES_LIST_URL,
     build_update_screen,
     build_welcome_screen,
 )
@@ -49,7 +49,7 @@ def test_update_modal_opens_release_specific_url() -> None:
     with patch("tina.gui.modals.update_notification.webbrowser.open") as open_browser:
         screen.open_github_release()
 
-    open_browser.assert_called_once_with(f"{DEFAULT_GITHUB_RELEASES_URL}/tag/v1.2.3")
+    open_browser.assert_called_once_with(f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/v1.2.3")
 
 
 def test_update_modal_falls_back_when_release_url_missing() -> None:
@@ -65,14 +65,14 @@ def test_update_modal_falls_back_when_release_url_missing() -> None:
     with patch("tina.gui.modals.update_notification.webbrowser.open") as open_browser:
         screen.open_github_release()
 
-    open_browser.assert_called_once_with(DEFAULT_GITHUB_RELEASE_URL)
+    open_browser.assert_called_once_with(DEFAULT_GITHUB_RELEASE_LATEST_URL)
 
 
 @pytest.mark.parametrize(
     "version,html_url,expected",
     [
         # Version present → tag URL regardless of html_url
-        ("1.2.3", "", f"{DEFAULT_GITHUB_RELEASES_URL}/tag/v1.2.3"),
+        ("1.2.3", "", f"{DEFAULT_GITHUB_RELEASES_LIST_URL}/tag/v1.2.3"),
         # Version absent, html_url present → html_url used as fallback
         (
             "",

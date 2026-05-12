@@ -27,20 +27,17 @@ def compose_measurement_tab(app: VNAApp) -> ComposeResult:
 
     Parameters:
         app: The running VNAApp instance.  The function reads
-            ``app.settings`` (plot_type, plot_s11/s21/s12/s22, output_folder,
-            filename_prefix, export_s11/s21/s12/s22, etc.) to seed initial
-            widget values, and yields widgets that call back into ``app``
-            methods such as ``app.action_show_output_help`` and
-            ``app.action_open_output_folder``.
+            ``app.settings`` (plot_type, plot_s11/s21/s12/s22) to seed
+            initial widget values.
 
     Returns:
         A Textual ``ComposeResult`` that yields the full Measurement tab
         widget tree.  Key widget IDs exposed for runtime use:
         - ``#output_file_label`` – current output file path label
         - ``#btn_open_output`` – opens the output folder in the file manager
-        - ``#select_plot_type``, ``#select_export_s_params`` – plot/export selectors
-        - ``#notes_area`` – freeform notes TextArea
-        - ``#plot_container`` – container for the live plot widget
+        - ``#select_plot_type`` – plot type selector
+        - ``#measurement_notes_editor`` – freeform notes TextArea
+        - ``#results_container`` – container for the live plot widget
     """
     with Container(id="output_file_container", classes="panel") as panel:
         panel.border_title = "Output"

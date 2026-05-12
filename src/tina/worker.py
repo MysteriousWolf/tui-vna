@@ -236,6 +236,9 @@ def _write_touchstone_save_back(
     option_and_data_lines: list[str] = []
     option_line_seen = False
     header_separator_seen = False
+    _TINA_BLOCK_BEGINS = frozenset({"TINA NOTES BEGIN", "TINA METADATA BEGIN"})
+    _TINA_BLOCK_ENDS = frozenset({"TINA NOTES END", "TINA METADATA END"})
+    in_tina_block = False
 
     for raw in lines:
         line = raw.rstrip("\n")
@@ -264,8 +267,17 @@ def _write_touchstone_save_back(
             option_and_data_lines.append(line)
             continue
 
-        if stripped.startswith("!") or not stripped:
-            continue
+        # After the option line: skip TINA-managed blocks but preserve other comments.
+        if stripped.startswith("!"):
+            inner = stripped[1:].lstrip(" ")
+            if inner in _TINA_BLOCK_BEGINS:
+                in_tina_block = True
+                continue
+            if inner in _TINA_BLOCK_ENDS:
+                in_tina_block = False
+                continue
+            if in_tina_block:
+                continue
 
         option_and_data_lines.append(line)
 
