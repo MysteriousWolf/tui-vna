@@ -146,12 +146,15 @@ def embed_png_metadata(
         image.load()
         dpi = image.info.get("dpi")
         icc_profile = image.info.get("icc_profile")
+        exif = image.info.get("exif")
         with tempfile.SpooledTemporaryFile() as buffer:
             save_kwargs: dict = {"format": "PNG", "pnginfo": png_info}
             if dpi is not None:
                 save_kwargs["dpi"] = dpi
             if icc_profile is not None:
                 save_kwargs["icc_profile"] = icc_profile
+            if exif is not None:
+                save_kwargs["exif"] = exif
             image.save(buffer, **save_kwargs)
             buffer.seek(0)
             _atomic_write_bytes(path, buffer.read())

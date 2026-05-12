@@ -92,6 +92,10 @@ class KeysightP5007A(VNABase):
 
     def connect(self, progress_callback=None) -> bool:
         """Connect to the Keysight P5007A over VISA."""
+        if not self.config.host or not self.config.host.strip():
+            raise ValueError(
+                "VNAConfig.host must not be empty before calling connect()"
+            )
 
         def report(message: str, progress_pct: float) -> None:
             if progress_callback is not None:
