@@ -1091,8 +1091,8 @@ class MeasurementWorker:
                             for name, values in dict(data["sparams"]).items()
                         },
                         str(data["output_folder"]),
-                        str(data.get("filename", "measurement")),
-                        str(data.get("output_name", "measurement")),
+                        data.get("filename"),
+                        str(data.get("output_name") or "measurement"),
                     )
                 elif export_kind == "image":
                     report(f"{kind}: rendering image...", 35)
