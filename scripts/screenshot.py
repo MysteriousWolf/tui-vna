@@ -143,8 +143,27 @@ async def main() -> None:
             # ── 4. Tools tab — distortion with populated cursors ─────────────
             app.query_one(TabbedContent).active = "tab_tools"
             app.settings.tools_trace = "S21"
-            app._set_active_tool("distortion")
+            # Set the active tool directly instead of via _set_active_tool(), which
+            # schedules call_after_refresh(_delayed_tools_refresh).  That callback uses
+            # asyncio.gather to run _run_tools_computation_async and _refresh_tools_plot
+            # concurrently; both call _cancel_background_jobs_by_operation("Tools
+            # compute"), so each cancels the other's future.  The resulting
+            # CancelledError propagates through _invoke_and_clear_callbacks and kills
+            # the screen's message pump, causing every subsequent pilot.pause() to time
+            # out waiting for a queue that no longer drains.
+            from tina.gui.tabs.tools_logic import apply_tool_ui
+
+            app.settings.tools_active_tool = "distortion"
+            apply_tool_ui(app)
             await app._rebuild_tools_params()
+            # Yield to the event loop so _delayed_redraw_tools_plot (scheduled by the
+            # tab switch via call_after_refresh) can complete its worker job and finish.
+            # pilot.pause() / _wait_for_screen cannot be used here: while
+            # _invoke_and_clear_callbacks is awaiting the worker future the screen's
+            # message queue is effectively blocked, so the decrement_counter callback
+            # _wait_for_screen enqueues never fires and the 30-second timeout is hit.
+            await asyncio.sleep(1.5)
+
             # Set cursor Hz values for computation
             app._tools_cursor1_hz = CURSOR1_HZ
             app._tools_cursor2_hz = CURSOR2_HZ
@@ -153,8 +172,19 @@ async def main() -> None:
 
             app.query_one("#input_tools_cursor1", Input).value = "900"
             app.query_one("#input_tools_cursor2", Input).value = "2100"
+            # Flush pending Input.Changed events so handle_tools_cursor_change
+            # runs and starts the debounce timer before we stop it.
+            await pilot.pause()
+            # Cancel the debounce timer so _delayed_tools_refresh doesn't fire
+            # during the explicit refresh below and cancel its compute job.
+            from textual.timer import Timer
+
+            _timer = getattr(app, "_tools_input_timer", None)
+            if isinstance(_timer, Timer):
+                _timer.stop()
+                app._tools_input_timer = None
             await app._refresh_tools_plot()
-            app._run_tools_computation()
+            await app._run_tools_computation_async()
             await _take(app, pilot, DOCS / "screenshot-tools.svg")
 
             # ── 5. Distortion help popup ─────────────────────────────────────

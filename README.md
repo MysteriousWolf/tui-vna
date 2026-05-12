@@ -6,23 +6,29 @@ Terminal-based VNA control with **dynamic driver discovery**.
 
 ## Overview
 
-TINA is a TUI application for controlling Vector Network Analyzers over LAN/GPIB. It handles the full measurement workflow — connection, configuration, measurement, export, and analysis — entirely from the terminal.
+TINA is a TUI application for controlling Vector Network Analyzers over LAN/GPIB. It covers the full measurement workflow: connection, configuration, measurement, export, and analysis, all from the terminal.
 
 ### Measurement tab
 
-Configure the VNA, trigger measurements, and view S-parameter plots in real time. Supports magnitude, phase, and Smith chart views with adjustable frequency and amplitude axis limits. Results are exported as Touchstone `.s2p` files with configurable output folder and filename.
+Configure the VNA, trigger measurements, and view S-parameter plots in real time. Supports magnitude, phase, and Smith chart views with adjustable frequency and amplitude axis limits. Results are exported as Touchstone `.s2p` files with configurable output folder and filename. Optional bundled exports: CSV (frequency + S-params table), PNG, and SVG. A **minimal export** toggle skips bundled formats for fast iteration.
+
+Output filenames and folders support **templates** with short tags like `{date}`, `{time}`, `{host}`, `{model}`, `{start}`, `{stop}`, `{pts}`, `{avg}`, and more, as well as direct `strftime` patterns like `{%Y%m%d_%H%M%S}`. Autocomplete with history and a live preview are available in the output panel.
+
+Attach markdown notes to each measurement; press **Ctrl+S** to save them back into an existing export bundle.
 
 ![Measurement tab](docs/screenshot-measurement.svg)
 
 ### Tools tab
 
-Analyse the last measurement without reconnecting. Two tools are available:
+Analyse the last measurement without reconnecting, or import any previously saved `.s2p` file to analyse it offline. Two tools are available:
 
-**Cursor** — place two frequency markers on any S-parameter trace and read off values and the delta between them.
+**Cursor**: place two frequency markers on any S-parameter trace and read off values and the delta between them. Use the **prev/next** buttons to snap each cursor to the nearest peak or trough automatically.
 
-**Distortion** — fit a Legendre polynomial series to the selected trace over a user-defined frequency window and decompose the response into flatness (P₀), tilt (P₁), bow (P₂), and higher-order distortion components. Each component reports its peak-to-peak contribution in dB.
+**Distortion**: fit a Legendre polynomial series to the selected trace over a user-defined frequency window and decompose the response into flatness (P₀), tilt (P₁), bow (P₂), and higher-order distortion components. Each component reports its peak-to-peak contribution in dB.
 
-![Tools tab — distortion analysis](docs/screenshot-tools.svg)
+Results from either tool can be copied to the clipboard as plain text.
+
+![Tools tab - distortion analysis](docs/screenshot-tools.svg)
 
 The built-in help popup explains the math behind each tool.
 
@@ -122,7 +128,7 @@ class YourVNA(VNABase):
 
 ## Quick Start
 
-**GUI:** Connect → Configure → Measure → View Results
+**GUI:** Connect → Configure → Measure → Export → Analyse (Tools tab)
 
 **CLI:**
 
@@ -135,7 +141,7 @@ tina --host 192.168.1.100 --points 201 # Custom params
 
 - **Connection:** VNA IP + VISA port (default: `inst0`)
 - **Measurement:** Frequency range, sweep points, averaging
-- **Output:** Folder (`measurement/`), S-parameter selection
+- **Output:** Folder (`measurement/`), S-parameter selection, bundled formats (CSV / PNG / SVG)
 
 All constants in `src/tina/config/constants.py`.
 
@@ -149,15 +155,16 @@ All constants in `src/tina/config/constants.py`.
 Supported VNAs:
 
 - HP/Agilent/Keysight E5071 series
+- Keysight P5007A *(experimental)*
 
 ## Python API
 
 ```python
-from tina.drivers import VNAConfig, HPE5071B
+from tina.drivers import VNAConfig, HPE5071B, KeysightP5007A
 from tina.utils import TouchstoneExporter
 
 config = VNAConfig(host="192.168.1.100", start_freq_hz=10e6, stop_freq_hz=1500e6)
-with HPE5071B(config) as vna:
+with HPE5071B(config) as vna:          # or KeysightP5007A(config)
     freqs, sparams = vna.perform_measurement()
     TouchstoneExporter().export(freqs, sparams, "measurement")
 ```
@@ -165,8 +172,6 @@ with HPE5071B(config) as vna:
 ## Development
 
 **Requirements:** Python 3.10+, PyVISA-py, Textual, NumPy, SciPy, Matplotlib, scikit-rf
-
-**Note:** Importing measurements does not auto-switch tabs; the current tab stays active until you change it manually.
 
 **Structure:**
 
