@@ -42,8 +42,12 @@ def create_smith_chart(
     Args:
         freqs: 1-D array of frequencies in Hz, length N, monotonically increasing.
         sparams: Dict mapping S-parameter names (e.g. ``"s11"``, ``"s21"``) to
-            arrays of complex numbers with shape ``(N,)``, frequency-aligned with
-            *freqs*.
+            2-tuples ``(magnitude_db, phase_deg)`` where each element is a 1-D
+            NumPy array of shape ``(N,)``, frequency-aligned with *freqs*.
+            Magnitudes are in dB; phase values are in degrees.  These are
+            converted to complex reflection coefficients internally before
+            plotting.  Ignored for any parameter whose name appears as a key in
+            *plot_data*.
         plot_params: List of S-parameter names to render on the chart.
         output_path: File path where the chart image will be written (PNG).
         dpi: Dots per inch for the output image (default 150).
@@ -60,11 +64,12 @@ def create_smith_chart(
             font when ``None``.
         font_size: Font size in points; falls back to the terminal font size when
             ``None``.
-        plot_data: Optional pre-computed complex S-parameter series keyed by
-            parameter name (e.g. ``"s11"``).  When a key matching *param* is
-            present its value is used directly as the complex reflection
-            coefficient array, bypassing the magnitude+phase conversion from
-            *sparams*.  Pass ``None`` (default) to always derive from *sparams*.
+        plot_data: Optional pre-computed complex reflection-coefficient arrays
+            keyed by parameter name (e.g. ``"s11"``).  When provided, any key
+            present in *plot_data* is used directly (bypassing the
+            magnitude+phase-to-complex conversion from *sparams*) and takes
+            precedence over the corresponding *sparams* entry.  Pass ``None``
+            (default) to always derive complex values from *sparams*.
     """
     if font_family is None or font_size is None:
         detected_family, detected_size = get_terminal_font()
