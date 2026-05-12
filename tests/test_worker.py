@@ -115,18 +115,18 @@ class TestWorkerCommunication:
         """Test that worker sends responses."""
         worker = MeasurementWorker()
         worker.start()
+        try:
+            # Send a command that will trigger a response
+            worker.send_command(MessageType.DISCONNECT)
 
-        # Send a command that will trigger a response
-        worker.send_command(MessageType.DISCONNECT)
-
-        # Wait for response
-        msg = consume_worker_messages_until(
-            worker, MessageType.DISCONNECTED, timeout=1.0
-        )
-        assert msg is not None
-        assert msg.type == MessageType.DISCONNECTED
-
-        worker.stop()
+            # Wait for response
+            msg = consume_worker_messages_until(
+                worker, MessageType.DISCONNECTED, timeout=1.0
+            )
+            assert msg is not None
+            assert msg.type == MessageType.DISCONNECTED
+        finally:
+            worker.stop()
 
 
 class TestWorkerConnection:
