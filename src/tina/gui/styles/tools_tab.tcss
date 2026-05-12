@@ -148,7 +148,7 @@
     color: $primary;
 }
 
-#tools_params_container .tools-frequency-input {
+#tools_params_container .tools-frequency-row .freq-input {
     width: 1fr;
     /* Flexible entry box: consume remaining horizontal space while keeping
        a modest minimum to remain usable. Reduced min-width so tiny buttons can
@@ -223,42 +223,6 @@
     height: 3;
 }
 
-#tools_params_container .tools-frequency-button.--active,
-#tools_params_container .tools-frequency-button.toggle-active {
-    /* Preserve legacy selector behaviour but allow Button.variant/coloring to
-       control the visual identity. Do not forcibly override the background so
-       'flat' + variant styling from the component can render as intended. */
-    border: none;
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    padding: 0;
-    margin: 0 0 0 1;
-}
-
-/* Prev / Next active: defer to component semantics (primary color, color-only).
-   Keep sizing consistent with FrequencyEntry.tools-compact footprint. */
-#tools_params_container .tools-frequency-button.prev-button.--active,
-#tools_params_container .tools-frequency-button.next-button.--active {
-    border: none;
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    padding: 0;
-    margin: 0 0 0 1;
-}
-
-/* Min/max and smoothing toggles: align with component visual identity and use
-   accent color for active state (color-only). */
-#tools_params_container .tools-frequency-button.minima-toggle.--active,
-#tools_params_container .tools-frequency-button.smooth-toggle.--active {
-    border: none;
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    padding: 0;
-    margin: 0 0 0 1;
-}
 
 #tools_params_container .distortion-row {
     margin-top: 0;
