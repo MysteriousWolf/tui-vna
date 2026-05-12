@@ -487,7 +487,6 @@ class TestDriverDiscovery:
     def test_discovery_uses_current_package_name(self, monkeypatch):
         """Driver discovery should import relative modules using __package__."""
         original_registry = dict(driver_base._DRIVER_REGISTRY)
-        driver_base._DRIVER_REGISTRY.clear()
 
         imported = []
 
@@ -505,6 +504,7 @@ class TestDriverDiscovery:
         monkeypatch.setattr(driver_base.importlib, "import_module", fake_import_module)
 
         try:
+            driver_base._DRIVER_REGISTRY.clear()
             drivers = dict(driver_base.discover_drivers())
         finally:
             driver_base._DRIVER_REGISTRY.clear()
