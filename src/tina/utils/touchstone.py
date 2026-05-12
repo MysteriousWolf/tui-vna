@@ -188,8 +188,9 @@ class TouchstoneExporter:
         payload: dict[str, Any] = {"metadata_version": _METADATA_VERSION}
         if metadata:
             payload.update(metadata)
-            payload["metadata_version"] = metadata.get(
-                "metadata_version", _METADATA_VERSION
+            incoming = metadata.get("metadata_version")
+            payload["metadata_version"] = (
+                incoming if isinstance(incoming, int) else _METADATA_VERSION
             )
         return payload
 
