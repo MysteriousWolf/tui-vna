@@ -140,6 +140,10 @@ class TemplateAutoComplete(AutoComplete):
                 (c for c in self._get_choices() if c.value == actual_value), None
             )
         if choice is None:
+            # No matching kind/value found via _get_choices (or _KIND_SEP was absent).
+            # Delegate to the upstream apply_completion with the raw value; upstream
+            # implementations are expected to handle arbitrary strings.  Reset
+            # cursor_position to end so the widget reflects the full replacement.
             super().apply_completion(actual_value, state)
             target.cursor_position = len(target.value)
             return

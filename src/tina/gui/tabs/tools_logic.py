@@ -974,8 +974,8 @@ async def refresh_tools_plot(app, *, tool_result: dict | None = None) -> None:
         )
         plt_term.ylim(auto_y_min, auto_y_max)
 
-        _CURSOR_MARKER_MAP = {"▼": "v", "✕": "x", "○": "o"}
-        term_marker = _CURSOR_MARKER_MAP.get(app.settings.cursor_marker_style, "x")
+        cursor_marker_map = {"▼": "v", "✕": "x", "○": "o"}
+        term_marker = cursor_marker_map.get(app.settings.cursor_marker_style, "x")
         if cursor1_hz is not None:
             x1 = cursor1_hz / multiplier
             plt_term.vline(x1, color=cursor1_rgb)
