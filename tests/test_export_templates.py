@@ -297,7 +297,13 @@ class TestSetupTemplateBindings:
     """Tests for Setup tab template bindings and resilient preview parsing."""
 
     class _PreviewStub:
-        """Minimal preview widget stub for setup preview tests."""
+        """Minimal preview widget stub for setup preview tests.
+
+        Tracks the latest preview text in ``updated_text`` and CSS class
+        toggles in ``classes``.  ``update(value)`` captures the incoming
+        string; ``set_class(enabled, class_name)`` records each toggle so
+        tests can assert on the state the preview helper applied.
+        """
 
         def __init__(self) -> None:
             self.updated_text = ""

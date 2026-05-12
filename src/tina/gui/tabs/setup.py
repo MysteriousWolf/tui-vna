@@ -128,6 +128,7 @@ def compose_setup_tab(app: VNAApp) -> ComposeResult:
 
         # Output Settings
         with Container(classes="panel", id="output_settings_panel") as panel:
+            # Textual supports @click actions in border_title Rich markup.
             panel.border_title = (
                 "Output "
                 "[@click='app.show_output_help'][$background on $primary] ? [/][/]"

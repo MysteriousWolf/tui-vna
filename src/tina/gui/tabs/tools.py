@@ -137,6 +137,7 @@ def compose_tools_tab(app: VNAApp) -> ComposeResult:
 
                 # Results frame
                 with Container(id="tools_results_container", classes="panel") as panel:
+                    # Textual supports @click actions in border_title Rich markup.
                     panel.border_title = (
                         "Tool Results "
                         "[@click='app.show_tool_help'][$background on $primary] ? [/][/]"
