@@ -9,5 +9,7 @@ def resolve_main_compat_attr(name: str, default: object) -> object:
         import tina.main as main_module
 
         return getattr(main_module, name, default)
-    except ImportError:
-        return default
+    except ModuleNotFoundError as e:
+        if e.name is not None and (e.name == "tina" or e.name.startswith("tina.")):
+            return default
+        raise
