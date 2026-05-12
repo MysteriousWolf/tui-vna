@@ -429,8 +429,10 @@ def create_matplotlib_plot(
             if all_y_data:
                 combined_data = np.concatenate(all_y_data)
                 if y_min is None or y_max is None:
-                    auto_y_min, auto_y_max = calculate_plot_range_with_outlier_filtering(
-                        combined_data, outlier_percentile=1.0, safety_margin=0.05
+                    auto_y_min, auto_y_max = (
+                        calculate_plot_range_with_outlier_filtering(
+                            combined_data, outlier_percentile=1.0, safety_margin=0.05
+                        )
                     )
                     final_y_min = y_min if y_min is not None else auto_y_min
                     final_y_max = y_max if y_max is not None else auto_y_max
