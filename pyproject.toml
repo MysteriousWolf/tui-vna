@@ -1,6 +1,6 @@
 [project]
 name = "tui-vna"
-version = "0.3.0"
+dynamic = ["version"]
 description = "TINA - Terminal UI Network Analyzer"
 requires-python = ">=3.10"
 dependencies = [
@@ -30,8 +30,12 @@ license = {text = "MIT"}
 tina = "tina._loader:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "dev"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tina"]
