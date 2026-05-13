@@ -32,13 +32,12 @@ In development builds (untagged commits), the version displays as `dev`.
 
 ## What Gets Built
 
-When a tag is pushed, GitHub Actions builds eight binaries:
+When a tag is pushed, GitHub Actions builds six binaries:
 
 | Platform | Full TUI | Quick (CLI only) |
 |---|---|---|
 | Linux x86_64 | `tina-vX.Y.Z-linux-x86_64` | `tina-quick-vX.Y.Z-linux-x86_64` |
 | Windows x86_64 | `tina-vX.Y.Z-windows-x86_64.exe` | `tina-quick-vX.Y.Z-windows-x86_64.exe` |
 | macOS ARM64 (Apple Silicon) | `tina-vX.Y.Z-macos-arm64` | `tina-quick-vX.Y.Z-macos-arm64` |
-| macOS x86_64 (Intel) | `tina-vX.Y.Z-macos-x86_64` | `tina-quick-vX.Y.Z-macos-x86_64` |
 
 Monitor build progress in the Actions tab.

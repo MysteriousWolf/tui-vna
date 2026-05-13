@@ -184,6 +184,7 @@ jobs:
 
           if [ -z "$BODY" ]; then
             {
+              printf '> **Note:** automated release notes generation failed or timed out; showing simplified commit list.\n\n'
               printf '> %s\n\n## Commits\n\n%s\n' "${RELEASE_TITLE}" "${COMMITS}"
               [ -n "${PREV_TAG}" ] && printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
                 "${GITHUB_REPOSITORY}" "${PREV_TAG}" "${GITHUB_REF_NAME}"
