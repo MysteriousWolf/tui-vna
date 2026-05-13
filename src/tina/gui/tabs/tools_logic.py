@@ -818,9 +818,7 @@ async def delayed_tools_refresh(app) -> None:
             app._refresh_tools_plot(),
         )
     except asyncio.CancelledError:
-        task = asyncio.current_task()
-        if task is not None and task.cancelled():
-            raise
+        raise
 
 
 async def apply_tools_render_result(
