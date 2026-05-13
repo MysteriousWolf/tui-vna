@@ -63,13 +63,15 @@ For systems without Python/uv, download standalone executables from [GitHub Rele
 
 - **Windows**: `tina-v{VERSION}-windows-x86_64.exe`
 - **Linux**: `tina-v{VERSION}-linux-x86_64`
-- **macOS**: `tina-v{VERSION}-macos-x86_64`
+- **macOS (Apple Silicon)**: `tina-v{VERSION}-macos-arm64`
+- **macOS (Intel)**: `tina-v{VERSION}-macos-x86_64`
 
 **Quick version** (CLI only, faster startup):
 
 - **Windows**: `tina-quick-v{VERSION}-windows-x86_64.exe`
 - **Linux**: `tina-quick-v{VERSION}-linux-x86_64`
-- **macOS**: `tina-quick-v{VERSION}-macos-x86_64`
+- **macOS (Apple Silicon)**: `tina-quick-v{VERSION}-macos-arm64`
+- **macOS (Intel)**: `tina-quick-v{VERSION}-macos-x86_64`
 
 Replace `v{VERSION}` with the release tag (e.g. `v0.3.0`). Pick the asset matching your platform from the Releases page.
 

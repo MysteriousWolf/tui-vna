@@ -7,8 +7,6 @@ uv run pytest --cov        # with coverage
 ./scripts/lint.sh --check  # linting
 ```
 
-**155 passing, 2 skipped**
-
 Structure mirrors `src/tina/`:
 
 - `config/` - Configuration tests
