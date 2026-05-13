@@ -812,10 +812,15 @@ async def delayed_tools_refresh(app) -> None:
     # so its worker message (TOOLS_COMPUTE) reaches the worker queue before the
     # render message, giving the render job the best chance of finding a warm
     # compute cache. Both coroutines are awaited — no fire-and-forget orphans.
-    await asyncio.gather(
-        app._run_tools_computation_async(),
-        app._refresh_tools_plot(),
-    )
+    try:
+        await asyncio.gather(
+            app._run_tools_computation_async(),
+            app._refresh_tools_plot(),
+        )
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is not None and task.cancelled():
+            raise
 
 
 async def apply_tools_render_result(
