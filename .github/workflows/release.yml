@@ -48,15 +48,12 @@ jobs:
             quick_binary_name: tina-quick
             artifact_name: tina-macos-arm64
             quick_artifact_name: tina-quick-macos-arm64
-          - os: macos-13
-            binary_name: tina
-            quick_binary_name: tina-quick
-            artifact_name: tina-macos-x86_64
-            quick_artifact_name: tina-quick-macos-x86_64
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@v5
@@ -131,16 +128,6 @@ jobs:
           if [ -f artifacts/macos-latest-binaries/tina-quick ]; then
             mv artifacts/macos-latest-binaries/tina-quick release-assets/tina-quick-${VERSION}-macos-arm64
             chmod +x release-assets/tina-quick-${VERSION}-macos-arm64
-          fi
-
-          # macOS x86_64 (Intel)
-          if [ -f artifacts/macos-13-binaries/tina ]; then
-            mv artifacts/macos-13-binaries/tina release-assets/tina-${VERSION}-macos-x86_64
-            chmod +x release-assets/tina-${VERSION}-macos-x86_64
-          fi
-          if [ -f artifacts/macos-13-binaries/tina-quick ]; then
-            mv artifacts/macos-13-binaries/tina-quick release-assets/tina-quick-${VERSION}-macos-x86_64
-            chmod +x release-assets/tina-quick-${VERSION}-macos-x86_64
           fi
 
           ls -lah release-assets/

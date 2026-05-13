@@ -35,7 +35,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
-fallback-version = "dev"
+fallback-version = "0.0.0.dev0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tina"]

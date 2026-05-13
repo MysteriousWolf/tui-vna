@@ -46,6 +46,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@v5
@@ -64,7 +66,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.xml
+          files: ./coverage.xml
           flags: unittests
           fail_ci_if_error: false
 
@@ -81,6 +83,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@v5
@@ -115,13 +119,12 @@ jobs:
           - os: macos-latest
             tina_bin: dist/tina
             quick_bin: dist/tina-quick
-          - os: macos-13
-            tina_bin: dist/tina
-            quick_bin: dist/tina-quick
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@v5
