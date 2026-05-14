@@ -47,6 +47,26 @@ def _evict_module(*names: str):
 
 
 @pytest.mark.unit
+def test_version_resolved_from_package_metadata():
+    """__version__ should reflect the installed package version when metadata is available."""
+    with _evict_module("tina"):
+        with patch("importlib.metadata.version", return_value="1.2.3"):
+            tina = importlib.import_module("tina")
+    assert tina.__version__ == "1.2.3"
+
+
+@pytest.mark.unit
+def test_version_falls_back_to_pep440_dev_when_package_not_found():
+    """__version__ should fall back to '0.0.0.dev0' when the package is not installed."""
+    from importlib.metadata import PackageNotFoundError as _PNFE
+
+    with _evict_module("tina"):
+        with patch("importlib.metadata.version", side_effect=_PNFE("tui-vna")):
+            tina = importlib.import_module("tina")
+    assert tina.__version__ == "0.0.0.dev0"
+
+
+@pytest.mark.unit
 def test_gui_package_exports_names_without_eager_main_import():
     """The GUI package should advertise app entry points without importing them eagerly."""
     with _evict_module("tina.gui"):

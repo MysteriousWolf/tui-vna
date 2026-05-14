@@ -7,7 +7,7 @@ try:
     __version__ = _pkg_version("tui-vna")
 except PackageNotFoundError:
     # Running without a uv/pip install (e.g. raw IDE launch without venv)
-    __version__ = "dev"
+    __version__ = "0.0.0.dev0"
 
 from .config.settings import AppSettings, SettingsManager
 from .drivers import HPE5071B as VNA
