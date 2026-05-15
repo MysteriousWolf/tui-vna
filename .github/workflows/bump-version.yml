@@ -21,6 +21,11 @@ on:
         type: boolean
         required: false
         default: true
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
@@ -113,5 +118,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEXT_TAG: ${{ steps.version.outputs.next_tag }}
         run: |
-          gh workflow run release.yml --ref "${NEXT_TAG}"
+          gh workflow run release.yml --ref "${NEXT_TAG}" \
+            --field prerelease=${{ inputs.prerelease }}
           echo "Release workflow triggered for ${NEXT_TAG}."
