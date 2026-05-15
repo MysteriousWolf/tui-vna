@@ -36,18 +36,12 @@ jobs:
           - os: ubuntu-latest
             binary_name: tina
             quick_binary_name: tina-quick
-            artifact_name: tina-linux-x86_64
-            quick_artifact_name: tina-quick-linux-x86_64
           - os: windows-latest
             binary_name: tina.exe
             quick_binary_name: tina-quick.exe
-            artifact_name: tina-windows-x86_64.exe
-            quick_artifact_name: tina-quick-windows-x86_64.exe
           - os: macos-latest
             binary_name: tina
             quick_binary_name: tina-quick
-            artifact_name: tina-macos-arm64
-            quick_artifact_name: tina-quick-macos-arm64
 
     steps:
       - name: Checkout code
