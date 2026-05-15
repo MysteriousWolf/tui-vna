@@ -46,9 +46,10 @@ jobs:
           echo "Checking for a successful CI run on ${SHA}..."
           PASSING=$(gh run list \
             --workflow="test.yml" \
-            --limit 50 \
-            --json headSha,status,conclusion \
-            --jq "[.[] | select(.headSha == \"${SHA}\" and .status == \"completed\" and .conclusion == \"success\")] | length")
+            --commit "${SHA}" \
+            --status success \
+            --json conclusion \
+            --jq 'length')
           if [ "$PASSING" -eq 0 ]; then
             echo "::error::No successful CI run found for ${SHA}. Ensure tests pass before releasing."
             exit 1
@@ -84,6 +85,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --force origin
+          if git rev-parse -q --verify "refs/tags/${NEXT_TAG}" >/dev/null \
+             || git ls-remote --exit-code --tags origin "refs/tags/${NEXT_TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${NEXT_TAG} already exists. Refusing to overwrite."
+            exit 1
+          fi
           TITLE="${RELEASE_TITLE:-${NEXT_TAG}}"
           git tag -a "${NEXT_TAG}" -m "${TITLE}"
           git push origin "${NEXT_TAG}"

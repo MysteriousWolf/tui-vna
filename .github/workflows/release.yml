@@ -172,11 +172,13 @@ jobs:
             "${PREV_TAG}" "${COMMITS}" "${DEP_DIFF}")
 
           BODY=$(curl -sf --connect-timeout 10 --max-time 60 \
-            https://models.inference.ai.azure.com/chat/completions \
+            https://models.github.ai/inference/chat/completions \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
             -d "$(jq -n --arg p "$PROMPT" '{
-              model: "gpt-4o-mini",
+              model: "openai/gpt-4o-mini",
               max_tokens: 4096,
               messages: [{"role": "user", "content": $p}]
             }')" 2>/dev/null \
