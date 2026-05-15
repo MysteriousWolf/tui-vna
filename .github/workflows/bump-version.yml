@@ -38,6 +38,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Ensure running on master
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "master" ] && [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "::error::Bump Version must be triggered from the master branch. Current branch: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
       - name: Check CI is passing
         env:
           GH_TOKEN: ${{ github.token }}
