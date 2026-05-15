@@ -3456,9 +3456,7 @@ class VNAApp(App):
                         self._latest_tools_compute_result = dict(result)
                         self._latest_tools_compute_cache_key = compute_cache_key
                 except asyncio.CancelledError:
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelled():
-                        raise
+                    raise
                 except Exception:
                     pass
             tool_result = (
