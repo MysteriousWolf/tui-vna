@@ -58,10 +58,12 @@ def test_version_resolved_from_package_metadata():
 @pytest.mark.unit
 def test_version_falls_back_to_pep440_dev_when_package_not_found():
     """__version__ should fall back to '0.0.0.dev0' when the package is not installed."""
-    from importlib.metadata import PackageNotFoundError as _PNFE
+    from importlib.metadata import PackageNotFoundError
 
     with _evict_module("tina"):
-        with patch("importlib.metadata.version", side_effect=_PNFE("tui-vna")):
+        with patch(
+            "importlib.metadata.version", side_effect=PackageNotFoundError("tui-vna")
+        ):
             tina = importlib.import_module("tina")
     assert tina.__version__ == "0.0.0.dev0"
 
