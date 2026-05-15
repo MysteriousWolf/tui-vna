@@ -63,7 +63,7 @@ jobs:
         run: uv sync --group test
 
       - name: Run tests with pytest
-        run: uv run pytest --junitxml=junit.xml -o junit_family=legacy
+        run: uv run pytest --junitxml=junit.xml
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v5
