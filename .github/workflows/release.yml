@@ -202,4 +202,4 @@ jobs:
           body_path: /tmp/release_body.md
           files: release-assets/*
           fail_on_unmatched_files: true
-          prerelease: ${{ inputs.prerelease }}
+          prerelease: ${{ inputs.prerelease == '' || inputs.prerelease }}
