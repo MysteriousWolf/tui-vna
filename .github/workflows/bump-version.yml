@@ -16,10 +16,15 @@ on:
         description: "Release title (used as the release heading)"
         type: string
         required: false
+      create_release:
+        description: "Also trigger a GitHub release after tagging"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -101,3 +106,12 @@ jobs:
           TITLE="${RELEASE_TITLE:-${NEXT_TAG}}"
           git tag -a "${NEXT_TAG}" -m "${TITLE}"
           git push origin "${NEXT_TAG}"
+
+      - name: Trigger release workflow
+        if: ${{ inputs.create_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_TAG: ${{ steps.version.outputs.next_tag }}
+        run: |
+          gh workflow run release.yml --ref "${NEXT_TAG}"
+          echo "Release workflow triggered for ${NEXT_TAG}."
