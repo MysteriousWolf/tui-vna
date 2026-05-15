@@ -2,45 +2,42 @@
 
 ## Creating a Release
 
-1. **Update version in both files** (e.g. `0.x.y` → `0.x.(y+1)`):
-   - `pyproject.toml`: `version = "0.x.y"`
-   - `src/tina/__init__.py`: `__version__ = "0.x.y"`
+Version is tracked exclusively via git tags — no manual version bumps in source files needed.
 
-2. **Commit changes**
+### Option A: GitHub Actions (recommended)
 
-3. **Create and push tag:**
+1. Go to **Actions → Bump Version → Run workflow**
+2. Choose bump type (`patch` / `minor` / `major`) and optionally a release title
+3. The workflow verifies CI is passing on the current commit, computes the next version, and pushes the tag
+4. The **Build and Release** workflow triggers automatically, builds binaries for all platforms, generates AI-assisted release notes, and publishes the GitHub Release
 
-   **CLI:**
+### Option B: Manual tag
 
-   ```bash
-   git tag -a v0.x.y -m "Release 0.x.y"
-   git push --tags
-   ```
+```bash
+git tag -a v0.x.y -m "Release title"
+git push origin v0.x.y
+```
 
-   **GitHub Web:**
-   - Go to Releases → Create a new release
-   - Choose a tag: type `v0.x.y` and create new tag
-   - Click "Publish release"
-
-GitHub Actions will automatically generate a changelog from commits and build binaries for all platforms.
+GitHub Actions picks up the tag and handles the rest.
 
 ## Version Numbering
 
-Follow [Semantic Versioning](https://semver.org/) (or embrace [0ver](https://0ver.org/) and stay in 0.x.x forever):
+Follow [Semantic Versioning](https://semver.org/):
 
-- **MAJOR** - incompatible API changes
-- **MINOR** - new functionality, backwards-compatible
-- **PATCH** - backwards-compatible bug fixes
+- **MAJOR** — incompatible API changes
+- **MINOR** — new functionality, backwards-compatible
+- **PATCH** — backwards-compatible bug fixes
+
+In development builds (untagged commits), the version displays as `dev`.
 
 ## What Gets Built
 
-When you push a tag like `v0.x.y`, GitHub Actions builds:
+When a tag is pushed, GitHub Actions builds six binaries:
 
-- `tina-linux-x86_64` - Main TUI for Linux
-- `tina-quick-linux-x86_64` - Quick measure for Linux
-- `tina-windows-x86_64.exe` - Main TUI for Windows
-- `tina-quick-windows-x86_64.exe` - Quick measure for Windows
-- `tina-macos-x86_64` - Main TUI for macOS
-- `tina-quick-macos-x86_64` - Quick measure for macOS
+| Platform | Full TUI | Quick (CLI only) |
+|---|---|---|
+| Linux x86_64 | `tina-vX.Y.Z-linux-x86_64` | `tina-quick-vX.Y.Z-linux-x86_64` |
+| Windows x86_64 | `tina-vX.Y.Z-windows-x86_64.exe` | `tina-quick-vX.Y.Z-windows-x86_64.exe` |
+| macOS ARM64 (Apple Silicon) | `tina-vX.Y.Z-macos-arm64` | `tina-quick-vX.Y.Z-macos-arm64` |
 
-Check the Actions tab to monitor build progress.
+Monitor build progress in the Actions tab.

@@ -6,20 +6,31 @@ on:
       - "v*.*.*"
   workflow_dispatch:
 
-permissions:
-  contents: write
-  models: read
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
     name: Run tests before release
+    permissions:
+      contents: read
     uses: ./.github/workflows/test.yml
+    with:
+      skip_build: true
+    secrets: inherit
 
   build:
     needs: test
     name: Build on ${{ matrix.os }}
+    permissions:
+      contents: read
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -35,8 +46,8 @@ jobs:
           - os: macos-latest
             binary_name: tina
             quick_binary_name: tina-quick
-            artifact_name: tina-macos-x86_64
-            quick_artifact_name: tina-quick-macos-x86_64
+            artifact_name: tina-macos-arm64
+            quick_artifact_name: tina-quick-macos-arm64
 
     steps:
       - name: Checkout code
@@ -44,37 +55,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v5
         with:
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
       - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build executables
         run: |
-          uv sync
-          uv add --group dev pyinstaller
-
-      - name: Build main executable (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: uv run pyinstaller --clean scripts/tina.spec
-
-      - name: Build quick executable (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: uv run pyinstaller --clean scripts/tina-quick.spec
-
-      - name: Build main executable (Windows)
-        if: runner.os == 'Windows'
-        run: uv run pyinstaller --clean scripts/tina.spec
-
-      - name: Build quick executable (Windows)
-        if: runner.os == 'Windows'
-        run: uv run pyinstaller --clean scripts/tina-quick.spec
+          uv run pyinstaller --clean scripts/tina.spec
+          uv run pyinstaller --clean scripts/tina-quick.spec
 
       - name: Upload binaries to artifacts
         uses: actions/upload-artifact@v4
@@ -88,6 +82,9 @@ jobs:
     name: Create Release
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      models: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -95,7 +92,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -123,123 +120,85 @@ jobs:
             mv artifacts/windows-latest-binaries/tina-quick.exe release-assets/tina-quick-${VERSION}-windows-x86_64.exe
           fi
 
-          # macOS
+          # macOS ARM64 (Apple Silicon)
           if [ -f artifacts/macos-latest-binaries/tina ]; then
-            mv artifacts/macos-latest-binaries/tina release-assets/tina-${VERSION}-macos-x86_64
-            chmod +x release-assets/tina-${VERSION}-macos-x86_64
+            mv artifacts/macos-latest-binaries/tina release-assets/tina-${VERSION}-macos-arm64
+            chmod +x release-assets/tina-${VERSION}-macos-arm64
           fi
           if [ -f artifacts/macos-latest-binaries/tina-quick ]; then
-            mv artifacts/macos-latest-binaries/tina-quick release-assets/tina-quick-${VERSION}-macos-x86_64
-            chmod +x release-assets/tina-quick-${VERSION}-macos-x86_64
+            mv artifacts/macos-latest-binaries/tina-quick release-assets/tina-quick-${VERSION}-macos-arm64
+            chmod +x release-assets/tina-quick-${VERSION}-macos-arm64
           fi
 
           ls -lah release-assets/
 
-      - name: Generate changelog
-        id: changelog
+      - name: Gather release data
+        id: data
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PREV_TAG=$(git tag --sort=-version:refname --merged "${GITHUB_REF_NAME}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          PREV_TAG=$(git tag --sort=-version:refname --merged "${GITHUB_REF_NAME}" \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          RELEASE_TITLE=$(git tag -l --format='%(contents:subject)' "${GITHUB_REF_NAME}")
+          RELEASE_TITLE="${RELEASE_TITLE:-${GITHUB_REF_NAME}}"
+
           echo "prev_tag=${PREV_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "release_title=${RELEASE_TITLE}" >> "${GITHUB_OUTPUT}"
 
-          # Find the base minor tag (e.g. v0.2.0 for v0.2.3) for the recap section
-          MAJOR_MINOR=$(echo "${GITHUB_REF_NAME}" | grep -oE '^v[0-9]+\.[0-9]+')
-          BASE_MINOR_TAG=$(git tag --sort=version:refname | grep -E "^${MAJOR_MINOR}\\.0$" | tail -1)
-          # Only useful if it differs from both the current tag and prev tag
-          if [ "$BASE_MINOR_TAG" = "${GITHUB_REF_NAME}" ] || [ "$BASE_MINOR_TAG" = "$PREV_TAG" ]; then
-            BASE_MINOR_TAG=""
-          fi
-          echo "base_minor_tag=${BASE_MINOR_TAG}" >> "${GITHUB_OUTPUT}"
-
-          if [ -z "$PREV_TAG" ]; then
-            echo "changelog=Initial release" >> "${GITHUB_OUTPUT}"
+          if [ -z "${PREV_TAG}" ]; then
+            printf 'Initial release.\n' > /tmp/commits.txt
+            printf '' > /tmp/dep_diff.txt
           else
-            echo "changelog<<EOF" >> "${GITHUB_OUTPUT}"
             gh api "repos/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}" \
-              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> "${GITHUB_OUTPUT}"
-            echo "EOF" >> "${GITHUB_OUTPUT}"
+              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' \
+              > /tmp/commits.txt
+            git diff "${PREV_TAG}...${GITHUB_REF_NAME}" -- pyproject.toml > /tmp/dep_diff.txt 2>/dev/null || true
           fi
 
-          # Recap: all commits since the base minor tag (only for patch releases)
-          if [ -n "$BASE_MINOR_TAG" ]; then
-            echo "recap<<EOF" >> "${GITHUB_OUTPUT}"
-            gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_MINOR_TAG}...${GITHUB_REF_NAME}" \
-              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) by @\(.author.login // .commit.author.name)"' >> "${GITHUB_OUTPUT}"
-            echo "EOF" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Generate AI release summary
-        id: ai_summary
+      - name: Generate release notes
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMITS: ${{ steps.changelog.outputs.changelog }}
-          RECAP_COMMITS: ${{ steps.changelog.outputs.recap }}
+          PREV_TAG: ${{ steps.data.outputs.prev_tag }}
+          RELEASE_TITLE: ${{ steps.data.outputs.release_title }}
         run: |
-          call_model() {
-            local prompt="$1"
-            curl -sf --connect-timeout 10 --max-time 30 https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$(jq -n --arg p "$prompt" '{
-                model: "gpt-4o-mini",
-                max_tokens: 512,
-                messages: [{"role": "user", "content": $p}]
-              }')" 2>/dev/null \
-            | jq -r '.choices[0].message.content // empty' 2>/dev/null || true
-          }
+          COMMITS=$(cat /tmp/commits.txt)
+          DEP_DIFF=$(cat /tmp/dep_diff.txt)
 
-          BASE_PROMPT="You are writing GitHub release notes for tina, a terminal-based VNA (Vector Network Analyzer) control application. Write a concise summary grouped by theme using bold markdown headers. Be specific about what changed. Skip CI, formatting, documentation-only, and internal tooling commits."
+          PROMPT=$(printf \
+            'You are writing GitHub release notes for "tina", a terminal-based TUI application for controlling Vector Network Analyzers (VNAs). Write for a technical developer audience.\n\nRelease: %s\nTitle: %s\nPrevious release: %s\n\nGenerate rich Markdown release notes using this exact structure (omit any section with no relevant content):\n\n> %s\n\n[1-2 sentence intro describing the overall scope of this release]\n\n---\n\n## ✨ What'"'"'s New\n\n[Group new features into themed ### subsections with a relevant emoji (e.g. ### 📤 Export Engine). Use bullet points with **bold** feature name followed by em-dash and description.]\n\n---\n\n## 🏗️ Architecture & Refactoring\n\n[Significant internal structural changes. Omit this section entirely if none.]\n\n---\n\n## 🐛 Bug Fixes\n\n[Bulleted list. Each item starts with "Fixed". Omit if none.]\n\n---\n\n## 🧪 Testing\n\n[Summary of new or expanded test coverage. Omit if none.]\n\n---\n\n## 📦 Dependency Updates\n\n[Markdown table with columns: Package | From | To. Derive from the pyproject.toml diff. Omit if no dependency changes.]\n\n---\n\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n\nRules:\n- Skip CI, formatting, and internal tooling commits\n- Be specific and technical\n- Features use present tense, bug fixes use past tense\n\nCommits since %s:\n%s\n\npyproject.toml diff (for dependency table):\n%s' \
+            "${GITHUB_REF_NAME}" "${RELEASE_TITLE}" "${PREV_TAG}" \
+            "${RELEASE_TITLE}" \
+            "${GITHUB_REPOSITORY}" "${PREV_TAG}" "${GITHUB_REF_NAME}" \
+            "${PREV_TAG}" "${COMMITS}" "${DEP_DIFF}")
 
-          SUMMARY_PROMPT=$(printf '%s\n\nCommits since last release:\n%s' "$BASE_PROMPT" "$COMMITS")
-          SUMMARY=$(call_model "$SUMMARY_PROMPT")
-          echo "summary<<EOF" >> "${GITHUB_OUTPUT}"
-          echo "${SUMMARY}" >> "${GITHUB_OUTPUT}"
-          echo "EOF" >> "${GITHUB_OUTPUT}"
+          BODY=$(curl -sf --connect-timeout 10 --max-time 60 \
+            https://models.github.ai/inference/chat/completions \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d "$(jq -n --arg p "$PROMPT" '{
+              model: "openai/gpt-4o-mini",
+              max_tokens: 4096,
+              messages: [{"role": "user", "content": $p}]
+            }')" 2>/dev/null \
+            | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
 
-          if [ -n "$RECAP_COMMITS" ]; then
-            RECAP_PROMPT=$(printf '%s\n\nWrite a brief one-paragraph recap (no headers) summarising all changes in this minor release series so far.\n\nAll commits in this minor release series:\n%s' "$BASE_PROMPT" "$RECAP_COMMITS")
-            RECAP=$(call_model "$RECAP_PROMPT")
-            echo "recap<<EOF" >> "${GITHUB_OUTPUT}"
-            echo "${RECAP}" >> "${GITHUB_OUTPUT}"
-            echo "EOF" >> "${GITHUB_OUTPUT}"
+          if [ -z "$BODY" ]; then
+            {
+              printf '> **Note:** automated release notes generation failed or timed out; showing simplified commit list.\n\n'
+              printf '> %s\n\n## Commits\n\n%s\n' "${RELEASE_TITLE}" "${COMMITS}"
+              [ -n "${PREV_TAG}" ] && printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+                "${GITHUB_REPOSITORY}" "${PREV_TAG}" "${GITHUB_REF_NAME}"
+            } > /tmp/release_body.md
+          else
+            printf '%s\n' "$BODY" > /tmp/release_body.md
           fi
-
-      - name: Compose release body
-        id: release_body
-        env:
-          SUMMARY: ${{ steps.ai_summary.outputs.summary }}
-          RECAP: ${{ steps.ai_summary.outputs.recap }}
-          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
-          PREV_TAG: ${{ steps.changelog.outputs.prev_tag }}
-          BASE_MINOR_TAG: ${{ steps.changelog.outputs.base_minor_tag }}
-        run: |
-          {
-            echo "body<<EOF"
-            if [ -n "$SUMMARY" ]; then
-              echo "$SUMMARY"
-              echo ""
-            fi
-            if [ -n "$RECAP" ]; then
-              echo "---"
-              echo ""
-              echo "**Release series recap** (since ${BASE_MINOR_TAG}): ${RECAP}"
-              echo ""
-            fi
-            echo "---"
-            echo ""
-            echo "## Commits"
-            echo "$CHANGELOG"
-            if [ -n "$PREV_TAG" ]; then
-              echo ""
-              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}"
-            fi
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ steps.release_body.outputs.body }}
+          name: ${{ steps.data.outputs.release_title }}
+          body_path: /tmp/release_body.md
           files: release-assets/*
           fail_on_unmatched_files: true

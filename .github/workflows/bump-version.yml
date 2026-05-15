@@ -1,0 +1,96 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: Version bump type
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      release_title:
+        description: "Release title (used as the release heading)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Tag next ${{ inputs.bump_type }} release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CI is passing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.sha }}"
+          echo "Checking for a successful CI run on ${SHA}..."
+          PASSING=$(gh run list \
+            --workflow="test.yml" \
+            --commit "${SHA}" \
+            --status success \
+            --json conclusion \
+            --jq 'length')
+          if [ "$PASSING" -eq 0 ]; then
+            echo "::error::No successful CI run found for ${SHA}. Ensure tests pass before releasing."
+            exit 1
+          fi
+          echo "CI is passing on ${SHA}."
+
+      - name: Compute next version
+        id: version
+        run: |
+          LATEST=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          LATEST="${LATEST:-v0.0.0}"
+          echo "Latest tag: ${LATEST}"
+
+          VERSION="${LATEST#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+
+          case "${{ inputs.bump_type }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Next tag: ${NEXT_TAG}"
+          echo "next_tag=${NEXT_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create and push tag
+        env:
+          NEXT_TAG: ${{ steps.version.outputs.next_tag }}
+          RELEASE_TITLE: ${{ inputs.release_title }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --force origin
+          if git rev-parse -q --verify "refs/tags/${NEXT_TAG}" >/dev/null \
+             || git ls-remote --exit-code --tags origin "refs/tags/${NEXT_TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${NEXT_TAG} already exists. Refusing to overwrite."
+            exit 1
+          fi
+          TITLE="${RELEASE_TITLE:-${NEXT_TAG}}"
+          git tag -a "${NEXT_TAG}" -m "${TITLE}"
+          git push origin "${NEXT_TAG}"

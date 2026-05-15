@@ -3456,7 +3456,7 @@ class VNAApp(App):
                         self._latest_tools_compute_result = dict(result)
                         self._latest_tools_compute_cache_key = compute_cache_key
                 except asyncio.CancelledError:
-                    pass
+                    raise
                 except Exception:
                     pass
             tool_result = (

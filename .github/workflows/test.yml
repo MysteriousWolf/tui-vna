@@ -2,56 +2,82 @@ name: Test
 
 on:
   push:
-    branches:
-      - main
-      - master
-      - develop
+    tags-ignore:
+      - "**"
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/**"
   pull_request:
     branches:
-      - main
       - master
-      - develop
-  workflow_call: # Allow this workflow to be called by other workflows
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/**"
+  workflow_call:
+    inputs:
+      skip_build:
+        description: Skip the PyInstaller build check (e.g. when the caller runs its own build)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Test on Python ${{ matrix.python-version }}
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
         with:
+          fetch-depth: 0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk
 
       - name: Install dependencies
-        run: |
-          uv sync --group test
+        run: uv sync --group test
 
       - name: Run tests with pytest
-        run: |
-          uv run pytest
+        run: uv run pytest --junitxml=junit.xml
 
       - name: Upload coverage reports
-        if: matrix.python-version == '3.10'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
           flags: unittests
           fail_ci_if_error: false
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   lint:
     name: Lint
@@ -60,57 +86,66 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
         with:
+          fetch-depth: 0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
       - name: Install dependencies
-        run: |
-          uv sync --group lint
+        run: uv sync --group lint
 
       - name: Run ruff check
-        run: |
-          uv run ruff check .
+        run: uv run ruff check .
 
       - name: Run black check
-        run: |
-          uv run black --check .
+        run: uv run black --check .
 
   build:
-    name: Build check
-    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_build }}
+    name: Build check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            tina_bin: dist/tina
+            quick_bin: dist/tina-quick
+          - os: windows-latest
+            tina_bin: dist/tina.exe
+            quick_bin: dist/tina-quick.exe
+          - os: macos-latest
+            tina_bin: dist/tina
+            quick_bin: dist/tina-quick
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
         with:
+          fetch-depth: 0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
       - name: Install dependencies
-        run: |
-          uv sync --group dev
+        run: uv sync --group dev
 
       - name: Build with PyInstaller
         run: |
           uv run pyinstaller --clean scripts/tina.spec
+          uv run pyinstaller --clean scripts/tina-quick.spec
 
-      - name: Verify binary exists
+      - name: Verify binaries exist
+        shell: bash
         run: |
-          test -f dist/tina || (echo "Binary not found" && exit 1)
+          test -f ${{ matrix.tina_bin }} || (echo "tina binary not found" && exit 1)
+          test -f ${{ matrix.quick_bin }} || (echo "tina-quick binary not found" && exit 1)

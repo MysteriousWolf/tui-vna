@@ -1,8 +1,8 @@
 # Build Scripts
 
-Creates standalone executables for the HP E5071B VNA Control Tool.
+Creates standalone executables for TINA.
 
-## Quick Start
+## Local Build
 
 ```bash
 # Windows
@@ -15,22 +15,19 @@ source ./scripts/build.sh
 source ./scripts/build.fish
 ```
 
-**Output:** `dist/hp-e5071b(.exe)` + `dist/hp-e5071b-quick(.exe)`
+**Output:** `dist/tina(.exe)` + `dist/tina-quick(.exe)`
 
 ## What's Built
 
-- **`hp-e5071b`** - Main GUI application with full interface
-- **`hp-e5071b-quick`** - Double-click quick measurement tool (runs `--now`)
+- **`tina`** — Full TUI application
+- **`tina-quick`** — CLI-only quick measurement tool (runs `--now`)
 
-## Distribution
+## CI Builds
 
-**Standalone executables** - no Python or dependencies required.
-
-**Windows:** Distribute both `.exe` files for full control + quick measurements  
-**Linux/macOS:** Users typically prefer `uv tool install` for easier updates
+Release binaries are built automatically by GitHub Actions on every tagged release. See [RELEASE.md](../RELEASE.md) for the release process.
 
 ## Troubleshooting
 
-**Build fails:** Ensure you're in `scripts/` directory, uv is installed  
+**Build fails:** Ensure uv is installed and `uv sync --group dev` has been run  
 **Won't run:** Check antivirus, architecture compatibility (64-bit)  
 **Clean:** `rm -rf ../build ../dist` then rebuild
