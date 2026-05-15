@@ -5,6 +5,12 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        required: false
+        default: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -196,3 +202,4 @@ jobs:
           body_path: /tmp/release_body.md
           files: release-assets/*
           fail_on_unmatched_files: true
+          prerelease: ${{ inputs.prerelease }}
