@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    tags-ignore:
+    branches:
       - "**"
     paths:
       - "src/**"
@@ -106,7 +106,7 @@ jobs:
         run: uv run black --check .
 
   build:
-    if: ${{ !inputs.skip_build }}
+    if: ${{ !inputs.skip_build && !(github.event_name == 'push' && github.ref == 'refs/heads/master') }}
     name: Build check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
